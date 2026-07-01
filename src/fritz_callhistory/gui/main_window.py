@@ -6,6 +6,7 @@ from __future__ import annotations
 import sqlite3
 
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -13,15 +14,19 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QSplitter,
+    QStyle,
+    QSystemTrayIcon,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from fritz_callhistory.db.repository import ContactRepository
+from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.contact_detail import ContactDetailWidget
 from fritz_callhistory.gui.models import ContactListModel
 from fritz_callhistory.gui.workers import SyncFn, SyncWorker
+from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
 
@@ -32,6 +37,7 @@ class MainWindow(QMainWindow):
         connection: sqlite3.Connection,
         sync_fn: SyncFn | None = None,
         auto_sync_interval_minutes: int | None = None,
+        fritzbox_address: str | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -89,7 +95,48 @@ class MainWindow(QMainWindow):
             self._auto_sync_timer.timeout.connect(self._trigger_sync)
             self._auto_sync_timer.start()
 
+        self._tray_icon = QSystemTrayIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon), self
+        )
+        self._tray_icon.setToolTip("Fritz!Box Anrufhistorie")
+        self._tray_icon.show()
+
+        self._call_monitor: CallMonitorThread | None = None
+        self._call_monitor_connection_lost_shown = False
+        if fritzbox_address:
+            self._call_monitor = CallMonitorThread(fritzbox_address, parent=self)
+            self._call_monitor.ring.connect(self._on_ring)
+            self._call_monitor.connection_lost.connect(self._on_call_monitor_connection_lost)
+            self._call_monitor.start()
+
         self.reload_contacts()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._call_monitor is not None:
+            self._call_monitor.stop()
+            self._call_monitor.wait(2000)
+        super().closeEvent(event)
+
+    def _on_ring(self, caller_number: str, called_number: str) -> None:
+        normalized, is_anonymous = normalize_number(caller_number)
+        if is_anonymous:
+            message = "Unbekannte / unterdrückte Nummer"
+        else:
+            contact = self._contacts_repo.find_by_number(normalized)
+            message = contact.display_name if (contact and contact.display_name) else normalized
+        self._tray_icon.showMessage(
+            "Eingehender Anruf", message, QSystemTrayIcon.MessageIcon.Information, 8000
+        )
+
+    def _on_call_monitor_connection_lost(self, message: str) -> None:
+        if self._call_monitor_connection_lost_shown:
+            return
+        self._call_monitor_connection_lost_shown = True
+        self.statusBar().showMessage(
+            "CallMonitor nicht erreichbar - ist der Wählcode #96*5* auf der Box aktiviert? "
+            "(Verbindung wird automatisch weiter versucht.)",
+            10000,
+        )
 
     def reload_contacts(self) -> None:
         self._contact_model.set_contacts(self._contacts_repo.search(self._search_edit.text()))

@@ -152,3 +152,61 @@ def test_sync_button_shows_error_on_failure(qtbot, connection):
 
     assert "Box nicht erreichbar" in window.statusBar().currentMessage()
     assert window._sync_button.isEnabled()
+
+
+def test_no_call_monitor_started_without_address(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    assert window._call_monitor is None
+
+
+def test_on_ring_shows_known_contact_name(qtbot, connection, mocker):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49301234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    show_message = mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("030 1234567", "069987654")
+
+    show_message.assert_called_once()
+    args = show_message.call_args.args
+    assert args[0] == "Eingehender Anruf"
+    assert args[1] == "Max Mustermann"
+
+
+def test_on_ring_shows_number_for_unknown_contact(qtbot, connection, mocker):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    show_message = mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("030 1234567", "069987654")
+
+    args = show_message.call_args.args
+    assert args[1] == "+49301234567"
+
+
+def test_on_ring_shows_anonymous_for_suppressed_number(qtbot, connection, mocker):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    show_message = mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("", "069987654")
+
+    args = show_message.call_args.args
+    assert "unterdrückt" in args[1] or "Unbekannt" in args[1]
+
+
+def test_call_monitor_connection_lost_message_shown_only_once(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    window._on_call_monitor_connection_lost("Connection refused")
+    assert "#96*5*" in window.statusBar().currentMessage()
+
+    window.statusBar().clearMessage()
+    window._on_call_monitor_connection_lost("Connection refused again")
+    assert window.statusBar().currentMessage() == ""

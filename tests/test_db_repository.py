@@ -18,6 +18,24 @@ def test_contact_search_matches_name_and_number(connection):
     assert contacts.search("does-not-exist") == []
 
 
+def test_find_by_number_returns_matching_contact(connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+    contacts.upsert("+499876543")
+
+    found = contacts.find_by_number("+491234567")
+
+    assert found is not None
+    assert found.id == contact_id
+    assert found.display_name == "Max Mustermann"
+
+
+def test_find_by_number_returns_none_when_missing(connection):
+    contacts = ContactRepository(connection)
+    assert contacts.find_by_number("+491234567") is None
+
+
 def test_call_insert_dedupes_on_natural_key(connection):
     contacts = ContactRepository(connection)
     calls = CallRepository(connection)

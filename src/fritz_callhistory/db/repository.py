@@ -73,6 +73,20 @@ class ContactRepository:
         ).fetchone()
         return self._row_to_contact(row) if row else None
 
+    def find_by_number(self, primary_number: str) -> Contact | None:
+        row = self._conn.execute(
+            """
+            SELECT c.id, c.primary_number, c.display_name, c.is_anonymous,
+                   MAX(calls.call_date) AS last_call_date, COUNT(calls.id) AS call_count
+            FROM contacts c
+            LEFT JOIN calls ON calls.contact_id = c.id
+            WHERE c.primary_number = ?
+            GROUP BY c.id
+            """,
+            (primary_number,),
+        ).fetchone()
+        return self._row_to_contact(row) if row else None
+
     def search(self, query: str = "") -> list[Contact]:
         pattern = f"%{query}%"
         rows = self._conn.execute(
