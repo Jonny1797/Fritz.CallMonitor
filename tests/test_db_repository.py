@@ -194,6 +194,56 @@ def test_all_calls_returns_everything_when_no_filter_given(connection):
     assert len(results) == 2
 
 
+def test_all_calls_filters_by_call_types_single(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00", call_type=1)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-02T10:00:00", call_type=2)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-03T10:00:00", call_type=3)
+
+    results = calls.all_calls(call_types=[2])
+
+    assert len(results) == 1
+    assert results[0].call_type == 2
+
+
+def test_all_calls_filters_by_call_types_multiple(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00", call_type=1)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-02T10:00:00", call_type=2)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-03T10:00:00", call_type=10)
+
+    results = calls.all_calls(call_types=[2, 10])
+
+    assert {r.call_type for r in results} == {2, 10}
+
+
+def test_all_calls_call_types_combined_with_date_from(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00", call_type=2)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-05T10:00:00", call_type=2)
+
+    results = calls.all_calls(date_from="2026-06-03T00:00:00", call_types=[2])
+
+    assert [r.call_date for r in results] == ["2026-06-05T10:00:00"]
+
+
+def test_all_calls_call_types_none_or_empty_returns_all(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00", call_type=1)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-02T10:00:00", call_type=2)
+
+    assert len(calls.all_calls(call_types=None)) == 2
+    assert len(calls.all_calls(call_types=[])) == 2
+
+
 def test_sync_state_roundtrip(connection):
     state = SyncStateRepository(connection)
     assert state.get("last_sync_at") is None

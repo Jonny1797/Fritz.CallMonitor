@@ -1,5 +1,6 @@
-from fritz_callhistory.db.repository import CallRepository, ContactRepository
+from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
+from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
 from fritz_callhistory.gui.main_window import MainWindow
 
 
@@ -277,3 +278,58 @@ def test_navigation_from_all_calls_clears_active_search_filter(qtbot, connection
     assert window._search_edit.text() == ""
     assert window._contact_model.rowCount() == 1
     assert "Max Mustermann" in window._detail._title_label.text()
+
+
+def test_all_calls_tab_label_shows_new_missed_count_on_startup(qtbot, connection):
+    SyncStateRepository(connection).set(_LAST_SEEN_KEY, "2026-06-01T00:00:00")
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    calls.insert(
+        contact_id=contact_id,
+        call_type=2,
+        caller_number="+491234567",
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date="2026-06-05T10:00:00",
+        duration_seconds=0,
+        raw_name=None,
+    )
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    assert window._tabs.tabText(1) == "Alle Anrufe (1 neu verpasst)"
+
+
+def test_all_calls_tab_label_stays_plain_when_no_new_missed_calls(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    assert window._tabs.tabText(1) == "Alle Anrufe"
+
+
+def test_all_calls_tab_label_updates_after_manual_reload(qtbot, connection):
+    SyncStateRepository(connection).set(_LAST_SEEN_KEY, "2026-06-01T00:00:00")
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    assert window._tabs.tabText(1) == "Alle Anrufe"
+
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    calls.insert(
+        contact_id=contact_id,
+        call_type=2,
+        caller_number="+491234567",
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date="2026-06-05T10:00:00",
+        duration_seconds=0,
+        raw_name=None,
+    )
+    window._all_calls_view.reload()
+
+    assert window._tabs.tabText(1) == "Alle Anrufe (1 neu verpasst)"

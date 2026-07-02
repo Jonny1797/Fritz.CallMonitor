@@ -87,10 +87,16 @@ class MainWindow(QMainWindow):
 
         self._all_calls_view = AllCallsView(connection)
         self._all_calls_view.contact_selected.connect(self._on_all_calls_contact_selected)
+        self._all_calls_view.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(contacts_tab, "Kontakte")
         self._tabs.addTab(self._all_calls_view, "Alle Anrufe")
+        # AllCallsView.__init__ hat _reload() bereits vor der obigen Signal-
+        # Verbindung ausgefuehrt - die erste new_missed_calls_changed-Emission
+        # kam daher ohne Empfaenger an. Deshalb hier einmalig den bereits
+        # berechneten, gecachten Wert direkt abfragen statt nur aufs Signal zu vertrauen.
+        self._update_all_calls_tab_label(self._all_calls_view.new_missed_calls_count)
 
         top_row = QHBoxLayout()
         top_row.addStretch()
@@ -141,6 +147,13 @@ class MainWindow(QMainWindow):
         self._tray_icon.showMessage(
             "Eingehender Anruf", message, QSystemTrayIcon.MessageIcon.Information, 8000
         )
+
+    def _update_all_calls_tab_label(self, count: int) -> None:
+        label = f"Alle Anrufe ({count} neu verpasst)" if count else "Alle Anrufe"
+        self._tabs.setTabText(1, label)
+
+    def _on_new_missed_calls_changed(self, count: int) -> None:
+        self._update_all_calls_tab_label(count)
 
     def _on_call_monitor_connection_lost(self, message: str) -> None:
         if self._call_monitor_connection_lost_shown:

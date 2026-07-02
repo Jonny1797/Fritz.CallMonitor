@@ -182,18 +182,26 @@ class CallRepository:
         return [self._row_to_call(row) for row in rows]
 
     def all_calls(
-        self, *, date_from: str | None = None, date_to: str | None = None
+        self,
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        call_types: list[int] | None = None,
     ) -> list[CallWithContact]:
         """Alle Anrufe ueber alle Kontakte hinweg, chronologisch, optional per
-        ISO8601-Zeitstempel eingegrenzt (date_from/date_to sind inklusiv)."""
+        ISO8601-Zeitstempel (inklusiv) und/oder call_type eingegrenzt."""
         conditions = []
-        params: list[str] = []
+        params: list = []
         if date_from is not None:
             conditions.append("calls.call_date >= ?")
             params.append(date_from)
         if date_to is not None:
             conditions.append("calls.call_date <= ?")
             params.append(date_to)
+        if call_types:
+            placeholders = ",".join("?" * len(call_types))
+            conditions.append(f"calls.call_type IN ({placeholders})")
+            params.extend(call_types)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         # Explizite Spaltenliste mit Aliassen statt calls.*/contacts.*: beide
