@@ -20,22 +20,61 @@ _CONNECT_TIMEOUT_SECONDS = 5.0
 
 @dataclass
 class RingEvent:
+    connection_id: str
     caller_number: str
     called_number: str
     device: str
 
 
-def parse_ring_event(line: str) -> RingEvent | None:
-    """Parst eine CallMonitor-Zeile, falls es sich um ein RING-Ereignis handelt.
+@dataclass
+class ConnectEvent:
+    connection_id: str
 
-    Zeilenformat: "<Datum>;RING;<ConnId>;<Anrufer>;<Angerufene Nummer>;<Gerät>;"
-    Andere Ereignistypen (CALL/CONNECT/DISCONNECT) sowie unparsebare Zeilen
-    liefern None.
+
+@dataclass
+class DisconnectEvent:
+    connection_id: str
+
+
+CallMonitorEvent = RingEvent | ConnectEvent | DisconnectEvent
+
+
+def parse_event(line: str) -> CallMonitorEvent | None:
+    """Parst eine CallMonitor-Zeile.
+
+    Zeilenformate (offizielle AVM-Beispiele):
+        "<Datum>;RING;<ConnId>;<Anrufer>;<Angerufene Nummer>;<Gerät>;"
+        "<Datum>;CONNECT;<ConnId>;<Nebenstelle>;<Nummer>;"
+        "<Datum>;DISCONNECT;<ConnId>;<Nebenstelle>;"
+
+    Bei CONNECT/DISCONNECT wird bewusst nur die ConnId ausgewertet: das dritte
+    Feld dort ist die interne Nebenstelle, keine Anrufdauer (ein offizielles
+    AVM-Beispiel zeigt "CONNECT;2;4;..." gefolgt von "DISCONNECT;2;4;" - die "4"
+    bleibt zwischen beiden Zeilen gleich, obwohl der Anruf mehrere Sekunden
+    dauerte). Die tatsächliche Dauer liefert ohnehin erst der spaetere Sync
+    von der Box, nicht das CallMonitor-Protokoll.
+
+    CALL-Ereignisse (ausgehende Anrufe) sowie unparsebare Zeilen liefern None.
     """
     fields = line.strip().split(";")
-    if len(fields) < 6 or fields[1] != "RING":
+    if len(fields) < 3:
         return None
-    return RingEvent(caller_number=fields[3], called_number=fields[4], device=fields[5])
+    kind = fields[1]
+    connection_id = fields[2]
+    if kind == "RING":
+        if len(fields) < 6:
+            return None
+        return RingEvent(
+            connection_id=connection_id,
+            caller_number=fields[3],
+            called_number=fields[4],
+            device=fields[5],
+        )
+    if kind == "CONNECT":
+        return ConnectEvent(connection_id=connection_id)
+    if kind == "DISCONNECT":
+        return DisconnectEvent(connection_id=connection_id)
+    return None
 
 
 class CallMonitorConnection:
@@ -67,12 +106,12 @@ class CallMonitorConnection:
             self._socket.close()
             self._socket = None
 
-    def ring_events(self) -> Iterator[RingEvent]:
+    def events(self) -> Iterator[CallMonitorEvent]:
         """Blockiert, bis Zeilen ankommen oder die Verbindung geschlossen wird."""
         if self._socket is None:
-            raise RuntimeError("connect() muss vor ring_events() aufgerufen werden")
+            raise RuntimeError("connect() muss vor events() aufgerufen werden")
         with self._socket.makefile("r", encoding="utf-8") as stream:
             for line in stream:
-                event = parse_ring_event(line)
+                event = parse_event(line)
                 if event is not None:
                     yield event

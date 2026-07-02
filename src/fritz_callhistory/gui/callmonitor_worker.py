@@ -11,13 +11,21 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
-from fritz_callhistory.fritz.callmonitor import CallMonitorConnection, CALL_MONITOR_PORT
+from fritz_callhistory.fritz.callmonitor import (
+    CALL_MONITOR_PORT,
+    CallMonitorConnection,
+    ConnectEvent,
+    DisconnectEvent,
+    RingEvent,
+)
 
 _RECONNECT_DELAY_SECONDS = 10.0
 
 
 class CallMonitorThread(QThread):
-    ring = Signal(str, str)  # caller_number, called_number
+    ring = Signal(str, str, str)  # connection_id, caller_number, called_number
+    connected = Signal(str)  # connection_id
+    disconnected = Signal(str)  # connection_id
     connection_lost = Signal(str)
 
     def __init__(
@@ -48,8 +56,15 @@ class CallMonitorThread(QThread):
                 self.connection_lost.emit(str(exc))
             else:
                 try:
-                    for event in self._connection.ring_events():
-                        self.ring.emit(event.caller_number, event.called_number)
+                    for event in self._connection.events():
+                        if isinstance(event, RingEvent):
+                            self.ring.emit(
+                                event.connection_id, event.caller_number, event.called_number
+                            )
+                        elif isinstance(event, ConnectEvent):
+                            self.connected.emit(event.connection_id)
+                        elif isinstance(event, DisconnectEvent):
+                            self.disconnected.emit(event.connection_id)
                 except OSError as exc:
                     self.connection_lost.emit(str(exc))
 

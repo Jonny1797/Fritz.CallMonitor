@@ -9,6 +9,13 @@ from fritz_callhistory.db.repository import CallRecord, CallWithContact, Contact
 
 _MISSED_CALL_TYPE = 2
 
+# Pseudo-Call-Types fuer live per CallMonitor verfolgte, noch nicht
+# synchronisierte Anrufe (siehe gui/all_calls_view.py). Bewusst ausserhalb des
+# Wertebereichs echter Fritz!Box-Call-Type-Codes (>=1), damit sie z.B. nie
+# versehentlich als "verpasst" gezaehlt werden.
+LIVE_RINGING_CALL_TYPE = -1
+LIVE_CONNECTED_CALL_TYPE = -2
+
 _CONTACT_COLUMNS = ("Name", "Nummer", "Letzter Kontakt", "Anrufe")
 _CALL_COLUMNS = ("Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät")
 _ALL_CALLS_COLUMNS = ("Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät")
@@ -20,6 +27,8 @@ _CALL_TYPE_LABELS = {
     9: "Eingehend (aktiv)",
     10: "Abgelehnt",
     11: "Ausgehend (aktiv)",
+    LIVE_RINGING_CALL_TYPE: "Klingelt …",
+    LIVE_CONNECTED_CALL_TYPE: "Verbunden …",
 }
 
 _CALL_TYPE_ICONS = {
@@ -29,6 +38,8 @@ _CALL_TYPE_ICONS = {
     9: "↘",
     10: "⊘",
     11: "↗",
+    LIVE_RINGING_CALL_TYPE: "🔔",
+    LIVE_CONNECTED_CALL_TYPE: "📞",
 }
 
 

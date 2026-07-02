@@ -294,3 +294,93 @@ def test_new_missed_calls_changed_signal_emits_on_mark_seen(qtbot, connection):
         view._mark_seen_button.click()
 
     assert blocker.args == [0]
+
+
+def test_on_live_ring_shows_ringing_entry_at_top(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+
+    view.on_live_ring("1", "030 1234567", "069987654")
+
+    assert view._model.rowCount() == 1
+    call = view._model.call_at(0)
+    assert call.call_type == -1  # LIVE_RINGING_CALL_TYPE
+    assert call.caller_number == "030 1234567"
+
+
+def test_on_live_connected_updates_status(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "030 1234567", "069987654")
+
+    view.on_live_connected("1")
+
+    assert view._model.call_at(0).call_type == -2  # LIVE_CONNECTED_CALL_TYPE
+
+
+def test_on_live_connected_ignores_unknown_connection_id(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+
+    view.on_live_connected("does-not-exist")  # darf nicht crashen
+
+    assert view._model.rowCount() == 0
+
+
+def test_on_live_disconnected_removes_entry_and_emits_signal(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "030 1234567", "069987654")
+    assert view._model.rowCount() == 1
+
+    with qtbot.waitSignal(view.live_call_ended, timeout=1000):
+        view.on_live_disconnected("1")
+
+    assert view._model.rowCount() == 0
+
+
+def test_on_live_disconnected_ignores_unknown_connection_id(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    signal_spy = []
+    view.live_call_ended.connect(lambda: signal_spy.append(1))
+
+    view.on_live_disconnected("does-not-exist")
+
+    assert signal_spy == []
+
+
+def test_clear_live_calls_removes_all_entries(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "030 1234567", "069987654")
+    view.on_live_ring("2", "030 7654321", "069987654")
+    assert view._model.rowCount() == 2
+
+    view.clear_live_calls()
+
+    assert view._model.rowCount() == 0
+
+
+def test_live_call_groups_under_existing_contact(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49301234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+
+    view.on_live_ring("1", "030 1234567", "069987654")
+
+    assert view._model.call_at(0).contact_id == contact_id
+    assert view._model.call_at(0).contact_display_name == "Max Mustermann"
+
+
+def test_live_call_excluded_from_new_missed_preset(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "030 1234567", "069987654")
+
+    view._new_missed_button.click()
+
+    assert view._model.rowCount() == 0

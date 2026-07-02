@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
         self._all_calls_view = AllCallsView(connection)
         self._all_calls_view.contact_selected.connect(self._on_all_calls_contact_selected)
         self._all_calls_view.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
+        self._all_calls_view.live_call_ended.connect(self._trigger_sync)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(contacts_tab, "Kontakte")
@@ -126,7 +127,11 @@ class MainWindow(QMainWindow):
         if fritzbox_address:
             self._call_monitor = CallMonitorThread(fritzbox_address, parent=self)
             self._call_monitor.ring.connect(self._on_ring)
+            self._call_monitor.ring.connect(self._all_calls_view.on_live_ring)
+            self._call_monitor.connected.connect(self._all_calls_view.on_live_connected)
+            self._call_monitor.disconnected.connect(self._all_calls_view.on_live_disconnected)
             self._call_monitor.connection_lost.connect(self._on_call_monitor_connection_lost)
+            self._call_monitor.connection_lost.connect(self._all_calls_view.clear_live_calls)
             self._call_monitor.start()
 
         self.reload_contacts()
@@ -137,7 +142,7 @@ class MainWindow(QMainWindow):
             self._call_monitor.wait(2000)
         super().closeEvent(event)
 
-    def _on_ring(self, caller_number: str, called_number: str) -> None:
+    def _on_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
         normalized, is_anonymous = normalize_number(caller_number)
         if is_anonymous:
             message = "Unbekannte / unterdrückte Nummer"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QDate, QModelIndex, Signal
@@ -22,8 +23,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fritz_callhistory.db.repository import CallRepository, SyncStateRepository
-from fritz_callhistory.gui.models import AllCallsListModel
+from fritz_callhistory.db.repository import (
+    CallRepository,
+    CallWithContact,
+    ContactRepository,
+    SyncStateRepository,
+)
+from fritz_callhistory.gui.models import (
+    LIVE_CONNECTED_CALL_TYPE,
+    LIVE_RINGING_CALL_TYPE,
+    AllCallsListModel,
+)
+from fritz_callhistory.sync.normalize import normalize_number
 
 _ISO_DAY_START = "T00:00:00"
 _ISO_DAY_END = "T23:59:59"
@@ -31,9 +42,19 @@ _MISSED_CALL_TYPE = 2
 _LAST_SEEN_KEY = "missed_calls_last_seen_at"
 
 
+@dataclass
+class _LiveCall:
+    caller_number: str
+    called_number: str
+    contact_id: int
+    call_type: int  # LIVE_RINGING_CALL_TYPE oder LIVE_CONNECTED_CALL_TYPE
+    started_at: str
+
+
 class AllCallsView(QWidget):
     contact_selected = Signal(int)
     new_missed_calls_changed = Signal(int)
+    live_call_ended = Signal()
 
     def __init__(
         self,
@@ -43,6 +64,7 @@ class AllCallsView(QWidget):
     ) -> None:
         super().__init__()
         self._calls_repo = CallRepository(connection)
+        self._contacts_repo = ContactRepository(connection)
         self._sync_state = SyncStateRepository(connection)
         self._today_provider = today_provider
         self._now_provider = now_provider
@@ -50,6 +72,7 @@ class AllCallsView(QWidget):
         self._new_missed_only = False
         self._new_missed_count = 0
         self._last_seen_at = self._load_or_init_last_seen_at()
+        self._live_calls: dict[str, _LiveCall] = {}
 
         today = QDate(self._today_provider())
         self._from_edit = QDateEdit(today)
@@ -183,9 +206,71 @@ class AllCallsView(QWidget):
             calls = self._calls_repo.all_calls(date_from=date_from, date_to=date_to)
         else:
             calls = self._calls_repo.all_calls()
+
+        if not self._new_missed_only:
+            # Live-Anrufe (klingelt/verbunden) immer oben zeigen, ausser im
+            # "Neu verpasst"-Preset - der ist semantisch nur fuer bereits
+            # abgeschlossene, verpasste Anrufe gedacht.
+            calls = self._live_calls_as_call_with_contact() + calls
+
         self._model.set_calls(calls)
         self._model.set_last_seen_at(self._last_seen_at)
         self._refresh_new_missed_count(precomputed=calls if self._new_missed_only else None)
+
+    def _live_calls_as_call_with_contact(self) -> list[CallWithContact]:
+        result = []
+        for live in sorted(self._live_calls.values(), key=lambda c: c.started_at, reverse=True):
+            contact = self._contacts_repo.get(live.contact_id)
+            result.append(
+                CallWithContact(
+                    id=-1,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
+                    contact_id=live.contact_id,
+                    call_type=live.call_type,
+                    caller_number=live.caller_number,
+                    called_number=live.called_number,
+                    port=None,
+                    device=None,
+                    call_date=live.started_at,
+                    duration_seconds=None,
+                    raw_name=None,
+                    contact_display_name=contact.display_name if contact else None,
+                    contact_primary_number=(
+                        contact.primary_number if contact else live.caller_number
+                    ),
+                    contact_is_anonymous=contact.is_anonymous if contact else False,
+                )
+            )
+        return result
+
+    def on_live_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
+        normalized, is_anonymous = normalize_number(caller_number)
+        contact_id = self._contacts_repo.upsert(normalized, is_anonymous=is_anonymous)
+        self._live_calls[connection_id] = _LiveCall(
+            caller_number=caller_number,
+            called_number=called_number,
+            contact_id=contact_id,
+            call_type=LIVE_RINGING_CALL_TYPE,
+            started_at=self._now_provider().isoformat(),
+        )
+        self._reload()
+
+    def on_live_connected(self, connection_id: str) -> None:
+        live = self._live_calls.get(connection_id)
+        if live is not None:
+            live.call_type = LIVE_CONNECTED_CALL_TYPE
+            self._reload()
+
+    def on_live_disconnected(self, connection_id: str) -> None:
+        if self._live_calls.pop(connection_id, None) is not None:
+            self._reload()
+            self.live_call_ended.emit()
+
+    def clear_live_calls(self) -> None:
+        """Verwirft alle laufend verfolgten Anrufe, z.B. wenn die CallMonitor-
+        Verbindung abbricht und ihr Zustand nicht mehr vertrauenswuerdig ist."""
+        if self._live_calls:
+            self._live_calls.clear()
+            self._reload()
 
     def _refresh_new_missed_count(self, precomputed: list | None = None) -> None:
         if precomputed is not None:

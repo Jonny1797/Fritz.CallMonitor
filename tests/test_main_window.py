@@ -171,7 +171,7 @@ def test_on_ring_shows_known_contact_name(qtbot, connection, mocker):
     qtbot.addWidget(window)
     show_message = mocker.patch.object(window._tray_icon, "showMessage")
 
-    window._on_ring("030 1234567", "069987654")
+    window._on_ring("0", "030 1234567", "069987654")
 
     show_message.assert_called_once()
     args = show_message.call_args.args
@@ -184,7 +184,7 @@ def test_on_ring_shows_number_for_unknown_contact(qtbot, connection, mocker):
     qtbot.addWidget(window)
     show_message = mocker.patch.object(window._tray_icon, "showMessage")
 
-    window._on_ring("030 1234567", "069987654")
+    window._on_ring("0", "030 1234567", "069987654")
 
     args = show_message.call_args.args
     assert args[1] == "+49301234567"
@@ -195,7 +195,7 @@ def test_on_ring_shows_anonymous_for_suppressed_number(qtbot, connection, mocker
     qtbot.addWidget(window)
     show_message = mocker.patch.object(window._tray_icon, "showMessage")
 
-    window._on_ring("", "069987654")
+    window._on_ring("0", "", "069987654")
 
     args = show_message.call_args.args
     assert "unterdrückt" in args[1] or "Unbekannt" in args[1]
@@ -333,3 +333,31 @@ def test_all_calls_tab_label_updates_after_manual_reload(qtbot, connection):
     window._all_calls_view.reload()
 
     assert window._tabs.tabText(1) == "Alle Anrufe (1 neu verpasst)"
+
+
+def test_live_call_ended_triggers_sync(qtbot, connection):
+    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    qtbot.addWidget(window)
+
+    window._all_calls_view.live_call_ended.emit()
+
+    qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
+
+
+def test_call_monitor_signals_wired_to_all_calls_view(qtbot, connection, mocker):
+    mock_thread_cls = mocker.patch("fritz_callhistory.gui.main_window.CallMonitorThread")
+    mock_thread = mock_thread_cls.return_value
+
+    window = MainWindow(connection, fritzbox_address="192.168.178.1")
+    qtbot.addWidget(window)
+
+    assert window._call_monitor is mock_thread
+    mock_thread.ring.connect.assert_any_call(window._on_ring)
+    mock_thread.ring.connect.assert_any_call(window._all_calls_view.on_live_ring)
+    mock_thread.connected.connect.assert_called_once_with(window._all_calls_view.on_live_connected)
+    mock_thread.disconnected.connect.assert_called_once_with(
+        window._all_calls_view.on_live_disconnected
+    )
+    mock_thread.connection_lost.connect.assert_any_call(window._on_call_monitor_connection_lost)
+    mock_thread.connection_lost.connect.assert_any_call(window._all_calls_view.clear_live_calls)
+    mock_thread.start.assert_called_once()

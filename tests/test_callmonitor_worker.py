@@ -35,7 +35,31 @@ def test_call_monitor_thread_emits_ring_event(qtbot):
     try:
         with qtbot.waitSignal(worker.ring, timeout=3000) as blocker:
             worker.start()
-        assert blocker.args == ["030123456", "069987654"]
+        assert blocker.args == ["0", "030123456", "069987654"]
+    finally:
+        worker.stop()
+        worker.wait(2000)
+        server.close()
+
+
+def test_call_monitor_thread_emits_connected_and_disconnected(qtbot):
+    port = _free_port()
+    server = _serve_once(
+        port,
+        [
+            "01.01.26 20:00:00;RING;5;030123456;069987654;SIP0;",
+            "28.11.20 15:17:47;CONNECT;5;4;030123456;",
+            "28.11.20 15:17:50;DISCONNECT;5;4;",
+        ],
+    )
+
+    worker = CallMonitorThread("127.0.0.1", port=port, reconnect_delay_seconds=0.05)
+    try:
+        with qtbot.waitSignal(worker.disconnected, timeout=3000) as disconnect_blocker:
+            with qtbot.waitSignal(worker.connected, timeout=3000) as connect_blocker:
+                worker.start()
+        assert connect_blocker.args == ["5"]
+        assert disconnect_blocker.args == ["5"]
     finally:
         worker.stop()
         worker.wait(2000)
@@ -69,7 +93,7 @@ def test_call_monitor_thread_ignores_non_ring_events(qtbot):
         with qtbot.waitSignal(worker.ring, timeout=3000) as blocker:
             worker.start()
         # Das CALL-Ereignis wurde übersprungen, nur das folgende RING kam an.
-        assert blocker.args == ["030123456", "069987654"]
+        assert blocker.args == ["0", "030123456", "069987654"]
     finally:
         worker.stop()
         worker.wait(2000)
