@@ -210,3 +210,70 @@ def test_call_monitor_connection_lost_message_shown_only_once(qtbot, connection)
     window.statusBar().clearMessage()
     window._on_call_monitor_connection_lost("Connection refused again")
     assert window.statusBar().currentMessage() == ""
+
+
+def test_main_window_has_two_tabs(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    assert window._tabs.count() == 2
+    assert window._tabs.tabText(0) == "Kontakte"
+    assert window._tabs.tabText(1) == "Alle Anrufe"
+
+
+def test_existing_widgets_still_reachable_after_tab_refactor(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contacts.upsert("+491234567")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    assert window._contact_model.rowCount() == 1
+    window._search_edit.setText("kein-treffer")
+    window._search_timer.timeout.emit()
+    assert window._contact_model.rowCount() == 0
+    assert window._sync_button.isEnabled() is False  # kein sync_fn uebergeben
+
+
+def test_clicking_call_in_all_calls_view_switches_tab_and_selects_contact(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+    calls.insert(
+        contact_id=contact_id,
+        call_type=1,
+        caller_number="+491234567",
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date="2026-06-01T10:00:00",
+        duration_seconds=30,
+        raw_name=None,
+    )
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    window._all_calls_view.contact_selected.emit(contact_id)
+
+    assert window._tabs.currentIndex() == 0
+    assert "Max Mustermann" in window._detail._title_label.text()
+
+
+def test_navigation_from_all_calls_clears_active_search_filter(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window._search_edit.setText("passt-nicht-zu-max")
+    window._search_timer.timeout.emit()
+    assert window._contact_model.rowCount() == 0
+
+    window._all_calls_view.contact_selected.emit(contact_id)
+
+    assert window._search_edit.text() == ""
+    assert window._contact_model.rowCount() == 1
+    assert "Max Mustermann" in window._detail._title_label.text()

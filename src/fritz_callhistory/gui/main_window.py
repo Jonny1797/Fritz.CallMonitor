@@ -16,12 +16,14 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStyle,
     QSystemTrayIcon,
+    QTabWidget,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from fritz_callhistory.db.repository import ContactRepository
+from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.contact_detail import ContactDetailWidget
 from fritz_callhistory.gui.models import ContactListModel
@@ -78,14 +80,26 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 1)
 
+        contacts_tab = QWidget()
+        contacts_layout = QVBoxLayout(contacts_tab)
+        contacts_layout.addWidget(self._search_edit)
+        contacts_layout.addWidget(splitter)
+
+        self._all_calls_view = AllCallsView(connection)
+        self._all_calls_view.contact_selected.connect(self._on_all_calls_contact_selected)
+
+        self._tabs = QTabWidget()
+        self._tabs.addTab(contacts_tab, "Kontakte")
+        self._tabs.addTab(self._all_calls_view, "Alle Anrufe")
+
         top_row = QHBoxLayout()
-        top_row.addWidget(self._search_edit)
+        top_row.addStretch()
         top_row.addWidget(self._sync_button)
 
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addLayout(top_row)
-        layout.addWidget(splitter)
+        layout.addWidget(self._tabs)
         self.setCentralWidget(central)
         self.statusBar()
 
@@ -141,6 +155,20 @@ class MainWindow(QMainWindow):
     def reload_contacts(self) -> None:
         self._contact_model.set_contacts(self._contacts_repo.search(self._search_edit.text()))
 
+    def _on_all_calls_contact_selected(self, contact_id: int) -> None:
+        # search_timer.stop() ist noetig: search_edit.clear() loest ueber
+        # textChanged sonst den 250ms-Debounce-Timer aus, der 250ms spaeter
+        # einen zweiten, ueberfluessigen reload_contacts() feuern wuerde -
+        # dessen modelReset raeumt ueber die bestehende Verbindung die gerade
+        # frisch angezeigte Detailansicht wieder leer.
+        self._search_edit.clear()
+        self._search_timer.stop()
+        self.reload_contacts()
+        self._tabs.setCurrentIndex(0)
+        row = self._contact_model.index_of(contact_id)
+        if row is not None:
+            self._table.selectRow(row)
+
     def _on_selection_changed(self, selected, deselected) -> None:
         indexes = selected.indexes()
         if not indexes:
@@ -166,6 +194,7 @@ class MainWindow(QMainWindow):
             f"Sync abgeschlossen: {inserted} neue Anrufe, {updated} Kontakte aktualisiert", 5000
         )
         self.reload_contacts()
+        self._all_calls_view.reload()
 
     def _on_sync_failed(self, message: str) -> None:
         self._sync_button.setEnabled(True)

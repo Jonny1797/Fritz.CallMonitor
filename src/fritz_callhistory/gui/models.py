@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 
-from fritz_callhistory.db.repository import CallRecord, Contact
+from fritz_callhistory.db.repository import CallRecord, CallWithContact, Contact
 
 _CONTACT_COLUMNS = ("Name", "Nummer", "Letzter Kontakt", "Anrufe")
 _CALL_COLUMNS = ("Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät")
+_ALL_CALLS_COLUMNS = ("Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät")
 
 _CALL_TYPE_LABELS = {
     1: "Eingehend",
@@ -31,6 +32,12 @@ class ContactListModel(QAbstractTableModel):
 
     def contact_at(self, row: int) -> Contact:
         return self._contacts[row]
+
+    def index_of(self, contact_id: int) -> int | None:
+        for row, contact in enumerate(self._contacts):
+            if contact.id == contact_id:
+                return row
+        return None
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._contacts)
@@ -95,6 +102,55 @@ class CallListModel(QAbstractTableModel):
             return _CALL_TYPE_LABELS.get(call.call_type, str(call.call_type))
         if column == 2:
             return call.called_number if call.call_type in (3, 11) else call.caller_number
+        if column == 3:
+            if call.duration_seconds is None:
+                return "-"
+            minutes, seconds = divmod(call.duration_seconds, 60)
+            return f"{minutes}:{seconds:02d}"
+        if column == 4:
+            return " / ".join(filter(None, [call.device, call.port])) or "-"
+        return None
+
+
+class AllCallsListModel(QAbstractTableModel):
+    """Chronologische Anrufliste ueber alle Kontakte hinweg ("Alle Anrufe")."""
+
+    def __init__(self, calls: list[CallWithContact] | None = None) -> None:
+        super().__init__()
+        self._calls: list[CallWithContact] = calls or []
+
+    def set_calls(self, calls: list[CallWithContact]) -> None:
+        self.beginResetModel()
+        self._calls = calls
+        self.endResetModel()
+
+    def call_at(self, row: int) -> CallWithContact:
+        return self._calls[row]
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self._calls)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(_ALL_CALLS_COLUMNS)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
+            return None
+        return _ALL_CALLS_COLUMNS[section]
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+            return None
+        call = self._calls[index.row()]
+        column = index.column()
+        if column == 0:
+            return call.call_date
+        if column == 1:
+            return _CALL_TYPE_LABELS.get(call.call_type, str(call.call_type))
+        if column == 2:
+            if call.contact_is_anonymous:
+                return "Anonym / unterdrückt"
+            return call.contact_display_name or call.contact_primary_number
         if column == 3:
             if call.duration_seconds is None:
                 return "-"

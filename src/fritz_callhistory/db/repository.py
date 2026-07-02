@@ -34,6 +34,23 @@ class CallRecord:
     raw_name: str | None
 
 
+@dataclass
+class CallWithContact:
+    id: int
+    contact_id: int
+    call_type: int
+    caller_number: str | None
+    called_number: str | None
+    port: str | None
+    device: str | None
+    call_date: str
+    duration_seconds: int | None
+    raw_name: str | None
+    contact_display_name: str | None
+    contact_primary_number: str
+    contact_is_anonymous: bool
+
+
 class ContactRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._conn = connection
@@ -164,6 +181,50 @@ class CallRepository:
         rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_call(row) for row in rows]
 
+    def all_calls(
+        self, *, date_from: str | None = None, date_to: str | None = None
+    ) -> list[CallWithContact]:
+        """Alle Anrufe ueber alle Kontakte hinweg, chronologisch, optional per
+        ISO8601-Zeitstempel eingegrenzt (date_from/date_to sind inklusiv)."""
+        conditions = []
+        params: list[str] = []
+        if date_from is not None:
+            conditions.append("calls.call_date >= ?")
+            params.append(date_from)
+        if date_to is not None:
+            conditions.append("calls.call_date <= ?")
+            params.append(date_to)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        # Explizite Spaltenliste mit Aliassen statt calls.*/contacts.*: beide
+        # Tabellen haben eine id-Spalte, was sonst bei sqlite3.Row-Zugriff per
+        # Name mehrdeutig waere. INNER JOIN ist sicher, da sync/service.py fuer
+        # jeden Call vorher immer ContactRepository.upsert() aufruft.
+        rows = self._conn.execute(
+            f"""
+            SELECT
+                calls.id AS id,
+                calls.contact_id AS contact_id,
+                calls.call_type AS call_type,
+                calls.caller_number AS caller_number,
+                calls.called_number AS called_number,
+                calls.port AS port,
+                calls.device AS device,
+                calls.call_date AS call_date,
+                calls.duration_seconds AS duration_seconds,
+                calls.raw_name AS raw_name,
+                contacts.display_name AS contact_display_name,
+                contacts.primary_number AS contact_primary_number,
+                contacts.is_anonymous AS contact_is_anonymous
+            FROM calls
+            JOIN contacts ON contacts.id = calls.contact_id
+            {where}
+            ORDER BY calls.call_date DESC
+            """,
+            params,
+        ).fetchall()
+        return [self._row_to_call_with_contact(row) for row in rows]
+
     @staticmethod
     def _row_to_call(row: sqlite3.Row) -> CallRecord:
         return CallRecord(
@@ -177,6 +238,24 @@ class CallRepository:
             call_date=row["call_date"],
             duration_seconds=row["duration_seconds"],
             raw_name=row["raw_name"],
+        )
+
+    @staticmethod
+    def _row_to_call_with_contact(row: sqlite3.Row) -> CallWithContact:
+        return CallWithContact(
+            id=row["id"],
+            contact_id=row["contact_id"],
+            call_type=row["call_type"],
+            caller_number=row["caller_number"],
+            called_number=row["called_number"],
+            port=row["port"],
+            device=row["device"],
+            call_date=row["call_date"],
+            duration_seconds=row["duration_seconds"],
+            raw_name=row["raw_name"],
+            contact_display_name=row["contact_display_name"],
+            contact_primary_number=row["contact_primary_number"],
+            contact_is_anonymous=bool(row["contact_is_anonymous"]),
         )
 
 

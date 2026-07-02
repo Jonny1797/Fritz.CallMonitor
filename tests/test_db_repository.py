@@ -88,6 +88,112 @@ def test_calls_for_contact_ordered_newest_first(connection):
     ]
 
 
+def _insert_call(calls, *, contact_id, call_date, call_type=1, duration_seconds=0):
+    calls.insert(
+        contact_id=contact_id,
+        call_type=call_type,
+        caller_number="+491234567",
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date=call_date,
+        duration_seconds=duration_seconds,
+        raw_name=None,
+    )
+
+
+def test_all_calls_returns_calls_with_contact_info(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    results = calls.all_calls()
+
+    assert len(results) == 1
+    assert results[0].contact_display_name == "Max Mustermann"
+    assert results[0].contact_primary_number == "+491234567"
+    assert results[0].contact_is_anonymous is False
+
+
+def test_all_calls_ordered_newest_first_across_contacts(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contact_b = contacts.upsert("+492222222")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-03T10:00:00")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-02T10:00:00")
+
+    results = calls.all_calls()
+
+    assert [r.call_date for r in results] == [
+        "2026-06-03T10:00:00",
+        "2026-06-02T10:00:00",
+        "2026-06-01T10:00:00",
+    ]
+
+
+def test_all_calls_includes_anonymous_contact(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("anonymous", is_anonymous=True)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    results = calls.all_calls()
+
+    assert results[0].contact_is_anonymous is True
+    assert results[0].contact_display_name is None
+
+
+def test_all_calls_filters_by_date_from_inclusive(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T00:00:00")
+
+    results = calls.all_calls(date_from="2026-06-01T00:00:00")
+
+    assert len(results) == 1
+
+
+def test_all_calls_filters_by_date_to_inclusive(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T23:59:59")
+
+    results = calls.all_calls(date_to="2026-06-01T23:59:59")
+
+    assert len(results) == 1
+
+
+def test_all_calls_excludes_calls_outside_range(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-05-31T23:59:59")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T12:00:00")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-03T00:00:00")
+
+    results = calls.all_calls(date_from="2026-06-01T00:00:00", date_to="2026-06-02T23:59:59")
+
+    assert [r.call_date for r in results] == ["2026-06-01T12:00:00"]
+
+
+def test_all_calls_returns_everything_when_no_filter_given(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-01-01T00:00:00")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-12-31T23:59:59")
+
+    results = calls.all_calls()
+
+    assert len(results) == 2
+
+
 def test_sync_state_roundtrip(connection):
     state = SyncStateRepository(connection)
     assert state.get("last_sync_at") is None
