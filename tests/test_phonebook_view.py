@@ -150,6 +150,42 @@ def test_add_or_edit_number_ignores_anonymous_number(qtbot, connection, mocker):
     assert tab._model.rowCount() == 0
 
 
+def test_table_sorting_cycles_and_edit_still_resolves_correct_contact(qtbot, connection, mocker):
+    repo = LocalPhonebookRepository(connection)
+    id_a = repo.create(display_name="Bertha", notes=None, numbers=[])
+    id_b = repo.create(display_name="Anton", notes=None, numbers=[])
+
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    header = tab._table.horizontalHeader()
+
+    header.sectionClicked.emit(0)  # Name aufsteigend
+    assert tab._proxy.data(tab._proxy.index(0, 0)) == "Anton"
+
+    tab._table.selectRow(0)
+    assert tab._selected_contact_id() == id_b
+
+    header.sectionClicked.emit(0)  # absteigend
+    assert tab._proxy.data(tab._proxy.index(0, 0)) == "Bertha"
+
+    header.sectionClicked.emit(0)  # zurueck zur Ausgangsreihenfolge
+    # list_all() liefert die Ausgangsreihenfolge bereits alphabetisch (ORDER BY
+    # display_name in LocalPhonebookRepository.list_all) - "unsortiert" ist
+    # hier zufaellig identisch zu "aufsteigend".
+    tab._table.selectRow(0)
+    assert tab._selected_contact_id() == id_b
+
+    def fake_exec(self):
+        self._name_edit.setText("Anton Aktualisiert")
+        return QDialog.DialogCode.Accepted
+
+    mocker.patch.object(ContactEditDialog, "exec", fake_exec)
+    tab._on_edit_clicked()
+
+    assert repo.get(id_b).display_name == "Anton Aktualisiert"
+    assert repo.get(id_a).display_name == "Bertha"  # unveraendert
+
+
 def test_adding_local_contact_renames_matching_call_history_contact(qtbot, connection):
     contacts_repo = ContactRepository(connection)
     contact_id = contacts_repo.upsert("+491234567")

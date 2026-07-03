@@ -32,7 +32,7 @@ from fritz_callhistory.db.repository import (
     PhonebookRepository,
 )
 from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
-from fritz_callhistory.gui.models import PhonebookContactListModel
+from fritz_callhistory.gui.models import DataclassSortProxy, PhonebookContactListModel, install_tristate_sorting
 from fritz_callhistory.gui.workers import ImportFromBoxFn, ImportFromBoxWorker
 from fritz_callhistory.sync.phonebook_io import (
     ImportedContact,
@@ -100,14 +100,25 @@ class PhonebookTab(QWidget):
         button_row.addWidget(self._import_from_box_button)
 
         self._model = PhonebookContactListModel()
+        self._proxy = DataclassSortProxy(
+            row_getter=self._model.contact_at,
+            key_fns={
+                0: lambda c: (c.display_name or "").lower(),
+                1: lambda c: c.numbers[0].number_raw if c.numbers else "",
+                2: lambda c: c.notes or "",
+            },
+        )
+        self._proxy.setSourceModel(self._model)
+
         self._table = QTableView()
-        self._table.setModel(self._model)
+        self._table.setModel(self._proxy)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self._table.doubleClicked.connect(lambda _index: self._on_edit_clicked())
+        install_tristate_sorting(self._table, self._proxy)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._search_edit)
@@ -123,7 +134,8 @@ class PhonebookTab(QWidget):
         indexes = self._table.selectionModel().selectedRows()
         if not indexes:
             return None
-        return self._model.contact_at(indexes[0].row()).id
+        source_row = self._proxy.mapToSource(indexes[0]).row()
+        return self._model.contact_at(source_row).id
 
     def _after_local_change(self) -> None:
         self._reload()

@@ -153,7 +153,7 @@ def test_manual_date_edit_activates_filter(qtbot, connection):
     assert view._model.rowCount() == 0
 
 
-def test_clicking_row_emits_contact_selected_with_contact_id(qtbot, connection):
+def test_double_clicking_name_number_column_emits_contact_selected(qtbot, connection):
     contacts = ContactRepository(connection)
     calls = CallRepository(connection)
     contact_id = contacts.upsert("+491234567")
@@ -163,9 +163,41 @@ def test_clicking_row_emits_contact_selected_with_contact_id(qtbot, connection):
     qtbot.addWidget(view)
 
     with qtbot.waitSignal(view.contact_selected, timeout=1000) as blocker:
-        view._on_row_clicked(view._model.index(0, 0))
+        view._on_row_double_clicked(view._model.index(0, 2))
 
     assert blocker.args == [contact_id]
+
+
+def test_double_clicking_other_column_does_not_emit_contact_selected(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    signal_spy = []
+    view.contact_selected.connect(signal_spy.append)
+
+    view._on_row_double_clicked(view._model.index(0, 0))
+
+    assert signal_spy == []
+
+
+def test_single_click_no_longer_navigates(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    signal_spy = []
+    view.contact_selected.connect(signal_spy.append)
+
+    view._table.clicked.emit(view._model.index(0, 2))
+
+    assert signal_spy == []
 
 
 def test_last_seen_at_is_lazily_initialized_on_first_use(qtbot, connection):
@@ -327,7 +359,7 @@ def test_on_live_connected_ignores_unknown_connection_id(qtbot, connection):
     assert view._model.rowCount() == 0
 
 
-def test_on_live_disconnected_removes_entry_and_emits_signal(qtbot, connection):
+def test_on_live_disconnected_keeps_row_relabeled_as_incoming(qtbot, connection):
     view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
     qtbot.addWidget(view)
     view.on_live_ring("1", "030 1234567", "069987654")
@@ -336,7 +368,26 @@ def test_on_live_disconnected_removes_entry_and_emits_signal(qtbot, connection):
     with qtbot.waitSignal(view.live_call_ended, timeout=1000):
         view.on_live_disconnected("1")
 
-    assert view._model.rowCount() == 0
+    # Zeile bleibt sichtbar (id=-1-Sentinel), statt zu verschwinden - jetzt
+    # als normaler "Eingehend"-Anruf dargestellt, bis der Sync abschliesst.
+    assert view._model.rowCount() == 1
+    assert view._model.call_at(0).call_type == 1
+    assert view._model.call_at(0).id == -1
+
+
+def test_clear_ended_live_calls_removes_only_ended_entries(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "030 1234567", "069987654")
+    view.on_live_ring("2", "030 7654321", "069987654")
+    view.on_live_disconnected("1")
+    assert view._model.rowCount() == 2
+
+    view.clear_ended_live_calls()
+    view.reload()
+
+    assert view._model.rowCount() == 1
+    assert view._model.call_at(0).caller_number == "030 7654321"
 
 
 def test_on_live_disconnected_ignores_unknown_connection_id(qtbot, connection):
@@ -374,6 +425,50 @@ def test_live_call_groups_under_existing_contact(qtbot, connection):
 
     assert view._model.call_at(0).contact_id == contact_id
     assert view._model.call_at(0).contact_display_name == "Max Mustermann"
+
+
+def test_table_sorting_cycles_asc_desc_unsorted(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Bertha")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Anton")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    header = view._table.horizontalHeader()
+
+    header.sectionClicked.emit(2)  # Name/Nummer aufsteigend
+    assert view._proxy.data(view._proxy.index(0, 2)) == "Anton"
+
+    header.sectionClicked.emit(2)  # absteigend
+    assert view._proxy.data(view._proxy.index(0, 2)) == "Bertha"
+
+    header.sectionClicked.emit(2)  # zurueck zur Ausgangsreihenfolge (neueste zuerst)
+    assert view._proxy.data(view._proxy.index(0, 2)) == "Anton"
+
+
+def test_double_click_navigates_to_correct_contact_while_sorted(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Bertha")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Anton")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    view._table.horizontalHeader().sectionClicked.emit(2)  # Name/Nummer aufsteigend
+
+    with qtbot.waitSignal(view.contact_selected, timeout=1000) as blocker:
+        view._on_row_double_clicked(view._proxy.index(0, 2))
+
+    assert blocker.args == [contact_b]  # "Anton" steht jetzt in Zeile 0
 
 
 def test_live_call_excluded_from_new_missed_preset(qtbot, connection):

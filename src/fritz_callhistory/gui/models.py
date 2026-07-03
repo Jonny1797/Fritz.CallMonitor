@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from collections.abc import Callable
+from datetime import datetime
+from typing import Any
+
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QTableView
 
 from fritz_callhistory.db.repository import CallRecord, CallWithContact, Contact, LocalPhonebookContact
 
@@ -50,7 +55,21 @@ def _call_type_display(call_type: int) -> str:
     return f"{icon} {label}" if icon else label
 
 
-def _port_device_display(device: str | None, port: str | None) -> str:
+def call_number(call: CallRecord) -> str | None:
+    """Die fuer den Nutzer relevante Nummer: bei ausgehenden Anrufen die
+    angerufene, sonst die anrufende - geteilt zwischen der Tabellenanzeige
+    (CallListModel) und dem Doppelklick-Handler in gui/contact_detail.py."""
+    return call.called_number if call.call_type in (3, 11) else call.caller_number
+
+
+def _format_call_date(call_date: str) -> str:
+    """Menschenlesbares deutsches Format statt des rohen ISO8601-Zeitstempels.
+    Ohne Sekunden - der Box-Zeitstempel hat ohnehin nur Minutengenauigkeit
+    (siehe db/migrations/002_add_box_call_id.sql)."""
+    return datetime.fromisoformat(call_date).strftime("%d.%m.%Y, %H:%M")
+
+
+def port_device_display(device: str | None, port: str | None) -> str:
     """"-1" ist der Box-interne Platzhalter fuer "kein Geraet" (z.B. abgelehnte
     Anrufe) - defensiv auch hier herausfiltern, falls er je durchrutscht."""
     parts = [value for value in (device, port) if value and value != "-1"]
@@ -99,7 +118,7 @@ class ContactListModel(QAbstractTableModel):
         if column == 1:
             return contact.primary_number
         if column == 2:
-            return contact.last_call_date or "-"
+            return _format_call_date(contact.last_call_date) if contact.last_call_date else "-"
         if column == 3:
             return str(contact.call_count)
         return None
@@ -179,18 +198,18 @@ class CallListModel(QAbstractTableModel):
         call = self._calls[index.row()]
         column = index.column()
         if column == 0:
-            return call.call_date
+            return _format_call_date(call.call_date)
         if column == 1:
             return _call_type_display(call.call_type)
         if column == 2:
-            return call.called_number if call.call_type in (3, 11) else call.caller_number
+            return call_number(call)
         if column == 3:
             if call.duration_seconds is None:
                 return "-"
             minutes, seconds = divmod(call.duration_seconds, 60)
             return f"{minutes}:{seconds:02d}"
         if column == 4:
-            return _port_device_display(call.device, call.port)
+            return port_device_display(call.device, call.port)
         return None
 
 
@@ -261,7 +280,7 @@ class AllCallsListModel(QAbstractTableModel):
             return None
         column = index.column()
         if column == 0:
-            return call.call_date
+            return _format_call_date(call.call_date)
         if column == 1:
             return _call_type_display(call.call_type)
         if column == 2:
@@ -274,5 +293,65 @@ class AllCallsListModel(QAbstractTableModel):
             minutes, seconds = divmod(call.duration_seconds, 60)
             return f"{minutes}:{seconds:02d}"
         if column == 4:
-            return _port_device_display(call.device, call.port)
+            return port_device_display(call.device, call.port)
         return None
+
+
+class DataclassSortProxy(QSortFilterProxyModel):
+    """Sortiert nach typisierten Feldern der Quell-Dataclass statt der
+    angezeigten Text-Repraesentation (verhindert z.B. lexikographische
+    Fehlsortierung bei 'm:ss'-Dauer oder Anrufzahlen). row_getter ist die
+    bestehende contact_at()/call_at()-Methode des Quellmodells; key_fns bildet
+    Spaltenindex auf eine Funktion ab, die aus der Zeile einen vergleichbaren
+    Schluessel extrahiert. Spalten ohne Eintrag fallen auf den Standard-
+    Textvergleich zurueck."""
+
+    def __init__(
+        self,
+        row_getter: Callable[[int], Any],
+        key_fns: dict[int, Callable[[Any], Any]],
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._row_getter = row_getter
+        self._key_fns = key_fns
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        key_fn = self._key_fns.get(left.column())
+        if key_fn is None:
+            return super().lessThan(left, right)
+        a = key_fn(self._row_getter(left.row()))
+        b = key_fn(self._row_getter(right.row()))
+        if a is None:
+            return True
+        if b is None:
+            return False
+        return a < b
+
+
+def install_tristate_sorting(table: QTableView, proxy: QSortFilterProxyModel) -> None:
+    """Klick 1: aufsteigend, Klick 2: absteigend, Klick 3: zurueck zur
+    Ausgangsreihenfolge. QTableView.setSortingEnabled(True) allein bietet nur
+    einen 2-stufigen Toggle (auf-/absteigend), daher hier manuell per
+    sectionClicked verwaltet."""
+    header = table.horizontalHeader()
+    header.setSectionsClickable(True)
+    header.setSortIndicatorShown(False)
+    state = {"column": -1, "order": Qt.SortOrder.AscendingOrder}
+
+    def on_section_clicked(column: int) -> None:
+        if state["column"] != column:
+            state["column"], state["order"] = column, Qt.SortOrder.AscendingOrder
+        elif state["order"] == Qt.SortOrder.AscendingOrder:
+            state["order"] = Qt.SortOrder.DescendingOrder
+        else:
+            state["column"] = -1
+        if state["column"] == -1:
+            header.setSortIndicatorShown(False)
+            proxy.sort(-1)
+        else:
+            header.setSortIndicatorShown(True)
+            header.setSortIndicator(state["column"], state["order"])
+            proxy.sort(state["column"], state["order"])
+
+    header.sectionClicked.connect(on_section_clicked)

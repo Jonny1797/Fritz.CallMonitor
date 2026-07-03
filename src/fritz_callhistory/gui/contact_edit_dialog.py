@@ -27,6 +27,15 @@ from fritz_callhistory.db.repository import LocalPhonebookContact
 from fritz_callhistory.sync.normalize import normalize_number
 
 _NUMBER_TYPES = ["home", "mobile", "work", "fax_work", "other"]
+# Werte bleiben die internen Speicher-/Interop-Schluessel (DB, vCard/XML-Export
+# in sync/phonebook_io.py) - nur die angezeigten Labels sind deutsch.
+_NUMBER_TYPE_LABELS = {
+    "home": "Privat",
+    "mobile": "Mobil",
+    "work": "Geschäftlich",
+    "fax_work": "Fax (geschäftlich)",
+    "other": "Sonstige",
+}
 
 
 class ContactEditDialog(QDialog):
@@ -81,9 +90,10 @@ class ContactEditDialog(QDialog):
 
         number_edit = QLineEdit(number_raw)
         type_combo = QComboBox()
-        type_combo.addItems(_NUMBER_TYPES)
+        for value in _NUMBER_TYPES:
+            type_combo.addItem(_NUMBER_TYPE_LABELS[value], value)
         if number_type in _NUMBER_TYPES:
-            type_combo.setCurrentText(number_type)
+            type_combo.setCurrentIndex(type_combo.findData(number_type))
         remove_button = QPushButton("✕")
         remove_button.setFixedWidth(28)
         remove_button.clicked.connect(partial(self._remove_number_row, container))
@@ -136,5 +146,5 @@ class ContactEditDialog(QDialog):
             if is_anonymous or normalized in seen_normalized:
                 continue
             seen_normalized.add(normalized)
-            numbers.append((raw, normalized, type_combo.currentText()))
+            numbers.append((raw, normalized, type_combo.currentData()))
         return name, notes, numbers

@@ -33,6 +33,9 @@ from fritz_callhistory.gui.models import (
     LIVE_CONNECTED_CALL_TYPE,
     LIVE_RINGING_CALL_TYPE,
     AllCallsListModel,
+    DataclassSortProxy,
+    install_tristate_sorting,
+    port_device_display,
 )
 from fritz_callhistory.sync.normalize import normalize_number
 
@@ -50,13 +53,13 @@ class _LiveCall:
     contact_id: int
     call_type: int  # LIVE_RINGING_CALL_TYPE oder LIVE_CONNECTED_CALL_TYPE
     started_at: str
+    ended: bool = False  # Anruf beendet, wartet auf den naechsten erfolgreichen Sync (siehe on_live_disconnected)
 
 
 class AllCallsView(QWidget):
     contact_selected = Signal(int)
     new_missed_calls_changed = Signal(int)
     live_call_ended = Signal()
-    number_double_clicked = Signal(str)
 
     def __init__(
         self,
@@ -113,6 +116,7 @@ class AllCallsView(QWidget):
         # abgesetzt, um Verwechslung mit einem reinen Filter-Klick zu vermeiden.
         self._new_missed_count_label = QLabel()
         self._mark_seen_button = QPushButton("Als gesehen markieren")
+        self._mark_seen_button.setToolTip("Alle neu verpassten Anrufe als gesehen markieren")
         self._mark_seen_button.clicked.connect(self._on_mark_seen_clicked)
 
         action_row = QHBoxLayout()
@@ -121,15 +125,27 @@ class AllCallsView(QWidget):
         action_row.addWidget(self._mark_seen_button)
 
         self._model = AllCallsListModel()
+        self._proxy = DataclassSortProxy(
+            row_getter=self._model.call_at,
+            key_fns={
+                0: lambda c: c.call_date,
+                1: lambda c: c.call_type,
+                2: lambda c: (c.contact_display_name or c.contact_primary_number or "").lower(),
+                3: lambda c: c.duration_seconds,
+                4: lambda c: port_device_display(c.device, c.port),
+            },
+        )
+        self._proxy.setSourceModel(self._model)
+
         self._table = QTableView()
-        self._table.setModel(self._model)
+        self._table.setModel(self._proxy)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
-        self._table.clicked.connect(self._on_row_clicked)
         self._table.doubleClicked.connect(self._on_row_double_clicked)
+        install_tristate_sorting(self._table, self._proxy)
 
         layout = QVBoxLayout(self)
         layout.addLayout(filter_row)
@@ -228,7 +244,11 @@ class AllCallsView(QWidget):
                 CallWithContact(
                     id=-1,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
                     contact_id=live.contact_id,
-                    call_type=live.call_type,
+                    # Beendete Anrufe werden generisch als "Eingehend" dargestellt,
+                    # statt sofort zu verschwinden - CallMonitor verfolgt ohnehin
+                    # ausschliesslich eingehende RING-Ereignisse (siehe
+                    # fritz/callmonitor.py's parse_event), daher immer korrekt.
+                    call_type=1 if live.ended else live.call_type,
                     caller_number=live.caller_number,
                     called_number=live.called_number,
                     port=None,
@@ -264,9 +284,24 @@ class AllCallsView(QWidget):
             self._reload()
 
     def on_live_disconnected(self, connection_id: str) -> None:
-        if self._live_calls.pop(connection_id, None) is not None:
+        # Der Eintrag wird nicht sofort entfernt, sondern nur als beendet
+        # markiert (siehe _live_calls_as_call_with_contact) - so bleibt die
+        # Zeile sichtbar, bis der dadurch ausgeloeste Sync (live_call_ended
+        # -> MainWindow._trigger_sync) den echten Eintrag gebracht hat, statt
+        # kurz zu verschwinden und dann wieder aufzutauchen.
+        live = self._live_calls.get(connection_id)
+        if live is not None:
+            live.ended = True
             self._reload()
             self.live_call_ended.emit()
+
+    def clear_ended_live_calls(self) -> None:
+        """Entfernt beendete Live-Anrufe, nachdem der dadurch ausgeloeste Sync
+        abgeschlossen ist (siehe MainWindow._on_sync_finished) - der echte,
+        jetzt synchronisierte Eintrag ersetzt die Platzhalterzeile dann nahtlos."""
+        ended_ids = [cid for cid, live in self._live_calls.items() if live.ended]
+        for connection_id in ended_ids:
+            del self._live_calls[connection_id]
 
     def clear_live_calls(self) -> None:
         """Verwirft alle laufend verfolgten Anrufe, z.B. wenn die CallMonitor-
@@ -286,16 +321,12 @@ class AllCallsView(QWidget):
             )
         self._new_missed_count = count
         self._new_missed_count_label.setText(f"{count} neu verpasst" if count else "")
+        self._mark_seen_button.setEnabled(count > 0)
         self.new_missed_calls_changed.emit(count)
-
-    def _on_row_clicked(self, index: QModelIndex) -> None:
-        call = self._model.call_at(index.row())
-        self.contact_selected.emit(call.contact_id)
 
     def _on_row_double_clicked(self, index: QModelIndex) -> None:
         if index.column() != _NAME_NUMBER_COLUMN:
             return
-        call = self._model.call_at(index.row())
-        if call.contact_is_anonymous:
-            return
-        self.number_double_clicked.emit(call.contact_primary_number)
+        source_row = self._proxy.mapToSource(index).row()
+        call = self._model.call_at(source_row)
+        self.contact_selected.emit(call.contact_id)

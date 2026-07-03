@@ -1,17 +1,23 @@
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTableView
 
 from fritz_callhistory.db.repository import (
     CallRecord,
     CallWithContact,
+    Contact,
     LocalPhonebookContact,
     PhonebookNumber,
 )
 from fritz_callhistory.gui.models import (
     AllCallsListModel,
     CallListModel,
+    ContactListModel,
+    DataclassSortProxy,
     PhonebookContactListModel,
-    _port_device_display,
+    _format_call_date,
+    install_tristate_sorting,
+    port_device_display,
 )
 
 
@@ -128,6 +134,60 @@ def test_set_last_seen_at_updates_highlighting(qtbot):
 
 
 @pytest.mark.parametrize(
+    "call_date,expected",
+    [
+        ("2026-06-01T10:00:00", "01.06.2026, 10:00"),
+        ("2026-12-13T16:10:42", "13.12.2026, 16:10"),
+    ],
+)
+def test_format_call_date_is_human_readable_without_seconds(call_date, expected):
+    assert _format_call_date(call_date) == expected
+
+
+def test_call_list_model_uses_human_readable_date(qtbot):
+    call = _call_record(call_type=1)
+    call.call_date = "2026-07-03T14:22:00"
+    model = CallListModel([call])
+
+    assert model.data(model.index(0, 0)) == "03.07.2026, 14:22"
+
+
+def test_all_calls_list_model_uses_human_readable_date(qtbot):
+    call = _call_with_contact(call_type=1, call_date="2026-07-03T14:22:00")
+    model = AllCallsListModel([call])
+
+    assert model.data(model.index(0, 0)) == "03.07.2026, 14:22"
+
+
+def test_contact_list_model_letzter_kontakt_uses_human_readable_date(qtbot):
+    contact = Contact(
+        id=1,
+        primary_number="+491234567",
+        display_name="Max Mustermann",
+        is_anonymous=False,
+        last_call_date="2026-07-03T14:22:00",
+        call_count=1,
+    )
+    model = ContactListModel([contact])
+
+    assert model.data(model.index(0, 2)) == "03.07.2026, 14:22"
+
+
+def test_contact_list_model_letzter_kontakt_falls_back_to_dash(qtbot):
+    contact = Contact(
+        id=1,
+        primary_number="+491234567",
+        display_name=None,
+        is_anonymous=False,
+        last_call_date=None,
+        call_count=0,
+    )
+    model = ContactListModel([contact])
+
+    assert model.data(model.index(0, 2)) == "-"
+
+
+@pytest.mark.parametrize(
     "device,port,expected",
     [
         ("-1", "1", "1"),
@@ -138,7 +198,7 @@ def test_set_last_seen_at_updates_highlighting(qtbot):
     ],
 )
 def test_port_device_display_filters_placeholder(device, port, expected):
-    assert _port_device_display(device, port) == expected
+    assert port_device_display(device, port) == expected
 
 
 def test_call_list_model_device_column_hides_placeholder(qtbot):
@@ -186,3 +246,68 @@ def test_phonebook_contact_list_model_empty_numbers_and_notes(qtbot):
 
     assert model.data(model.index(0, 1)) == "-"
     assert model.data(model.index(0, 2)) == "-"
+
+
+def test_dataclass_sort_proxy_sorts_duration_numerically_not_lexicographically(qtbot):
+    # "2:30" > "10:05" lexikographisch, aber 150s < 605s - der Proxy muss nach
+    # dem rohen duration_seconds-Feld sortieren, nicht nach dem "m:ss"-Anzeigetext.
+    short_call = _call_record(call_type=1)
+    short_call.duration_seconds = 150
+    long_call = _call_record(call_type=1)
+    long_call.duration_seconds = 605
+    model = CallListModel([long_call, short_call])
+    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={3: lambda c: c.duration_seconds})
+    proxy.setSourceModel(model)
+
+    proxy.sort(3, Qt.SortOrder.AscendingOrder)
+
+    assert proxy.data(proxy.index(0, 3)) == "2:30"
+    assert proxy.data(proxy.index(1, 3)) == "10:05"
+
+
+def test_dataclass_sort_proxy_none_keys_sort_first(qtbot):
+    with_duration = _call_record(call_type=1)
+    with_duration.duration_seconds = 10
+    without_duration = _call_record(call_type=2)
+    without_duration.duration_seconds = None
+    model = CallListModel([with_duration, without_duration])
+    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={3: lambda c: c.duration_seconds})
+    proxy.setSourceModel(model)
+
+    proxy.sort(3, Qt.SortOrder.AscendingOrder)
+
+    assert proxy.data(proxy.index(0, 3)) == "-"
+
+
+def test_install_tristate_sorting_cycles_ascending_descending_unsorted(qtbot):
+    first = _call_record(call_type=1)
+    first.call_date = "2026-06-01T10:00:00"
+    second = _call_record(call_type=1)
+    second.call_date = "2026-06-02T10:00:00"
+    model = CallListModel([first, second])
+    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={0: lambda c: c.call_date})
+    proxy.setSourceModel(model)
+    table = QTableView()
+    table.setModel(proxy)
+    qtbot.addWidget(table)
+    install_tristate_sorting(table, proxy)
+    header = table.horizontalHeader()
+
+    header.sectionClicked.emit(0)  # aufsteigend
+    assert [proxy.data(proxy.index(r, 0)) for r in range(2)] == [
+        "01.06.2026, 10:00",
+        "02.06.2026, 10:00",
+    ]
+
+    header.sectionClicked.emit(0)  # absteigend
+    assert [proxy.data(proxy.index(r, 0)) for r in range(2)] == [
+        "02.06.2026, 10:00",
+        "01.06.2026, 10:00",
+    ]
+
+    header.sectionClicked.emit(0)  # zurueck zur Ausgangsreihenfolge
+    assert [proxy.data(proxy.index(r, 0)) for r in range(2)] == [
+        "01.06.2026, 10:00",
+        "02.06.2026, 10:00",
+    ]
+    assert header.isSortIndicatorShown() is False

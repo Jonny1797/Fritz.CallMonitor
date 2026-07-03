@@ -26,13 +26,13 @@ from fritz_callhistory.db.repository import ContactRepository
 from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.contact_detail import ContactDetailWidget
-from fritz_callhistory.gui.models import ContactListModel
+from fritz_callhistory.gui.models import ContactListModel, DataclassSortProxy, install_tristate_sorting
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from fritz_callhistory.gui.workers import ImportFromBoxFn, SyncFn, SyncWorker
 from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
-_CONTACT_NUMBER_COLUMN = 1
+_CONTACT_PHONEBOOK_COLUMNS = (0, 1)  # Name, Nummer
 
 
 class MainWindow(QMainWindow):
@@ -66,17 +66,42 @@ class MainWindow(QMainWindow):
         self._sync_button.clicked.connect(self._trigger_sync)
         self._sync_button.setEnabled(self._sync_fn is not None)
 
+        self._contact_proxy = DataclassSortProxy(
+            row_getter=self._contact_model.contact_at,
+            key_fns={
+                0: lambda c: (c.display_name or "").lower(),
+                1: lambda c: c.primary_number,
+                2: lambda c: c.last_call_date,
+                3: lambda c: c.call_count,
+            },
+        )
+        self._contact_proxy.setSourceModel(self._contact_model)
+
         self._table = QTableView()
-        self._table.setModel(self._contact_model)
+        self._table.setModel(self._contact_proxy)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self._table.doubleClicked.connect(self._on_contact_table_double_clicked)
+        install_tristate_sorting(self._table, self._contact_proxy)
 
         self._detail = ContactDetailWidget(connection)
         self._contact_model.modelReset.connect(self._detail.clear)
+
+        # Titel/Untertitel des ausgewaehlten Kontakts laufen ueber die gesamte
+        # Breite OBERHALB des Splitters, statt (wie frueher) nur ueber der
+        # rechten Anrufliste zu stehen - sonst waere die linke Kontaktliste um
+        # genau diese Kopfzeilenhoehe kuerzer als die rechte Tabelle (der
+        # Splitter gibt beiden Kindern dieselbe Gesamthoehe, aber nur die
+        # rechte Seite haette intern eine Kopfzeile). So haben beide Splitter-
+        # Kinder von Anfang an nur eine Tabelle als Inhalt und werden dadurch
+        # automatisch gleich hoch.
+        detail_header_row = QHBoxLayout()
+        detail_header_row.addWidget(self._detail.title_label)
+        detail_header_row.addWidget(self._detail.subtitle_label)
+        detail_header_row.addStretch()
 
         splitter = QSplitter()
         splitter.addWidget(self._table)
@@ -87,7 +112,12 @@ class MainWindow(QMainWindow):
         contacts_tab = QWidget()
         contacts_layout = QVBoxLayout(contacts_tab)
         contacts_layout.addWidget(self._search_edit)
-        contacts_layout.addWidget(splitter)
+        contacts_layout.addLayout(detail_header_row)
+        # stretch=1: ohne das teilt Qt den uebrigen vertikalen Platz zwischen
+        # der Kopfzeile (QLabels sind per Default "Preferred", also wachstums-
+        # faehig, nicht nur der Splitter) etwa haelftig auf - der Splitter soll
+        # aber den gesamten Platz bekommen, die Kopfzeile nur ihre Zeilenhoehe.
+        contacts_layout.addWidget(splitter, 1)
 
         self._all_calls_view = AllCallsView(connection)
         self._all_calls_view.contact_selected.connect(self._on_all_calls_contact_selected)
@@ -97,7 +127,6 @@ class MainWindow(QMainWindow):
         self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
         self._phonebook_tab.contacts_changed.connect(self.reload_contacts)
         self._detail.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
-        self._all_calls_view.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(contacts_tab, "Kontakte")
@@ -193,14 +222,16 @@ class MainWindow(QMainWindow):
         self._search_timer.stop()
         self.reload_contacts()
         self._tabs.setCurrentIndex(0)
-        row = self._contact_model.index_of(contact_id)
-        if row is not None:
-            self._table.selectRow(row)
+        source_row = self._contact_model.index_of(contact_id)
+        if source_row is not None:
+            proxy_row = self._contact_proxy.mapFromSource(self._contact_model.index(source_row, 0)).row()
+            self._table.selectRow(proxy_row)
 
     def _on_contact_table_double_clicked(self, index) -> None:
-        if index.column() != _CONTACT_NUMBER_COLUMN:
+        if index.column() not in _CONTACT_PHONEBOOK_COLUMNS:
             return
-        contact = self._contact_model.contact_at(index.row())
+        source_row = self._contact_proxy.mapToSource(index).row()
+        contact = self._contact_model.contact_at(source_row)
         if contact.is_anonymous:
             return
         self._phonebook_tab.add_or_edit_number(contact.primary_number)
@@ -210,7 +241,8 @@ class MainWindow(QMainWindow):
         if not indexes:
             self._detail.clear()
             return
-        contact = self._contact_model.contact_at(indexes[0].row())
+        source_row = self._contact_proxy.mapToSource(indexes[0]).row()
+        contact = self._contact_model.contact_at(source_row)
         self._detail.show_contact(contact)
 
     def _trigger_sync(self) -> None:
@@ -230,6 +262,7 @@ class MainWindow(QMainWindow):
             f"Sync abgeschlossen: {inserted} neue Anrufe, {updated} Kontakte aktualisiert", 5000
         )
         self.reload_contacts()
+        self._all_calls_view.clear_ended_live_calls()
         self._all_calls_view.reload()
 
     def _on_sync_failed(self, message: str) -> None:
