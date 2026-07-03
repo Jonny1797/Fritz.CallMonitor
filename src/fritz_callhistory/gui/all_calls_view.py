@@ -40,6 +40,7 @@ _ISO_DAY_START = "T00:00:00"
 _ISO_DAY_END = "T23:59:59"
 _MISSED_CALL_TYPE = 2
 _LAST_SEEN_KEY = "missed_calls_last_seen_at"
+_NAME_NUMBER_COLUMN = 2
 
 
 @dataclass
@@ -55,6 +56,7 @@ class AllCallsView(QWidget):
     contact_selected = Signal(int)
     new_missed_calls_changed = Signal(int)
     live_call_ended = Signal()
+    number_double_clicked = Signal(str)
 
     def __init__(
         self,
@@ -127,6 +129,7 @@ class AllCallsView(QWidget):
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self._table.clicked.connect(self._on_row_clicked)
+        self._table.doubleClicked.connect(self._on_row_double_clicked)
 
         layout = QVBoxLayout(self)
         layout.addLayout(filter_row)
@@ -288,3 +291,11 @@ class AllCallsView(QWidget):
     def _on_row_clicked(self, index: QModelIndex) -> None:
         call = self._model.call_at(index.row())
         self.contact_selected.emit(call.contact_id)
+
+    def _on_row_double_clicked(self, index: QModelIndex) -> None:
+        if index.column() != _NAME_NUMBER_COLUMN:
+            return
+        call = self._model.call_at(index.row())
+        if call.contact_is_anonymous:
+            return
+        self.number_double_clicked.emit(call.contact_primary_number)

@@ -159,6 +159,9 @@ class CallListModel(QAbstractTableModel):
         self._calls = calls
         self.endResetModel()
 
+    def call_at(self, row: int) -> CallRecord:
+        return self._calls[row]
+
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._calls)
 

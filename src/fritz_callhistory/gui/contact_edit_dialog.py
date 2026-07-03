@@ -30,7 +30,12 @@ _NUMBER_TYPES = ["home", "mobile", "work", "fax_work", "other"]
 
 
 class ContactEditDialog(QDialog):
-    def __init__(self, existing: LocalPhonebookContact | None = None, parent=None) -> None:
+    def __init__(
+        self,
+        existing: LocalPhonebookContact | None = None,
+        prefill_number: str | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Kontakt bearbeiten" if existing else "Neuer Kontakt")
         self._existing = existing
@@ -44,7 +49,11 @@ class ContactEditDialog(QDialog):
         for number in (existing.numbers if existing else []):
             self._add_number_row(number.number_raw, number.number_type)
         if not self._number_rows:
-            self._add_number_row()
+            # prefill_number: Einstiegspunkt "Nummer aus Kontakte/Alle Anrufe
+            # per Doppelklick zum Telefonbuch hinzufuegen" (gui/phonebook_view.py's
+            # add_or_edit_number) - nur relevant, wenn noch kein bestehender
+            # Kontakt geladen wurde (sonst kommen die Nummern schon von existing).
+            self._add_number_row(prefill_number or "")
 
         add_number_button = QPushButton("+ Nummer hinzufügen")
         add_number_button.clicked.connect(lambda: self._add_number_row())

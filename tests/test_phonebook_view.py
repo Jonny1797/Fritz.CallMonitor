@@ -97,6 +97,59 @@ def test_delete_contact_removes_it(qtbot, connection, mocker):
     assert repo.list_all() == []
 
 
+def test_add_or_edit_number_creates_new_contact_with_prefilled_number(qtbot, connection, mocker):
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+
+    captured_prefill = {}
+
+    def fake_exec(self):
+        captured_prefill["value"] = self._number_rows[0][1].text()
+        self._name_edit.setText("Max Mustermann")
+        return QDialog.DialogCode.Accepted
+
+    mocker.patch.object(ContactEditDialog, "exec", fake_exec)
+
+    tab.add_or_edit_number("0171 2345678")
+
+    assert captured_prefill["value"] == "0171 2345678"
+    assert tab._model.rowCount() == 1
+    assert tab._model.contact_at(0).display_name == "Max Mustermann"
+
+
+def test_add_or_edit_number_edits_existing_contact_for_matching_number(qtbot, connection, mocker):
+    repo = LocalPhonebookRepository(connection)
+    contact_id = repo.create(
+        display_name="Max Mustermann", notes=None, numbers=[("0171 2345678", "+491712345678", "mobile")]
+    )
+
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+
+    def fake_exec(self):
+        assert self._existing is not None and self._existing.id == contact_id
+        self._name_edit.setText("Max M. Aktualisiert")
+        return QDialog.DialogCode.Accepted
+
+    mocker.patch.object(ContactEditDialog, "exec", fake_exec)
+
+    tab.add_or_edit_number("0171 2345678")
+
+    assert repo.get(contact_id).display_name == "Max M. Aktualisiert"
+    assert tab._model.rowCount() == 1
+
+
+def test_add_or_edit_number_ignores_anonymous_number(qtbot, connection, mocker):
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    exec_spy = mocker.patch.object(ContactEditDialog, "exec")
+
+    tab.add_or_edit_number("")
+
+    exec_spy.assert_not_called()
+    assert tab._model.rowCount() == 0
+
+
 def test_adding_local_contact_renames_matching_call_history_contact(qtbot, connection):
     contacts_repo = ContactRepository(connection)
     contact_id = contacts_repo.upsert("+491234567")

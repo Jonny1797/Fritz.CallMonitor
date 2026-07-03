@@ -410,6 +410,23 @@ class LocalPhonebookRepository:
         ).fetchone()
         return row["display_name"] if row else None
 
+    def find_by_number(self, number_normalized: str) -> LocalPhonebookContact | None:
+        """Wie lookup_name, aber gibt den vollen Kontakt zurueck - fuer den
+        Doppelklick-auf-Nummer-Einstiegspunkt (gui/phonebook_view.py's
+        add_or_edit_number), der entscheiden muss, ob bearbeitet oder neu
+        angelegt wird."""
+        row = self._conn.execute(
+            """
+            SELECT pc.id AS id
+            FROM phonebook_contact_numbers pcn
+            JOIN phonebook_contacts pc ON pc.id = pcn.phonebook_contact_id
+            WHERE pcn.number_normalized = ?
+            ORDER BY pc.id LIMIT 1
+            """,
+            (number_normalized,),
+        ).fetchone()
+        return self._load(row["id"]) if row else None
+
     def find_by_box_uniqueid(self, box_uniqueid: str) -> LocalPhonebookContact | None:
         row = self._conn.execute(
             "SELECT id FROM phonebook_contacts WHERE box_uniqueid = ?", (box_uniqueid,)

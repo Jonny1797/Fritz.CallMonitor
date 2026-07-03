@@ -32,6 +32,7 @@ from fritz_callhistory.gui.workers import ImportFromBoxFn, SyncFn, SyncWorker
 from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
+_CONTACT_NUMBER_COLUMN = 1
 
 
 class MainWindow(QMainWindow):
@@ -72,6 +73,7 @@ class MainWindow(QMainWindow):
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        self._table.doubleClicked.connect(self._on_contact_table_double_clicked)
 
         self._detail = ContactDetailWidget(connection)
         self._contact_model.modelReset.connect(self._detail.clear)
@@ -94,6 +96,8 @@ class MainWindow(QMainWindow):
 
         self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
         self._phonebook_tab.contacts_changed.connect(self.reload_contacts)
+        self._detail.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
+        self._all_calls_view.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(contacts_tab, "Kontakte")
@@ -192,6 +196,14 @@ class MainWindow(QMainWindow):
         row = self._contact_model.index_of(contact_id)
         if row is not None:
             self._table.selectRow(row)
+
+    def _on_contact_table_double_clicked(self, index) -> None:
+        if index.column() != _CONTACT_NUMBER_COLUMN:
+            return
+        contact = self._contact_model.contact_at(index.row())
+        if contact.is_anonymous:
+            return
+        self._phonebook_tab.add_or_edit_number(contact.primary_number)
 
     def _on_selection_changed(self, selected, deselected) -> None:
         indexes = selected.indexes()

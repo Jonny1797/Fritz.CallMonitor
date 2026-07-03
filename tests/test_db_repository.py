@@ -396,6 +396,23 @@ def test_local_phonebook_delete_removes_contact_and_numbers(connection):
     assert row[0] == 0
 
 
+def test_local_phonebook_find_by_number_returns_matching_contact(connection):
+    repo = LocalPhonebookRepository(connection)
+    contact_id = repo.create(
+        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home")]
+    )
+
+    found = repo.find_by_number("+491234567")
+
+    assert found is not None
+    assert found.id == contact_id
+
+
+def test_local_phonebook_find_by_number_returns_none_when_missing(connection):
+    repo = LocalPhonebookRepository(connection)
+    assert repo.find_by_number("+491234567") is None
+
+
 def test_local_phonebook_lookup_name_ties_break_by_lowest_id(connection):
     repo = LocalPhonebookRepository(connection)
     repo.create(display_name="Erster", notes=None, numbers=[("+491234567", "+491234567", "home")])

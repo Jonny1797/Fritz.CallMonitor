@@ -362,3 +362,104 @@ def test_call_monitor_signals_wired_to_all_calls_view(qtbot, connection, mocker)
     mock_thread.connection_lost.connect.assert_any_call(window._on_call_monitor_connection_lost)
     mock_thread.connection_lost.connect.assert_any_call(window._all_calls_view.clear_live_calls)
     mock_thread.start.assert_called_once()
+
+
+def test_double_clicking_contact_number_column_offers_to_add_to_phonebook(qtbot, connection, mocker):
+    contacts = ContactRepository(connection)
+    contacts.upsert("+491234567")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    add_or_edit = mocker.patch.object(window._phonebook_tab, "add_or_edit_number")
+
+    window._on_contact_table_double_clicked(window._contact_model.index(0, 1))
+
+    add_or_edit.assert_called_once_with("+491234567")
+
+
+def test_double_clicking_contact_name_column_does_nothing(qtbot, connection, mocker):
+    contacts = ContactRepository(connection)
+    contacts.upsert("+491234567")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    add_or_edit = mocker.patch.object(window._phonebook_tab, "add_or_edit_number")
+
+    window._on_contact_table_double_clicked(window._contact_model.index(0, 0))
+
+    add_or_edit.assert_not_called()
+
+
+def test_double_clicking_call_detail_number_offers_to_add_to_phonebook(qtbot, connection, mocker):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    CallRepository(connection).insert(
+        contact_id=contact_id,
+        call_type=1,
+        caller_number="+491234567",
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date="2026-06-01T10:00:00",
+        duration_seconds=30,
+        raw_name=None,
+    )
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window._table.selectRow(0)
+    add_or_edit = mocker.patch.object(window._phonebook_tab, "add_or_edit_number")
+
+    window._detail._call_table.doubleClicked.emit(window._detail._call_model.index(0, 2))
+
+    add_or_edit.assert_called_once_with("+491234567")
+
+
+def test_double_clicking_all_calls_row_offers_to_add_to_phonebook(qtbot, connection, mocker):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    CallRepository(connection).insert(
+        contact_id=contact_id,
+        call_type=1,
+        caller_number="+491234567",
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date="2026-06-01T10:00:00",
+        duration_seconds=30,
+        raw_name=None,
+    )
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window._all_calls_view.reload()
+    add_or_edit = mocker.patch.object(window._phonebook_tab, "add_or_edit_number")
+
+    window._all_calls_view._table.doubleClicked.emit(window._all_calls_view._model.index(0, 2))
+
+    add_or_edit.assert_called_once_with("+491234567")
+
+
+def test_double_clicking_all_calls_anonymous_row_does_nothing(qtbot, connection, mocker):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("anonymous", is_anonymous=True)
+    CallRepository(connection).insert(
+        contact_id=contact_id,
+        call_type=1,
+        caller_number=None,
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date="2026-06-01T10:00:00",
+        duration_seconds=30,
+        raw_name=None,
+    )
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window._all_calls_view.reload()
+    add_or_edit = mocker.patch.object(window._phonebook_tab, "add_or_edit_number")
+
+    window._all_calls_view._table.doubleClicked.emit(window._all_calls_view._model.index(0, 2))
+
+    add_or_edit.assert_not_called()

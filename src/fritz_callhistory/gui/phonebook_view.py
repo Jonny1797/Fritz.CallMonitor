@@ -46,6 +46,7 @@ from fritz_callhistory.sync.phonebook_io import (
     write_vcard,
     write_xml,
 )
+from fritz_callhistory.sync.normalize import normalize_number
 from fritz_callhistory.sync.service import resolve_contact_names
 
 _IMPORT_FILTER = "Fritz!Box-Telefonbuch (*.xml);;CSV (*.csv);;vCard (*.vcf)"
@@ -148,6 +149,29 @@ class PhonebookTab(QWidget):
             return
         name, notes, numbers = dialog.contact_data()
         self._repo.update(contact_id, display_name=name, notes=notes, numbers=numbers)
+        self._after_local_change()
+
+    def add_or_edit_number(self, number_raw: str) -> None:
+        """Einstiegspunkt fuer Doppelklick auf eine Rufnummer in der Kontakte-
+        oder Alle-Anrufe-Ansicht (main_window.py): oeffnet den Bearbeiten-Dialog
+        fuer den Kontakt, dem diese Nummer bereits gehoert, oder sonst den
+        Neu-Dialog mit vorausgefuellter Nummer."""
+        normalized, is_anonymous = normalize_number(number_raw)
+        if is_anonymous:
+            return
+        existing = self._repo.find_by_number(normalized)
+        dialog = ContactEditDialog(
+            existing=existing,
+            prefill_number=None if existing else number_raw,
+            parent=self,
+        )
+        if dialog.exec() != ContactEditDialog.DialogCode.Accepted:
+            return
+        name, notes, numbers = dialog.contact_data()
+        if existing:
+            self._repo.update(existing.id, display_name=name, notes=notes, numbers=numbers)
+        else:
+            self._repo.create(display_name=name, notes=notes, numbers=numbers)
         self._after_local_change()
 
     def _on_delete_clicked(self) -> None:
