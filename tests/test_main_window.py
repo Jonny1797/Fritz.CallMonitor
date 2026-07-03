@@ -213,13 +213,14 @@ def test_call_monitor_connection_lost_message_shown_only_once(qtbot, connection)
     assert window.statusBar().currentMessage() == ""
 
 
-def test_main_window_has_two_tabs(qtbot, connection):
+def test_main_window_has_three_tabs(qtbot, connection):
     window = MainWindow(connection)
     qtbot.addWidget(window)
 
-    assert window._tabs.count() == 2
+    assert window._tabs.count() == 3
     assert window._tabs.tabText(0) == "Kontakte"
     assert window._tabs.tabText(1) == "Alle Anrufe"
+    assert window._tabs.tabText(2) == "Telefonbuch"
 
 
 def test_existing_widgets_still_reachable_after_tab_refactor(qtbot, connection):

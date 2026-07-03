@@ -1,7 +1,12 @@
 from fritzconnection.lib.fritzcall import Call
 
-from fritz_callhistory.db.repository import CallRepository, ContactRepository, PhonebookRepository
-from fritz_callhistory.sync.service import SyncService
+from fritz_callhistory.db.repository import (
+    CallRepository,
+    ContactRepository,
+    LocalPhonebookRepository,
+    PhonebookRepository,
+)
+from fritz_callhistory.sync.service import SyncService, resolve_contact_names
 
 
 def _make_call(
@@ -12,8 +17,10 @@ def _make_call(
     date: str = "01.06.26 10:00",
     duration: str = "0:05",
     name: str | None = None,
+    call_id: int | None = None,
 ) -> Call:
     call = Call()
+    call.Id = call_id
     call.Type = call_type
     call.CallerNumber = caller_number
     call.CalledNumber = called_number
@@ -48,6 +55,7 @@ def _service(connection, calls=None, phonebooks=None):
         ContactRepository(connection),
         CallRepository(connection),
         PhonebookRepository(connection),
+        LocalPhonebookRepository(connection),
     )
 
 
@@ -170,3 +178,60 @@ def test_sync_phonebook_rerun_replaces_stale_entries(connection):
     assert updated == 1
     contact = ContactRepository(connection).search("")[0]
     assert contact.display_name == "Neuer Name"
+
+
+def test_sync_calls_stores_box_call_id_for_ordering_tiebreak(connection):
+    call = _make_call(call_type=1, caller_number="030 1234567", call_id=42)
+    service = _service(connection, [call])
+    service.sync_calls()
+
+    contact = ContactRepository(connection).search("")[0]
+    records = CallRepository(connection).for_contact(contact.id)
+
+    assert records[0].box_call_id == 42
+
+
+def test_sync_calls_replaces_placeholder_device_with_none(connection):
+    call = _make_call(call_type=10, caller_number="030 1234567")
+    call.Device = "-1"
+    service = _service(connection, [call])
+    service.sync_calls()
+
+    contact = ContactRepository(connection).search("")[0]
+    records = CallRepository(connection).for_contact(contact.id)
+
+    assert records[0].device is None
+
+
+def test_sync_calls_keeps_real_device_value(connection):
+    call = _make_call(call_type=1, caller_number="030 1234567")
+    call.Device = "Fritz!Fon"
+    service = _service(connection, [call])
+    service.sync_calls()
+
+    contact = ContactRepository(connection).search("")[0]
+    records = CallRepository(connection).for_contact(contact.id)
+
+    assert records[0].device == "Fritz!Fon"
+
+
+def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection):
+    call = _make_call(call_type=1, caller_number="030 1234567")
+    service = _service(connection, [call], {0: [("Box-Name", ["030 1234567"])]})
+    service.sync_calls()
+    service.sync_phonebook()
+
+    local_phonebook = LocalPhonebookRepository(connection)
+    local_phonebook.create(
+        display_name="Lokaler Name",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home")],
+    )
+
+    updated = resolve_contact_names(
+        ContactRepository(connection), PhonebookRepository(connection), local_phonebook
+    )
+
+    assert updated == 1
+    contact = ContactRepository(connection).search("")[0]
+    assert contact.display_name == "Lokaler Name"

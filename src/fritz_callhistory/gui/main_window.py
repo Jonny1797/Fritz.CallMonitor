@@ -27,7 +27,8 @@ from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.contact_detail import ContactDetailWidget
 from fritz_callhistory.gui.models import ContactListModel
-from fritz_callhistory.gui.workers import SyncFn, SyncWorker
+from fritz_callhistory.gui.phonebook_view import PhonebookTab
+from fritz_callhistory.gui.workers import ImportFromBoxFn, SyncFn, SyncWorker
 from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         sync_fn: SyncFn | None = None,
         auto_sync_interval_minutes: int | None = None,
         fritzbox_address: str | None = None,
+        import_from_box_fn: ImportFromBoxFn | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -90,9 +92,13 @@ class MainWindow(QMainWindow):
         self._all_calls_view.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
         self._all_calls_view.live_call_ended.connect(self._trigger_sync)
 
+        self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
+        self._phonebook_tab.contacts_changed.connect(self.reload_contacts)
+
         self._tabs = QTabWidget()
         self._tabs.addTab(contacts_tab, "Kontakte")
         self._tabs.addTab(self._all_calls_view, "Alle Anrufe")
+        self._tabs.addTab(self._phonebook_tab, "Telefonbuch")
         # AllCallsView.__init__ hat _reload() bereits vor der obigen Signal-
         # Verbindung ausgefuehrt - die erste new_missed_calls_changed-Emission
         # kam daher ohne Empfaenger an. Deshalb hier einmalig den bereits

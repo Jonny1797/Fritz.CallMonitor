@@ -1,5 +1,5 @@
 from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
-from fritz_callhistory.gui.workers import SyncWorker
+from fritz_callhistory.gui.workers import ImportFromBoxWorker, SyncWorker
 
 
 def test_sync_worker_emits_finished_signal_with_result(qtbot):
@@ -30,6 +30,39 @@ def test_sync_worker_emits_failed_signal_on_unexpected_error(qtbot):
     worker = SyncWorker(sync_fn)
 
     with qtbot.waitSignal(worker.sync_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert "boom" in blocker.args[0]
+
+
+def test_import_from_box_worker_emits_finished_signal_with_result(qtbot):
+    worker = ImportFromBoxWorker(lambda: 5)
+
+    with qtbot.waitSignal(worker.finished_import, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == [5]
+
+
+def test_import_from_box_worker_emits_failed_signal_on_fritzbox_error(qtbot):
+    def import_fn():
+        raise FritzBoxConnectionError("Box nicht erreichbar")
+
+    worker = ImportFromBoxWorker(import_fn)
+
+    with qtbot.waitSignal(worker.import_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == ["Box nicht erreichbar"]
+
+
+def test_import_from_box_worker_emits_failed_signal_on_unexpected_error(qtbot):
+    def import_fn():
+        raise ValueError("boom")
+
+    worker = ImportFromBoxWorker(import_fn)
+
+    with qtbot.waitSignal(worker.import_failed, timeout=2000) as blocker:
         worker.start()
 
     assert "boom" in blocker.args[0]

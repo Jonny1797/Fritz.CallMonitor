@@ -6,7 +6,12 @@ import datetime
 
 from fritzconnection.lib.fritzcall import ACTIVE_OUT_CALL_TYPE, OUT_CALL_TYPE, Call
 
-from fritz_callhistory.db.repository import CallRepository, ContactRepository, PhonebookRepository
+from fritz_callhistory.db.repository import (
+    CallRepository,
+    ContactRepository,
+    LocalPhonebookRepository,
+    PhonebookRepository,
+)
 from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.sync.normalize import normalize_number
 
@@ -34,6 +39,30 @@ def _call_date_iso(call: Call) -> str:
     return str(call.Date)
 
 
+def resolve_contact_names(
+    contacts: ContactRepository,
+    phonebook: PhonebookRepository,
+    local_phonebook: LocalPhonebookRepository,
+) -> int:
+    """Aktualisiert contacts.display_name aus dem lokalen Telefonbuch und dem
+    Box-Telefonbuch-Cache. Das lokale Telefonbuch hat Vorrang, da vom Nutzer
+    gepflegt (der Box-Cache wird komplett ueberschrieben bei jedem Sync).
+
+    Kein Netzwerkzugriff, daher bewusst eine freie Funktion statt einer
+    SyncService-Methode - kann auch von der GUI direkt nach lokalen
+    Telefonbuch-Aenderungen aufgerufen werden, ohne SyncService/FritzBoxClient.
+    """
+    updated = 0
+    for contact in contacts.search(""):
+        name = local_phonebook.lookup_name(contact.primary_number) or phonebook.lookup_name(
+            contact.primary_number
+        )
+        if name and name != contact.display_name:
+            contacts.set_display_name(contact.id, name)
+            updated += 1
+    return updated
+
+
 class SyncService:
     def __init__(
         self,
@@ -41,11 +70,13 @@ class SyncService:
         contacts: ContactRepository,
         calls: CallRepository,
         phonebook: PhonebookRepository,
+        local_phonebook: LocalPhonebookRepository,
     ) -> None:
         self._client = client
         self._contacts = contacts
         self._calls = calls
         self._phonebook = phonebook
+        self._local_phonebook = local_phonebook
 
     def sync_calls(self, *, days: int | None = None) -> int:
         """Holt Anrufe von der Box und übernimmt neue Einträge in die lokale DB.
@@ -65,10 +96,13 @@ class SyncService:
                 caller_number=call.CallerNumber or call.Caller,
                 called_number=call.CalledNumber or call.Called,
                 port=call.Port,
-                device=call.Device,
+                # Die Box sendet "-1" im <Device>-Feld, wenn kein Geraet zutrifft
+                # (z.B. abgelehnte/nicht angenommene Anrufe) - als NULL speichern.
+                device=call.Device if call.Device not in (None, "-1") else None,
                 call_date=_call_date_iso(call),
                 duration_seconds=_duration_seconds(call),
                 raw_name=call.Name,
+                box_call_id=call.id,
             )
             if was_inserted:
                 inserted += 1
@@ -92,10 +126,4 @@ class SyncService:
                     entries.append((name, normalized))
             self._phonebook.replace_entries(phonebook_id, entries)
 
-        updated = 0
-        for contact in self._contacts.search(""):
-            name = self._phonebook.lookup_name(contact.primary_number)
-            if name and name != contact.display_name:
-                self._contacts.set_display_name(contact.id, name)
-                updated += 1
-        return updated
+        return resolve_contact_names(self._contacts, self._phonebook, self._local_phonebook)

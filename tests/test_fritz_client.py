@@ -51,10 +51,11 @@ def test_retry_network_does_not_retry_auth_error():
     assert len(calls) == 1
 
 
-def _make_client(call=None, phonebook=None) -> FritzBoxClient:
+def _make_client(call=None, phonebook=None, connection=None) -> FritzBoxClient:
     client = FritzBoxClient.__new__(FritzBoxClient)
     client._call = call
     client._phonebook = phonebook
+    client._connection = connection
     return client
 
 
@@ -94,3 +95,61 @@ def test_phonebook_ids_translates_connection_error(mocker):
 
     with pytest.raises(FritzBoxConnectionError):
         client.phonebook_ids()
+
+
+_PHONEBOOK_XML = """<?xml version="1.0" encoding="utf-8"?>
+<phonebooks>
+  <phonebook name="Telefonbuch">
+    <contact>
+      <category>0</category>
+      <person><realName>Max Mustermann</realName></person>
+      <telephony nid="2">
+        <number type="mobile" prio="1" id="0">+491234567</number>
+        <number type="home" prio="0" id="1">03012345678</number>
+      </telephony>
+      <uniqueid>7</uniqueid>
+    </contact>
+    <contact>
+      <category>0</category>
+      <person><realName>Ohne Nummer</realName></person>
+      <telephony nid="1" />
+    </contact>
+  </phonebook>
+</phonebooks>
+"""
+
+
+def test_phonebook_contacts_detailed_parses_uniqueid_and_number_type(mocker, tmp_path):
+    # get_xml_root akzeptiert auch Dateipfade als "source" - spart einen echten
+    # HTTP-Mock fuer diesen Test.
+    xml_path = tmp_path / "phonebook.xml"
+    xml_path.write_text(_PHONEBOOK_XML)
+
+    fake_phonebook = mocker.Mock()
+    fake_phonebook.phonebook_info.return_value = {"url": str(xml_path)}
+    fake_connection = mocker.Mock()
+    client = _make_client(phonebook=fake_phonebook, connection=fake_connection)
+
+    contacts = client.phonebook_contacts_detailed(0)
+
+    assert len(contacts) == 2
+    first = contacts[0]
+    assert first.name == "Max Mustermann"
+    assert first.uniqueid == "7"
+    assert [(n.value, n.type) for n in first.numbers] == [
+        ("+491234567", "mobile"),
+        ("03012345678", "home"),
+    ]
+    second = contacts[1]
+    assert second.name == "Ohne Nummer"
+    assert second.uniqueid is None
+    assert second.numbers == []
+
+
+def test_phonebook_contacts_detailed_translates_connection_error(mocker):
+    fake_phonebook = mocker.Mock()
+    fake_phonebook.phonebook_info.side_effect = FritzConnectionException("down")
+    client = _make_client(phonebook=fake_phonebook, connection=mocker.Mock())
+
+    with pytest.raises(FritzBoxConnectionError):
+        client.phonebook_contacts_detailed(0)

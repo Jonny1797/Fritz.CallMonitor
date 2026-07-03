@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor, QFont
 
-from fritz_callhistory.db.repository import CallRecord, CallWithContact, Contact
+from fritz_callhistory.db.repository import CallRecord, CallWithContact, Contact, LocalPhonebookContact
 
 _MISSED_CALL_TYPE = 2
 
@@ -17,6 +17,7 @@ LIVE_RINGING_CALL_TYPE = -1
 LIVE_CONNECTED_CALL_TYPE = -2
 
 _CONTACT_COLUMNS = ("Name", "Nummer", "Letzter Kontakt", "Anrufe")
+_PHONEBOOK_CONTACT_COLUMNS = ("Name", "Nummern", "Notizen")
 _CALL_COLUMNS = ("Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät")
 _ALL_CALLS_COLUMNS = ("Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät")
 
@@ -47,6 +48,13 @@ def _call_type_display(call_type: int) -> str:
     icon = _CALL_TYPE_ICONS.get(call_type, "")
     label = _CALL_TYPE_LABELS.get(call_type, str(call_type))
     return f"{icon} {label}" if icon else label
+
+
+def _port_device_display(device: str | None, port: str | None) -> str:
+    """"-1" ist der Box-interne Platzhalter fuer "kein Geraet" (z.B. abgelehnte
+    Anrufe) - defensiv auch hier herausfiltern, falls er je durchrutscht."""
+    parts = [value for value in (device, port) if value and value != "-1"]
+    return " / ".join(parts) or "-"
 
 
 class ContactListModel(QAbstractTableModel):
@@ -97,6 +105,48 @@ class ContactListModel(QAbstractTableModel):
         return None
 
 
+class PhonebookContactListModel(QAbstractTableModel):
+    """Lokales Telefonbuch (gui/phonebook_view.py) - Mehrfachnummern pro Kontakt."""
+
+    def __init__(self, contacts: list[LocalPhonebookContact] | None = None) -> None:
+        super().__init__()
+        self._contacts: list[LocalPhonebookContact] = contacts or []
+
+    def set_contacts(self, contacts: list[LocalPhonebookContact]) -> None:
+        self.beginResetModel()
+        self._contacts = contacts
+        self.endResetModel()
+
+    def contact_at(self, row: int) -> LocalPhonebookContact:
+        return self._contacts[row]
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self._contacts)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(_PHONEBOOK_CONTACT_COLUMNS)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
+            return None
+        return _PHONEBOOK_CONTACT_COLUMNS[section]
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+            return None
+        contact = self._contacts[index.row()]
+        column = index.column()
+        if column == 0:
+            return contact.display_name
+        if column == 1:
+            if not contact.numbers:
+                return "-"
+            return ", ".join(f"{n.number_raw} ({n.number_type})" for n in contact.numbers)
+        if column == 2:
+            return contact.notes or "-"
+        return None
+
+
 class CallListModel(QAbstractTableModel):
     """Chronologische Anrufliste für einen einzelnen Kontakt (Detailansicht)."""
 
@@ -137,7 +187,7 @@ class CallListModel(QAbstractTableModel):
             minutes, seconds = divmod(call.duration_seconds, 60)
             return f"{minutes}:{seconds:02d}"
         if column == 4:
-            return " / ".join(filter(None, [call.device, call.port])) or "-"
+            return _port_device_display(call.device, call.port)
         return None
 
 
@@ -221,5 +271,5 @@ class AllCallsListModel(QAbstractTableModel):
             minutes, seconds = divmod(call.duration_seconds, 60)
             return f"{minutes}:{seconds:02d}"
         if column == 4:
-            return " / ".join(filter(None, [call.device, call.port])) or "-"
+            return _port_device_display(call.device, call.port)
         return None

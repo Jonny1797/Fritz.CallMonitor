@@ -7,12 +7,14 @@ Sync-Service und GUI nur gegen FritzBoxError-Subklassen behandeln müssen.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from typing import TypeVar
 
 import requests
 from fritzconnection import FritzConnection
 from fritzconnection.core.exceptions import FritzAuthorizationError, FritzConnectionException
+from fritzconnection.core.utils import get_xml_root
 from fritzconnection.lib.fritzcall import Call, FritzCall
 from fritzconnection.lib.fritzphonebook import FritzPhonebook
 
@@ -52,6 +54,54 @@ def _retry_network(fn, *args, **kwargs) -> _T:
 class FritzBoxInfo:
     modelname: str
     system_version: str
+
+
+@dataclass
+class FritzPhonebookNumber:
+    value: str
+    type: str
+
+
+@dataclass
+class FritzPhonebookContact:
+    uniqueid: str | None
+    name: str | None
+    category: str | None
+    numbers: list[FritzPhonebookNumber] = field(default_factory=list)
+
+
+def _parse_phonebook_contacts(root: ET.Element) -> list[FritzPhonebookContact]:
+    """Eigenes, minimales XML-Parsing der Box-Telefonbuch-Antwort.
+
+    fritzconnection.lib.fritzphonebook's eigener Prozessor (core/processor.py)
+    liest nur Element-Text, nie XML-Attribute - number/@type geht dadurch
+    verloren, obwohl uniqueid/category (Kind-Elemente mit Text) erhalten
+    bleiben. Fuer den Box-Import brauchen wir Nummern-Typ UND uniqueid, daher
+    hier ein eigener, schlanker Parse-Schritt statt FritzPhonebook.get_all_name_numbers().
+    """
+    contacts = []
+    for contact_el in root.iter("contact"):
+        name_el = contact_el.find("person/realName")
+        uniqueid_el = contact_el.find("uniqueid")
+        category_el = contact_el.find("category")
+        numbers = []
+        for number_el in contact_el.findall("telephony/number"):
+            value = (number_el.text or "").strip()
+            if value:
+                numbers.append(
+                    FritzPhonebookNumber(value=value, type=number_el.get("type") or "home")
+                )
+        contacts.append(
+            FritzPhonebookContact(
+                uniqueid=(uniqueid_el.text or "").strip()
+                if uniqueid_el is not None and uniqueid_el.text
+                else None,
+                name=(name_el.text or "").strip() if name_el is not None and name_el.text else None,
+                category=(category_el.text or "").strip() if category_el is not None else None,
+                numbers=numbers,
+            )
+        )
+    return contacts
 
 
 class FritzBoxClient:
@@ -96,3 +146,13 @@ class FritzBoxClient:
             return _retry_network(self._phonebook.get_all_name_numbers, phonebook_id)
         except _NETWORK_EXCEPTIONS as exc:
             raise FritzBoxConnectionError(str(exc)) from exc
+
+    def phonebook_contacts_detailed(self, phonebook_id: int) -> list[FritzPhonebookContact]:
+        """Wie phonebook_name_numbers(), aber inkl. uniqueid/category/Nummern-Typ
+        - fuer den einmaligen "Von Box importieren"-Zug ins lokale Telefonbuch."""
+        try:
+            url = _retry_network(self._phonebook.phonebook_info, phonebook_id)["url"]
+            root = _retry_network(get_xml_root, url, session=self._connection.session)
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+        return _parse_phonebook_contacts(root)

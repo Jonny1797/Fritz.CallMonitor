@@ -1,8 +1,18 @@
 import pytest
 from PySide6.QtCore import Qt
 
-from fritz_callhistory.db.repository import CallRecord, CallWithContact
-from fritz_callhistory.gui.models import AllCallsListModel, CallListModel
+from fritz_callhistory.db.repository import (
+    CallRecord,
+    CallWithContact,
+    LocalPhonebookContact,
+    PhonebookNumber,
+)
+from fritz_callhistory.gui.models import (
+    AllCallsListModel,
+    CallListModel,
+    PhonebookContactListModel,
+    _port_device_display,
+)
 
 
 def _call_record(call_type: int) -> CallRecord:
@@ -115,3 +125,64 @@ def test_set_last_seen_at_updates_highlighting(qtbot):
     model.set_last_seen_at("2026-06-03T00:00:00")
 
     assert model.data(index, Qt.ItemDataRole.FontRole) is None
+
+
+@pytest.mark.parametrize(
+    "device,port,expected",
+    [
+        ("-1", "1", "1"),
+        ("-1", None, "-"),
+        (None, None, "-"),
+        ("Fritz!Fon", "1", "Fritz!Fon / 1"),
+        ("Fritz!Fon", None, "Fritz!Fon"),
+    ],
+)
+def test_port_device_display_filters_placeholder(device, port, expected):
+    assert _port_device_display(device, port) == expected
+
+
+def test_call_list_model_device_column_hides_placeholder(qtbot):
+    call = _call_record(call_type=10)
+    call.device = "-1"
+    call.port = None
+    model = CallListModel([call])
+
+    assert model.data(model.index(0, 4)) == "-"
+
+
+def test_all_calls_list_model_device_column_hides_placeholder(qtbot):
+    call = _call_with_contact(call_type=10)
+    call.device = "-1"
+    call.port = None
+    model = AllCallsListModel([call])
+
+    assert model.data(model.index(0, 4)) == "-"
+
+
+def _local_phonebook_contact() -> LocalPhonebookContact:
+    return LocalPhonebookContact(
+        id=1,
+        display_name="Max Mustermann",
+        notes="VIP",
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(id=1, number_raw="+491234567", number_normalized="+491234567", number_type="mobile"),
+            PhonebookNumber(id=2, number_raw="030 123", number_normalized="+4930123", number_type="home"),
+        ],
+    )
+
+
+def test_phonebook_contact_list_model_columns(qtbot):
+    model = PhonebookContactListModel([_local_phonebook_contact()])
+
+    assert model.data(model.index(0, 0)) == "Max Mustermann"
+    assert model.data(model.index(0, 1)) == "+491234567 (mobile), 030 123 (home)"
+    assert model.data(model.index(0, 2)) == "VIP"
+
+
+def test_phonebook_contact_list_model_empty_numbers_and_notes(qtbot):
+    contact = LocalPhonebookContact(id=1, display_name="Nur Name", notes=None, box_uniqueid=None, numbers=[])
+    model = PhonebookContactListModel([contact])
+
+    assert model.data(model.index(0, 1)) == "-"
+    assert model.data(model.index(0, 2)) == "-"

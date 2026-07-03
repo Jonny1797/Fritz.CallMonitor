@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -32,6 +33,7 @@ class CallRecord:
     call_date: str
     duration_seconds: int | None
     raw_name: str | None
+    box_call_id: int | None = None
 
 
 @dataclass
@@ -49,6 +51,7 @@ class CallWithContact:
     contact_display_name: str | None
     contact_primary_number: str
     contact_is_anonymous: bool
+    box_call_id: int | None = None
 
 
 class ContactRepository:
@@ -148,14 +151,22 @@ class CallRepository:
         call_date: str,
         duration_seconds: int | None,
         raw_name: str | None,
+        box_call_id: int | None = None,
     ) -> bool:
-        """Fügt einen Anruf ein. Gibt False zurück, wenn er bereits existiert (Dedupe)."""
+        """Fügt einen Anruf ein. Gibt False zurück, wenn er bereits existiert (Dedupe).
+
+        box_call_id ist die von der Box vergebene Id (fuer die Sortierung bei
+        exakt gleichem call_date - der Zeitstempel selbst hat nur Minuten-
+        genauigkeit, siehe db/migrations/002_add_box_call_id.sql). Bewusst
+        NICHT Teil des Dedupe-Schluessels, da diese Id ueber lange Zeitraeume
+        rotiert und daher nicht global stabil ist.
+        """
         cursor = self._conn.execute(
             """
             INSERT OR IGNORE INTO calls (
                 contact_id, call_type, caller_number, called_number,
-                port, device, call_date, duration_seconds, raw_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                port, device, call_date, duration_seconds, raw_name, box_call_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 contact_id,
@@ -167,13 +178,17 @@ class CallRepository:
                 call_date,
                 duration_seconds,
                 raw_name,
+                box_call_id,
             ),
         )
         self._conn.commit()
         return cursor.rowcount > 0
 
     def for_contact(self, contact_id: int, limit: int | None = None) -> list[CallRecord]:
-        sql = "SELECT * FROM calls WHERE contact_id = ? ORDER BY call_date DESC"
+        sql = (
+            "SELECT * FROM calls WHERE contact_id = ? "
+            "ORDER BY call_date DESC, box_call_id DESC"
+        )
         params: tuple = (contact_id,)
         if limit is not None:
             sql += " LIMIT ?"
@@ -221,13 +236,14 @@ class CallRepository:
                 calls.call_date AS call_date,
                 calls.duration_seconds AS duration_seconds,
                 calls.raw_name AS raw_name,
+                calls.box_call_id AS box_call_id,
                 contacts.display_name AS contact_display_name,
                 contacts.primary_number AS contact_primary_number,
                 contacts.is_anonymous AS contact_is_anonymous
             FROM calls
             JOIN contacts ON contacts.id = calls.contact_id
             {where}
-            ORDER BY calls.call_date DESC
+            ORDER BY calls.call_date DESC, calls.box_call_id DESC
             """,
             params,
         ).fetchall()
@@ -246,6 +262,7 @@ class CallRepository:
             call_date=row["call_date"],
             duration_seconds=row["duration_seconds"],
             raw_name=row["raw_name"],
+            box_call_id=row["box_call_id"],
         )
 
     @staticmethod
@@ -264,6 +281,7 @@ class CallRepository:
             contact_display_name=row["contact_display_name"],
             contact_primary_number=row["contact_primary_number"],
             contact_is_anonymous=bool(row["contact_is_anonymous"]),
+            box_call_id=row["box_call_id"],
         )
 
 
@@ -291,6 +309,206 @@ class PhonebookRepository:
             (number_normalized,),
         ).fetchone()
         return row["name"] if row else None
+
+
+@dataclass
+class PhonebookNumber:
+    id: int
+    number_raw: str
+    number_normalized: str
+    number_type: str
+
+
+@dataclass
+class LocalPhonebookContact:
+    id: int
+    display_name: str
+    notes: str | None
+    box_uniqueid: str | None
+    numbers: list[PhonebookNumber]
+
+
+class LocalPhonebookRepository:
+    """Lokales, vom Nutzer gepflegtes Telefonbuch (mehrere Nummern pro Kontakt).
+
+    Im Unterschied zu PhonebookRepository (Wipe-and-Rewrite-Cache der
+    Box-Telefonbuecher) ist dies hier die Quelle der Wahrheit fuer den Nutzer.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
+
+    def list_all(self, query: str = "") -> list[LocalPhonebookContact]:
+        pattern = f"%{query}%"
+        rows = self._conn.execute(
+            "SELECT id FROM phonebook_contacts WHERE display_name LIKE ? ORDER BY display_name",
+            (pattern,),
+        ).fetchall()
+        return [self._load(row["id"]) for row in rows]
+
+    def get(self, contact_id: int) -> LocalPhonebookContact | None:
+        row = self._conn.execute(
+            "SELECT id FROM phonebook_contacts WHERE id = ?", (contact_id,)
+        ).fetchone()
+        return self._load(row["id"]) if row else None
+
+    def create(
+        self,
+        *,
+        display_name: str,
+        notes: str | None,
+        numbers: list[tuple[str, str, str]],
+        box_uniqueid: str | None = None,
+    ) -> int:
+        """numbers: Liste von (number_raw, number_normalized, number_type)."""
+        now = datetime.now().isoformat()
+        cursor = self._conn.execute(
+            """
+            INSERT INTO phonebook_contacts (display_name, notes, box_uniqueid, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (display_name, notes, box_uniqueid, now, now),
+        )
+        contact_id = cursor.lastrowid
+        self._insert_numbers(contact_id, numbers)
+        self._conn.commit()
+        return contact_id
+
+    def update(
+        self,
+        contact_id: int,
+        *,
+        display_name: str,
+        notes: str | None,
+        numbers: list[tuple[str, str, str]],
+    ) -> None:
+        now = datetime.now().isoformat()
+        self._conn.execute(
+            "UPDATE phonebook_contacts SET display_name = ?, notes = ?, updated_at = ? WHERE id = ?",
+            (display_name, notes, now, contact_id),
+        )
+        self._conn.execute(
+            "DELETE FROM phonebook_contact_numbers WHERE phonebook_contact_id = ?", (contact_id,)
+        )
+        self._insert_numbers(contact_id, numbers)
+        self._conn.commit()
+
+    def delete(self, contact_id: int) -> None:
+        self._conn.execute("DELETE FROM phonebook_contacts WHERE id = ?", (contact_id,))
+        self._conn.commit()
+
+    def lookup_name(self, number_normalized: str) -> str | None:
+        row = self._conn.execute(
+            """
+            SELECT pc.display_name AS display_name
+            FROM phonebook_contact_numbers pcn
+            JOIN phonebook_contacts pc ON pc.id = pcn.phonebook_contact_id
+            WHERE pcn.number_normalized = ?
+            ORDER BY pc.id LIMIT 1
+            """,
+            (number_normalized,),
+        ).fetchone()
+        return row["display_name"] if row else None
+
+    def find_by_box_uniqueid(self, box_uniqueid: str) -> LocalPhonebookContact | None:
+        row = self._conn.execute(
+            "SELECT id FROM phonebook_contacts WHERE box_uniqueid = ?", (box_uniqueid,)
+        ).fetchone()
+        return self._load(row["id"]) if row else None
+
+    def set_box_uniqueid(self, contact_id: int, box_uniqueid: str) -> None:
+        self._conn.execute(
+            "UPDATE phonebook_contacts SET box_uniqueid = ? WHERE id = ?",
+            (box_uniqueid, contact_id),
+        )
+        self._conn.commit()
+
+    def all_numbers_belong_to_one_contact(self, numbers_normalized: list[str]) -> bool:
+        """True, wenn jede angegebene Nummer zu genau demselben bestehenden
+        Kontakt gehoert und dieser exakt diese Nummernmenge hat - fuer
+        Idempotenz beim wiederholten Datei-Import (siehe sync/phonebook_io.py)."""
+        if not numbers_normalized:
+            return False
+        contact_ids: set[int] = set()
+        for number in numbers_normalized:
+            rows = self._conn.execute(
+                "SELECT phonebook_contact_id FROM phonebook_contact_numbers WHERE number_normalized = ?",
+                (number,),
+            ).fetchall()
+            ids = {row["phonebook_contact_id"] for row in rows}
+            if not ids:
+                return False
+            contact_ids |= ids
+        if len(contact_ids) != 1:
+            return False
+        return self._numbers_of(next(iter(contact_ids))) == set(numbers_normalized)
+
+    def find_local_only_contact_by_exact_numbers(self, numbers_normalized: list[str]) -> int | None:
+        """Wie all_numbers_belong_to_one_contact, aber nur unter Kontakten ohne
+        box_uniqueid - die "Adoptieren"-Heuristik beim Box-Import: ein zuvor
+        lokal angelegter Kontakt wird mit dem passenden Box-Eintrag verknuepft,
+        statt dupliziert zu werden (siehe app.py's _build_import_from_box_fn)."""
+        if not numbers_normalized:
+            return None
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT pcn.phonebook_contact_id AS id
+            FROM phonebook_contact_numbers pcn
+            JOIN phonebook_contacts pc ON pc.id = pcn.phonebook_contact_id
+            WHERE pcn.number_normalized = ? AND pc.box_uniqueid IS NULL
+            """,
+            (numbers_normalized[0],),
+        ).fetchall()
+        for row in rows:
+            contact_id = row["id"]
+            if self._numbers_of(contact_id) == set(numbers_normalized):
+                return contact_id
+        return None
+
+    def _numbers_of(self, contact_id: int) -> set[str]:
+        return {
+            row["number_normalized"]
+            for row in self._conn.execute(
+                "SELECT number_normalized FROM phonebook_contact_numbers WHERE phonebook_contact_id = ?",
+                (contact_id,),
+            ).fetchall()
+        }
+
+    def _insert_numbers(self, contact_id: int, numbers: list[tuple[str, str, str]]) -> None:
+        self._conn.executemany(
+            """
+            INSERT INTO phonebook_contact_numbers
+                (phonebook_contact_id, number_raw, number_normalized, number_type)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(contact_id, raw, normalized, number_type) for raw, normalized, number_type in numbers],
+        )
+
+    def _load(self, contact_id: int) -> LocalPhonebookContact:
+        contact_row = self._conn.execute(
+            "SELECT id, display_name, notes, box_uniqueid FROM phonebook_contacts WHERE id = ?",
+            (contact_id,),
+        ).fetchone()
+        number_rows = self._conn.execute(
+            "SELECT id, number_raw, number_normalized, number_type "
+            "FROM phonebook_contact_numbers WHERE phonebook_contact_id = ? ORDER BY id",
+            (contact_id,),
+        ).fetchall()
+        return LocalPhonebookContact(
+            id=contact_row["id"],
+            display_name=contact_row["display_name"],
+            notes=contact_row["notes"],
+            box_uniqueid=contact_row["box_uniqueid"],
+            numbers=[
+                PhonebookNumber(
+                    id=row["id"],
+                    number_raw=row["number_raw"],
+                    number_normalized=row["number_normalized"],
+                    number_type=row["number_type"],
+                )
+                for row in number_rows
+            ],
+        )
 
 
 class SyncStateRepository:
