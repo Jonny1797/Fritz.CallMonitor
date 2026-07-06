@@ -205,6 +205,15 @@ def test_sync_button_updates_status_bar_and_reloads_on_success(qtbot, connection
     assert window._sync_button.isEnabled()
 
 
+def test_sync_runs_automatically_on_startup(qtbot, connection):
+    window = MainWindow(connection, sync_fn=lambda: (2, 1))
+    qtbot.addWidget(window)
+
+    qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
+
+    assert "2 neue Anrufe" in window.statusBar().currentMessage()
+
+
 def test_sync_finished_clears_ended_live_calls(qtbot, connection):
     window = MainWindow(connection, sync_fn=lambda: (0, 0))
     qtbot.addWidget(window)

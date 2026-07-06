@@ -155,6 +155,11 @@ class MainWindow(QMainWindow):
             self._auto_sync_timer.timeout.connect(self._trigger_sync)
             self._auto_sync_timer.start()
 
+        # Verzoegert per singleShot(0, ...) statt direktem Aufruf: so kehrt
+        # __init__ zuerst zurueck und das Fenster wird sichtbar, bevor der
+        # Sync-Thread im Hintergrund lostippt.
+        QTimer.singleShot(0, self._trigger_sync)
+
         self._tray_icon = QSystemTrayIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon), self
         )
