@@ -83,6 +83,16 @@ def _format_duration(duration_seconds: int | None) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
+def contact_display_label(is_anonymous: bool, display_name: str | None, fallback: str = "Unbekannt") -> str:
+    """Anzeigename eines Kontakts - geteilt zwischen ContactListModel,
+    AllCallsListModel und gui/contact_detail.py's show_contact(). *fallback*
+    greift, wenn kein Anzeigename bekannt ist (bei AllCallsListModel die
+    Rufnummer statt "Unbekannt", da dort immer eine Nummer vorliegt)."""
+    if is_anonymous:
+        return "Anonym / unterdrückt"
+    return display_name or fallback
+
+
 class _SimpleTableModel(QAbstractTableModel):
     """Gemeinsames rowCount/columnCount/headerData für Modelle, die eine flache
     Liste von Items über feste Spaltennamen (Klassenattribut _columns)
@@ -138,9 +148,7 @@ class ContactListModel(_SimpleTableModel):
         contact = self._items[index.row()]
         column = index.column()
         if column == 0:
-            if contact.is_anonymous:
-                return "Anonym / unterdrückt"
-            return contact.display_name or "Unbekannt"
+            return contact_display_label(contact.is_anonymous, contact.display_name)
         if column == 1:
             return contact.primary_number
         if column == 2:
@@ -271,9 +279,9 @@ class AllCallsListModel(_SimpleTableModel):
         if column == 1:
             return _call_type_display(call.call_type)
         if column == 2:
-            if call.contact_is_anonymous:
-                return "Anonym / unterdrückt"
-            return call.contact_display_name or call.contact_primary_number
+            return contact_display_label(
+                call.contact_is_anonymous, call.contact_display_name, call.contact_primary_number
+            )
         if column == 3:
             return _format_duration(call.duration_seconds)
         if column == 4:

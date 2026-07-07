@@ -12,6 +12,7 @@ from fritz_callhistory.gui.models import (
     CallListModel,
     DataclassSortProxy,
     call_number,
+    contact_display_label,
     install_tristate_sorting,
     port_device_display,
 )
@@ -87,11 +88,7 @@ class ContactDetailWidget(QWidget):
         self._call_model.set_calls([])
 
     def show_contact(self, contact: Contact) -> None:
-        name = (
-            "Anonym / unterdrückt"
-            if contact.is_anonymous
-            else (contact.display_name or "Unbekannt")
-        )
+        name = contact_display_label(contact.is_anonymous, contact.display_name)
         self._title_label.setText(name)
         self._subtitle_label.setText(f"{contact.primary_number}  ·  {contact.call_count} Anrufe")
         self._call_model.set_calls(self._calls_repo.for_contact(contact.id))
