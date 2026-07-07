@@ -54,6 +54,19 @@ class ImportSummary:
     warnings: list[str]
 
 
+def _normalized_number_or_warn(
+    raw: str, contact_name: str, number_type: str, warnings: list[str]
+) -> ImportedNumber | None:
+    """Normalisiert *raw* für einen Kontakt-Import; bei nicht erkennbaren/
+    unterdrückten Nummern None und eine Warnung statt eines Fehlers - geteilt
+    zwischen parse_xml/parse_csv/parse_vcard."""
+    normalized, is_anonymous = normalize_number(raw)
+    if is_anonymous:
+        warnings.append(f"Nummer '{raw}' bei Kontakt '{contact_name}' übersprungen (nicht erkennbar).")
+        return None
+    return ImportedNumber(number_raw=raw, number_normalized=normalized, number_type=number_type)
+
+
 # --- Fritz!Box-kompatibles XML ---
 
 
@@ -86,14 +99,10 @@ def parse_xml(path: Path) -> ImportResult:
             raw = (number_el.text or "").strip()
             if not raw:
                 continue
-            normalized, is_anonymous = normalize_number(raw)
-            if is_anonymous:
-                warnings.append(f"Nummer '{raw}' bei Kontakt '{name}' übersprungen (nicht erkennbar).")
-                continue
             number_type = number_el.get("type") or _DEFAULT_NUMBER_TYPE
-            numbers.append(
-                ImportedNumber(number_raw=raw, number_normalized=normalized, number_type=number_type)
-            )
+            number = _normalized_number_or_warn(raw, name, number_type, warnings)
+            if number is not None:
+                numbers.append(number)
         contacts.append(
             ImportedContact(display_name=name, notes=None, numbers=numbers, box_uniqueid=box_uniqueid)
         )
@@ -193,15 +202,9 @@ def parse_csv(path: Path) -> ImportResult:
             continue
         numbers: list[ImportedNumber] = []
         for raw_number, number_type in group["numbers"]:
-            normalized, is_anonymous = normalize_number(raw_number)
-            if is_anonymous:
-                warnings.append(
-                    f"Nummer '{raw_number}' bei Kontakt '{name}' übersprungen (nicht erkennbar)."
-                )
-                continue
-            numbers.append(
-                ImportedNumber(number_raw=raw_number, number_normalized=normalized, number_type=number_type)
-            )
+            number = _normalized_number_or_warn(raw_number, name, number_type, warnings)
+            if number is not None:
+                numbers.append(number)
         contacts.append(ImportedContact(display_name=name, notes=group["notes"] or None, numbers=numbers))
     return ImportResult(contacts=contacts, warnings=warnings)
 
@@ -291,15 +294,9 @@ def parse_vcard(path: Path) -> ImportResult:
                 continue
             numbers: list[ImportedNumber] = []
             for raw_number, number_type in current["numbers"]:
-                normalized, is_anonymous = normalize_number(raw_number)
-                if is_anonymous:
-                    warnings.append(
-                        f"Nummer '{raw_number}' bei Kontakt '{name}' übersprungen (nicht erkennbar)."
-                    )
-                    continue
-                numbers.append(
-                    ImportedNumber(number_raw=raw_number, number_normalized=normalized, number_type=number_type)
-                )
+                number = _normalized_number_or_warn(raw_number, name, number_type, warnings)
+                if number is not None:
+                    numbers.append(number)
             contacts.append(ImportedContact(display_name=name, notes=current["notes"], numbers=numbers))
             current = None
             continue
