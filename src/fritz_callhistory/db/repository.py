@@ -79,49 +79,38 @@ class ContactRepository:
         )
         self._conn.commit()
 
-    def get(self, contact_id: int) -> Contact | None:
-        row = self._conn.execute(
-            """
+    def _query(self, where: str, params: tuple, order_by: str = "") -> list[Contact]:
+        rows = self._conn.execute(
+            f"""
             SELECT c.id, c.primary_number, c.display_name, c.is_anonymous,
                    MAX(calls.call_date) AS last_call_date, COUNT(calls.id) AS call_count
             FROM contacts c
             LEFT JOIN calls ON calls.contact_id = c.id
-            WHERE c.id = ?
+            WHERE {where}
             GROUP BY c.id
+            {order_by}
             """,
-            (contact_id,),
-        ).fetchone()
-        return self._row_to_contact(row) if row else None
+            params,
+        ).fetchall()
+        return [self._row_to_contact(row) for row in rows]
+
+    def get(self, contact_id: int) -> Contact | None:
+        # c.id ist Primary Key: WHERE liefert hoechstens eine Zeile.
+        rows = self._query("c.id = ?", (contact_id,))
+        return rows[0] if rows else None
 
     def find_by_number(self, primary_number: str) -> Contact | None:
-        row = self._conn.execute(
-            """
-            SELECT c.id, c.primary_number, c.display_name, c.is_anonymous,
-                   MAX(calls.call_date) AS last_call_date, COUNT(calls.id) AS call_count
-            FROM contacts c
-            LEFT JOIN calls ON calls.contact_id = c.id
-            WHERE c.primary_number = ?
-            GROUP BY c.id
-            """,
-            (primary_number,),
-        ).fetchone()
-        return self._row_to_contact(row) if row else None
+        # primary_number ist UNIQUE: WHERE liefert hoechstens eine Zeile.
+        rows = self._query("c.primary_number = ?", (primary_number,))
+        return rows[0] if rows else None
 
     def search(self, query: str = "") -> list[Contact]:
         pattern = f"%{query}%"
-        rows = self._conn.execute(
-            """
-            SELECT c.id, c.primary_number, c.display_name, c.is_anonymous,
-                   MAX(calls.call_date) AS last_call_date, COUNT(calls.id) AS call_count
-            FROM contacts c
-            LEFT JOIN calls ON calls.contact_id = c.id
-            WHERE c.display_name LIKE ? OR c.primary_number LIKE ?
-            GROUP BY c.id
-            ORDER BY last_call_date DESC
-            """,
+        return self._query(
+            "c.display_name LIKE ? OR c.primary_number LIKE ?",
             (pattern, pattern),
-        ).fetchall()
-        return [self._row_to_contact(row) for row in rows]
+            order_by="ORDER BY last_call_date DESC",
+        )
 
     @staticmethod
     def _row_to_contact(row: sqlite3.Row) -> Contact:
