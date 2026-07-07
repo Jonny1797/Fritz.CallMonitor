@@ -76,40 +76,66 @@ def port_device_display(device: str | None, port: str | None) -> str:
     return " / ".join(parts) or "-"
 
 
-class ContactListModel(QAbstractTableModel):
-    def __init__(self, contacts: list[Contact] | None = None) -> None:
-        super().__init__()
-        self._contacts: list[Contact] = contacts or []
+def _format_duration(duration_seconds: int | None) -> str:
+    if duration_seconds is None:
+        return "-"
+    minutes, seconds = divmod(duration_seconds, 60)
+    return f"{minutes}:{seconds:02d}"
 
-    def set_contacts(self, contacts: list[Contact]) -> None:
+
+class _SimpleTableModel(QAbstractTableModel):
+    """Gemeinsames rowCount/columnCount/headerData für Modelle, die eine flache
+    Liste von Items über feste Spaltennamen (Klassenattribut _columns)
+    anzeigen. Subklassen implementieren nur noch data()."""
+
+    _columns: tuple[str, ...] = ()
+
+    def __init__(self, items: list | None = None) -> None:
+        super().__init__()
+        self._items: list = items or []
+
+    def _set_items(self, items: list) -> None:
         self.beginResetModel()
-        self._contacts = contacts
+        self._items = items
         self.endResetModel()
 
-    def contact_at(self, row: int) -> Contact:
-        return self._contacts[row]
-
-    def index_of(self, contact_id: int) -> int | None:
-        for row, contact in enumerate(self._contacts):
-            if contact.id == contact_id:
-                return row
-        return None
+    def _item_at(self, row: int):
+        return self._items[row]
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._contacts)
+        return 0 if parent.isValid() else len(self._items)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_CONTACT_COLUMNS)
+        return 0 if parent.isValid() else len(self._columns)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
             return None
-        return _CONTACT_COLUMNS[section]
+        return self._columns[section]
+
+
+class ContactListModel(_SimpleTableModel):
+    _columns = _CONTACT_COLUMNS
+
+    def __init__(self, contacts: list[Contact] | None = None) -> None:
+        super().__init__(contacts)
+
+    def set_contacts(self, contacts: list[Contact]) -> None:
+        self._set_items(contacts)
+
+    def contact_at(self, row: int) -> Contact:
+        return self._item_at(row)
+
+    def index_of(self, contact_id: int) -> int | None:
+        for row, contact in enumerate(self._items):
+            if contact.id == contact_id:
+                return row
+        return None
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
             return None
-        contact = self._contacts[index.row()]
+        contact = self._items[index.row()]
         column = index.column()
         if column == 0:
             if contact.is_anonymous:
@@ -124,36 +150,24 @@ class ContactListModel(QAbstractTableModel):
         return None
 
 
-class PhonebookContactListModel(QAbstractTableModel):
+class PhonebookContactListModel(_SimpleTableModel):
     """Lokales Telefonbuch (gui/phonebook_view.py) - Mehrfachnummern pro Kontakt."""
 
+    _columns = _PHONEBOOK_CONTACT_COLUMNS
+
     def __init__(self, contacts: list[LocalPhonebookContact] | None = None) -> None:
-        super().__init__()
-        self._contacts: list[LocalPhonebookContact] = contacts or []
+        super().__init__(contacts)
 
     def set_contacts(self, contacts: list[LocalPhonebookContact]) -> None:
-        self.beginResetModel()
-        self._contacts = contacts
-        self.endResetModel()
+        self._set_items(contacts)
 
     def contact_at(self, row: int) -> LocalPhonebookContact:
-        return self._contacts[row]
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._contacts)
-
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_PHONEBOOK_CONTACT_COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
-            return None
-        return _PHONEBOOK_CONTACT_COLUMNS[section]
+        return self._item_at(row)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
             return None
-        contact = self._contacts[index.row()]
+        contact = self._items[index.row()]
         column = index.column()
         if column == 0:
             return contact.display_name
@@ -166,36 +180,24 @@ class PhonebookContactListModel(QAbstractTableModel):
         return None
 
 
-class CallListModel(QAbstractTableModel):
+class CallListModel(_SimpleTableModel):
     """Chronologische Anrufliste für einen einzelnen Kontakt (Detailansicht)."""
 
+    _columns = _CALL_COLUMNS
+
     def __init__(self, calls: list[CallRecord] | None = None) -> None:
-        super().__init__()
-        self._calls: list[CallRecord] = calls or []
+        super().__init__(calls)
 
     def set_calls(self, calls: list[CallRecord]) -> None:
-        self.beginResetModel()
-        self._calls = calls
-        self.endResetModel()
+        self._set_items(calls)
 
     def call_at(self, row: int) -> CallRecord:
-        return self._calls[row]
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._calls)
-
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_CALL_COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
-            return None
-        return _CALL_COLUMNS[section]
+        return self._item_at(row)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
             return None
-        call = self._calls[index.row()]
+        call = self._items[index.row()]
         column = index.column()
         if column == 0:
             return _format_call_date(call.call_date)
@@ -204,35 +206,31 @@ class CallListModel(QAbstractTableModel):
         if column == 2:
             return call_number(call)
         if column == 3:
-            if call.duration_seconds is None:
-                return "-"
-            minutes, seconds = divmod(call.duration_seconds, 60)
-            return f"{minutes}:{seconds:02d}"
+            return _format_duration(call.duration_seconds)
         if column == 4:
             return port_device_display(call.device, call.port)
         return None
 
 
-class AllCallsListModel(QAbstractTableModel):
+class AllCallsListModel(_SimpleTableModel):
     """Chronologische Anrufliste ueber alle Kontakte hinweg ("Alle Anrufe").
 
     Hebt neue verpasste Anrufe (call_date > last_seen_at) optisch hervor,
     unabhaengig vom aktuell aktiven Datumsfilter/Preset in AllCallsView.
     """
 
+    _columns = _ALL_CALLS_COLUMNS
+
     def __init__(
         self,
         calls: list[CallWithContact] | None = None,
         last_seen_at: str | None = None,
     ) -> None:
-        super().__init__()
-        self._calls: list[CallWithContact] = calls or []
+        super().__init__(calls)
         self._last_seen_at = last_seen_at
 
     def set_calls(self, calls: list[CallWithContact]) -> None:
-        self.beginResetModel()
-        self._calls = calls
-        self.endResetModel()
+        self._set_items(calls)
 
     def set_last_seen_at(self, last_seen_at: str | None) -> None:
         self._last_seen_at = last_seen_at
@@ -246,7 +244,7 @@ class AllCallsListModel(QAbstractTableModel):
             )
 
     def call_at(self, row: int) -> CallWithContact:
-        return self._calls[row]
+        return self._item_at(row)
 
     def _is_new_missed(self, call: CallWithContact) -> bool:
         return (
@@ -255,21 +253,10 @@ class AllCallsListModel(QAbstractTableModel):
             and call.call_date > self._last_seen_at
         )
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._calls)
-
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_ALL_CALLS_COLUMNS)
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
-            return None
-        return _ALL_CALLS_COLUMNS[section]
-
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
-        call = self._calls[index.row()]
+        call = self._items[index.row()]
         if role == Qt.ItemDataRole.FontRole and self._is_new_missed(call):
             font = QFont()
             font.setBold(True)
@@ -288,10 +275,7 @@ class AllCallsListModel(QAbstractTableModel):
                 return "Anonym / unterdrückt"
             return call.contact_display_name or call.contact_primary_number
         if column == 3:
-            if call.duration_seconds is None:
-                return "-"
-            minutes, seconds = divmod(call.duration_seconds, 60)
-            return f"{minutes}:{seconds:02d}"
+            return _format_duration(call.duration_seconds)
         if column == 4:
             return port_device_display(call.device, call.port)
         return None
