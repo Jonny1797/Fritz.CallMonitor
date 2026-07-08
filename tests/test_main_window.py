@@ -1,3 +1,7 @@
+import threading
+
+from PySide6.QtWidgets import QApplication, QMessageBox
+
 from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
 from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
@@ -239,6 +243,163 @@ def test_sync_button_shows_error_on_failure(qtbot, connection):
 
     assert "Box nicht erreichbar" in window.statusBar().currentMessage()
     assert window._sync_button.isEnabled()
+
+
+def test_close_while_sync_running_defers_until_sync_finishes(qtbot, connection):
+    # Regression test: sync_fn (SyncWorker) is a single blocking network call
+    # with no cancellation point. closeEvent() used to just wait(2000) and then
+    # proceed regardless - if the sync (auto-triggered on startup) was still
+    # running past that timeout, the still-running QThread got destroyed and
+    # Qt aborted the process with SIGABRT. closeEvent() must instead hide the
+    # window and defer the real close until the thread finishes on its own.
+    release_sync = threading.Event()
+
+    def slow_sync():
+        release_sync.wait(5)
+        return (0, 0)
+
+    window = MainWindow(connection, sync_fn=slow_sync)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(
+        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
+    )
+
+    closed = window.close()
+
+    assert closed is False  # close event was ignored, not accepted
+    assert not window.isVisible()  # hidden immediately so it looks closed
+    assert window._sync_thread.isRunning()  # thread left running untouched, not destroyed
+
+    release_sync.set()
+    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
+    qtbot.wait(50)  # let the queued finished-signal-triggered close() run
+
+    # Thread is done now - a subsequent close attempt goes through immediately.
+    assert window.close() is True
+
+
+def test_shutdown_failsafe_force_exits_if_worker_still_busy(qtbot, connection, mocker):
+    # Regression test: fritz/client.py's request timeout doesn't cover every
+    # possible hang (e.g. a blocking DNS lookup, which socket.getaddrinfo()
+    # has no timeout for) - closeEvent()'s hide-and-wait-for-finished
+    # mechanism must not be able to block forever if a worker thread never
+    # returns. The failsafe timer (normally _SHUTDOWN_FAILSAFE_MS after the
+    # first close attempt) must force an exit once it fires while still busy.
+    release_sync = threading.Event()
+
+    def slow_sync():
+        release_sync.wait(5)
+        return (0, 0)
+
+    window = MainWindow(connection, sync_fn=slow_sync)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(
+        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
+    )
+    window.close()
+    assert window._shutdown_failsafe_timer is not None
+
+    force_exit = mocker.patch("fritz_callhistory.gui.main_window.os._exit")
+    window._force_exit_if_still_busy()
+    force_exit.assert_called_once_with(1)
+
+    release_sync.set()  # cleanup: let the thread actually finish
+    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
+
+
+def test_shutdown_failsafe_does_nothing_once_worker_already_finished(qtbot, connection, mocker):
+    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
+
+    force_exit = mocker.patch("fritz_callhistory.gui.main_window.os._exit")
+    window._force_exit_if_still_busy()
+
+    force_exit.assert_not_called()
+
+
+def test_close_before_startup_sync_fires_prevents_new_sync_thread(qtbot, connection):
+    # Regression test: the auto-sync at startup is queued via
+    # QTimer.singleShot(0, self._trigger_sync), which only runs on a later
+    # event-loop iteration. Closing the window before that fires must prevent
+    # _trigger_sync() from starting a brand-new, untracked SyncWorker
+    # afterwards - otherwise it becomes a QThread nobody waits for at
+    # interpreter shutdown (the same crash/hang class, just with different
+    # timing - reproduced within the app's very first instant instead of a
+    # few seconds in).
+    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window._sync_thread is None
+    closed = window.close()
+    assert closed is True  # nothing was running yet, closes immediately
+
+    qtbot.wait(100)  # let the queued singleShot(0, _trigger_sync) fire, if it still would
+
+    assert window._sync_thread is None
+
+
+def test_close_while_box_import_running_defers_until_import_finishes(qtbot, connection, mocker):
+    # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
+    # but for ImportFromBoxWorker (the "Von Box importieren" button) - it is the
+    # same single-blocking-network-call-with-no-cancellation-point pattern, just
+    # user-triggered instead of started automatically on startup.
+    release_import = threading.Event()
+
+    def slow_import():
+        release_import.wait(5)
+        return 0
+
+    mocker.patch(
+        "fritz_callhistory.gui.phonebook_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    )
+    mocker.patch("fritz_callhistory.gui.phonebook_view.QMessageBox.information")
+
+    window = MainWindow(connection, import_from_box_fn=slow_import)
+    qtbot.addWidget(window)
+    window.show()
+    window._phonebook_tab._on_import_from_box_clicked()
+    qtbot.waitUntil(
+        lambda: window._phonebook_tab.import_thread is not None
+        and window._phonebook_tab.import_thread.isRunning(),
+        timeout=2000,
+    )
+
+    closed = window.close()
+
+    assert closed is False
+    assert not window.isVisible()
+    assert window._phonebook_tab.import_thread.isRunning()
+
+    release_import.set()
+    qtbot.waitUntil(lambda: not window._phonebook_tab.import_thread.isRunning(), timeout=2000)
+    qtbot.wait(50)
+
+    assert window.close() is True
+
+
+def test_close_without_busy_workers_quits_application_explicitly(qtbot, connection, mocker):
+    # Regression test: relying purely on Qt's quitOnLastWindowClosed to end
+    # app.exec() has proven unreliable in practice (window closes but the
+    # process never terminates - suspected cause: the always-visible
+    # QSystemTrayIcon, whose native backend can prevent the implicit quit
+    # depending on platform/compositor). closeEvent() must explicitly call
+    # QApplication.quit() itself once nothing is left running, instead of
+    # just accepting the close event and hoping Qt notices.
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window.show()
+
+    quit_spy = mocker.patch.object(QApplication.instance(), "quit")
+
+    assert window.close() is True
+
+    quit_spy.assert_called_once()
 
 
 def test_no_call_monitor_started_without_address(qtbot, connection):

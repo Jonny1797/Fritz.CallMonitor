@@ -3,11 +3,13 @@ Suche, Detailansicht und Sync-Button (im Hintergrund-Thread)."""
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QThread, QTimer, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
@@ -33,6 +35,12 @@ from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
 _CONTACT_PHONEBOOK_COLUMNS = (0, 1)  # Name, Nummer
+# Letzte Absicherung fuer closeEvent(): SyncWorker/ImportFromBoxWorker haben
+# in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
+# haengenden DNS-Lookup ab (socket.getaddrinfo() kennt kein Timeout). Damit
+# das Beenden trotzdem nie unbegrenzt haengen bleibt, wird nach dieser Frist
+# hart abgebrochen, falls dann immer noch ein Worker-Thread laeuft.
+_SHUTDOWN_FAILSAFE_MS = 30_000
 
 
 class MainWindow(QMainWindow):
@@ -50,6 +58,8 @@ class MainWindow(QMainWindow):
 
         self._sync_fn = sync_fn
         self._sync_thread: SyncWorker | None = None
+        self._close_requested = False
+        self._shutdown_failsafe_timer: QTimer | None = None
 
         self._contacts_repo = ContactRepository(connection)
         self._contact_model = ContactListModel()
@@ -180,11 +190,70 @@ class MainWindow(QMainWindow):
 
         self.reload_contacts()
 
+    def _busy_worker_threads(self) -> list[QThread]:
+        """SyncWorker/ImportFromBoxWorker fuehren einen einzelnen blockierenden
+        Netzwerkaufruf ohne Abbruchpunkte aus - beide muessen hier erkannt
+        werden, damit closeEvent() das Fenster nicht schliesst, waehrend einer
+        von ihnen noch laeuft (siehe closeEvent() fuer die Begruendung)."""
+        threads: list[QThread] = []
+        if self._sync_thread is not None and self._sync_thread.isRunning():
+            threads.append(self._sync_thread)
+        import_thread = self._phonebook_tab.import_thread
+        if import_thread is not None and import_thread.isRunning():
+            threads.append(import_thread)
+        return threads
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._close_requested:
+            self._close_requested = True
+            if self._call_monitor is not None:
+                self._call_monitor.stop()
+
+        # Ein festes wait(N) koennte ablaufen, waehrend so ein Thread noch in
+        # seinem HTTP-Request steckt, und Qt wuerde ihn beim Zerstoeren des
+        # Fensters mit SIGABRT abbrechen. Stattdessen wird das Fenster nur
+        # versteckt (wirkt fuer den Nutzer bereits geschlossen); sobald der
+        # letzte betroffene Thread von selbst fertig ist, loest sein
+        # finished-Signal close() erneut aus - dann ist die Liste leer und der
+        # eigentliche Schliessvorgang laeuft durch.
+        busy_threads = self._busy_worker_threads()
+        if busy_threads:
+            self.hide()
+            event.ignore()
+            for thread in busy_threads:
+                thread.finished.connect(self.close, Qt.ConnectionType.UniqueConnection)
+            if self._shutdown_failsafe_timer is None:
+                self._shutdown_failsafe_timer = QTimer(self)
+                self._shutdown_failsafe_timer.setSingleShot(True)
+                self._shutdown_failsafe_timer.timeout.connect(self._force_exit_if_still_busy)
+                self._shutdown_failsafe_timer.start(_SHUTDOWN_FAILSAFE_MS)
+            return
+
         if self._call_monitor is not None:
-            self._call_monitor.stop()
             self._call_monitor.wait(2000)
         super().closeEvent(event)
+
+        # quitOnLastWindowClosed (Qt's impliziter "letztes Fenster zu ->
+        # beenden"-Mechanismus) hat sich in der Praxis als nicht zuverlaessig
+        # herausgestellt, um app.exec() tatsaechlich zurueckkehren zu lassen -
+        # vermutlich abhaengig von Plattform/Compositor und dem hier immer
+        # sichtbaren QSystemTrayIcon. Explizit quit() aufzurufen macht das
+        # unabhaengig davon; main() in app.py sorgt zusaetzlich dafuer, dass
+        # der Prozess unmittelbar endet, sobald app.exec() zurueckkehrt (statt
+        # sich auf Pythons normale, langsamere Aufraeum-Reihenfolge zu
+        # verlassen).
+        app_instance = QApplication.instance()
+        if app_instance is not None:
+            app_instance.quit()
+
+    def _force_exit_if_still_busy(self) -> None:
+        # Feuert nur, wenn ein Worker-Thread _SHUTDOWN_FAILSAFE_MS nach dem
+        # ersten Schliessversuch immer noch laeuft - regulaer erfolgreiche
+        # Sync-/Import-Vorgaenge haben laengst ueber ihr finished-Signal einen
+        # erneuten, diesmal erfolgreichen close() ausgeloest und diese Methode
+        # laeuft dann entweder gar nicht mehr oder trifft auf eine leere Liste.
+        if self._busy_worker_threads():
+            os._exit(1)
 
     def _on_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
         normalized, is_anonymous = normalize_number(caller_number)
@@ -251,7 +320,19 @@ class MainWindow(QMainWindow):
         self._detail.show_contact(contact)
 
     def _trigger_sync(self) -> None:
-        if self._sync_fn is None or (self._sync_thread is not None and self._sync_thread.isRunning()):
+        # _close_requested-Check ist noetig, weil der Start-Sync per
+        # singleShot(0, ...) erst in einem spaeteren Event-Loop-Durchlauf
+        # feuert - schliesst der Nutzer das Fenster, bevor dieser Zero-Delay-
+        # Timer dran war, saehe closeEvent() noch keinen laufenden Thread und
+        # wuerde sofort schliessen; der danach doch noch feuernde Sync wuerde
+        # dann einen neuen, von niemandem mehr erwarteten SyncWorker starten,
+        # der beim Interpreter-Shutdown wieder als laufender QThread zerstoert
+        # wird (derselbe SIGABRT/Haenger wie beim urspruenglichen Bug).
+        if (
+            self._close_requested
+            or self._sync_fn is None
+            or (self._sync_thread is not None and self._sync_thread.isRunning())
+        ):
             return
         self._sync_button.setEnabled(False)
         self.statusBar().showMessage("Synchronisiere mit der Fritz!Box …")

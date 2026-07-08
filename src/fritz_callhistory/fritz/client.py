@@ -27,6 +27,12 @@ from fritz_callhistory.fritz.exceptions import (
 _NETWORK_EXCEPTIONS = (FritzConnectionException, requests.exceptions.RequestException)
 _MAX_ATTEMPTS = 2
 _RETRY_DELAY_SECONDS = 1.0
+# fritzconnection/requests haben ohne dieses Limit gar kein Timeout (blockieren
+# unbegrenzt, wenn die Box verbunden ist aber nicht antwortet) - das liess
+# SyncWorker/ImportFromBoxWorker unter Umstaenden fuer immer in ihrem
+# Netzwerkaufruf haengen, was wiederum MainWindow.closeEvent()'s Warten auf den
+# Thread beim Beenden unbegrenzt blockierte (die App "haengte" beim Quit).
+_REQUEST_TIMEOUT_SECONDS = 15.0
 
 _T = TypeVar("_T")
 
@@ -108,7 +114,11 @@ class FritzBoxClient:
     def __init__(self, address: str, user: str, password: str) -> None:
         try:
             self._connection = _retry_network(
-                FritzConnection, address=address, user=user, password=password
+                FritzConnection,
+                address=address,
+                user=user,
+                password=password,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
             )
         except FritzAuthorizationError as exc:
             raise FritzBoxAuthError(str(exc)) from exc
@@ -152,7 +162,9 @@ class FritzBoxClient:
         - fuer den einmaligen "Von Box importieren"-Zug ins lokale Telefonbuch."""
         try:
             url = _retry_network(self._phonebook.phonebook_info, phonebook_id)["url"]
-            root = _retry_network(get_xml_root, url, session=self._connection.session)
+            root = _retry_network(
+                get_xml_root, url, session=self._connection.session, timeout=_REQUEST_TIMEOUT_SECONDS
+            )
         except _NETWORK_EXCEPTIONS as exc:
             raise FritzBoxConnectionError(str(exc)) from exc
         return _parse_phonebook_contacts(root)

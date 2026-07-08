@@ -1,4 +1,4 @@
-from fritz_callhistory.app import _build_import_from_box_fn, _build_sync_fn
+from fritz_callhistory.app import _build_import_from_box_fn, _build_sync_fn, _handle_sigint
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.connection import connect
 from fritz_callhistory.db.repository import LocalPhonebookRepository
@@ -80,3 +80,16 @@ def test_build_import_from_box_fn_returns_none_without_stored_password(mocker):
     cfg = Config(address="192.168.178.1", username="admin")
 
     assert _build_import_from_box_fn(cfg) is None
+
+
+def test_sigint_handler_forces_immediate_exit_unconditionally(mocker):
+    # Regression test: SIGINT used to route through window.close(), which
+    # MainWindow.closeEvent() can defer indefinitely while a worker thread is
+    # busy (correct for a normal window close, but not what Ctrl+C in a
+    # terminal is expected to do). The handler must force an immediate exit
+    # instead, with no dependency on any window/thread state.
+    force_exit = mocker.patch("fritz_callhistory.app.os._exit")
+
+    _handle_sigint()
+
+    force_exit.assert_called_once_with(130)

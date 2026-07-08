@@ -1,6 +1,8 @@
 import socket
 import threading
+import time
 
+from fritz_callhistory.fritz.callmonitor import CallMonitorConnection
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 
 
@@ -76,6 +78,65 @@ def test_call_monitor_thread_emits_connection_lost_when_unreachable(qtbot):
     finally:
         worker.stop()
         worker.wait(2000)
+
+
+def test_call_monitor_thread_stop_during_connect_does_not_hang(qtbot, monkeypatch):
+    # Regression test: stop() called while connect() is still in-flight used to race,
+    # since close() on the not-yet-connected CallMonitorConnection was a no-op, leaving
+    # the worker stuck in a blocking recv() forever (never caught by wait(2000)).
+    port = _free_port()
+    server = _serve_once(port, ["01.01.26 20:00:00;RING;0;030123456;069987654;SIP0;"])
+
+    original_connect = CallMonitorConnection.connect
+
+    def delayed_connect(self):
+        time.sleep(0.2)
+        original_connect(self)
+
+    monkeypatch.setattr(CallMonitorConnection, "connect", delayed_connect)
+
+    worker = CallMonitorThread("127.0.0.1", port=port, reconnect_delay_seconds=0.05)
+    try:
+        worker.start()
+        time.sleep(0.05)  # worker is inside connect()'s artificial delay now
+        worker.stop()
+        assert worker.wait(2000), "worker did not stop within timeout"
+    finally:
+        server.close()
+
+
+def test_call_monitor_thread_stop_while_idle_in_recv_does_not_hang(qtbot):
+    # Regression test: stop() called while the worker is connected and blocked
+    # in recv() waiting for the *next* line (no data pending, the normal idle
+    # state between calls) used to occasionally not unblock in time, since
+    # close() relied purely on shutdown()'s cross-thread recv()-wakeup timing.
+    port = _free_port()
+    server = _serve_once(port, [])  # akzeptiert, sendet nichts, haelt offen
+
+    worker = CallMonitorThread("127.0.0.1", port=port, reconnect_delay_seconds=0.05)
+    try:
+        worker.start()
+        time.sleep(0.1)  # worker ist jetzt verbunden und blockiert in recv()
+        worker.stop()
+        assert worker.wait(2000), "worker did not stop within timeout"
+    finally:
+        server.close()
+
+
+def test_call_monitor_thread_stop_during_reconnect_delay_does_not_hang(qtbot):
+    # Regression test: the reconnect backoff used to be a plain time.sleep(),
+    # which stop() could not interrupt - the worker would keep sleeping for up
+    # to reconnect_delay_seconds regardless of stop() having been called.
+    unreachable_port = _free_port()
+
+    worker = CallMonitorThread(
+        "127.0.0.1", port=unreachable_port, reconnect_delay_seconds=5.0
+    )
+    with qtbot.waitSignal(worker.connection_lost, timeout=3000):
+        worker.start()
+    time.sleep(0.05)  # worker is now inside the 5s reconnect wait
+    worker.stop()
+    assert worker.wait(2000), "worker did not stop within timeout"
 
 
 def test_call_monitor_thread_ignores_non_ring_events(qtbot):

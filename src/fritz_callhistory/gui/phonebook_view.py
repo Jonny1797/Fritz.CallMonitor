@@ -71,6 +71,9 @@ class PhonebookTab(QWidget):
         self._phonebook_repo = PhonebookRepository(connection)
         self._import_from_box_fn = import_from_box_fn
         self._import_thread: ImportFromBoxWorker | None = None
+        # Wird von MainWindow.closeEvent() gelesen, um das Fenster nicht zu
+        # schliessen, waehrend dieser Thread noch in seinem blockierenden
+        # Netzwerkaufruf steckt (gleicher Grund wie bei SyncWorker).
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Suche nach Name …")
@@ -126,6 +129,10 @@ class PhonebookTab(QWidget):
         layout.addWidget(self._table)
 
         self._reload()
+
+    @property
+    def import_thread(self) -> ImportFromBoxWorker | None:
+        return self._import_thread
 
     def _reload(self) -> None:
         self._model.set_contacts(self._repo.list_all(self._search_edit.text()))

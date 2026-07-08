@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QDialog
 
 from fritz_callhistory import config as config_module
@@ -120,6 +123,24 @@ def _build_import_from_box_fn(cfg: config_module.Config) -> ImportFromBoxFn | No
     return import_from_box_fn
 
 
+def _handle_sigint(*_args) -> None:
+    """Strg+C beendet den Prozess sofort und hart, statt ueber window.close()
+    zu gehen: MainWindow.closeEvent() wartet bei einem normalen Schliessen
+    bewusst auf noch laufende Worker-Threads (Sync-/ImportFromBoxWorker) - das
+    ist fuer einen Klick auf X das richtige Verhalten, aber fuer Strg+C
+    erwartet man in einem Terminal-Programm einen sofortigen Abbruch, egal was
+    gerade laeuft (z.B. ein Netzwerkaufruf, der trotz Timeout in
+    fritz/client.py haengt, etwa durch einen blockierenden DNS-Lookup, den
+    requests' timeout-Parameter nicht abdeckt). os._exit() umgeht Qt's/Pythons
+    normale Aufraeum-Reihenfolge komplett - kein qFatal-Crash-Risiko durch noch
+    laufende QThreads, da deren Destruktoren gar nicht erst aufgerufen werden;
+    das Betriebssystem raeumt Sockets/Dateien beim Prozessende ohnehin auf, und
+    jeder DB-Schreibzugriff committet bereits einzeln (siehe db/repository.py),
+    es geht also hoechstens ein einzelner, gerade laufender Schreibzugriff
+    verloren."""
+    os._exit(130)  # 128 + SIGINT, uebliche Exitcode-Konvention
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     connection = connect(database_file())
@@ -138,7 +159,27 @@ def main() -> int:
         import_from_box_fn=_build_import_from_box_fn(cfg),
     )
     window.show()
-    return app.exec()
+
+    # Qt's C++-Eventloop liefert SIGINT erst, wenn wieder Python-Bytecode
+    # laeuft; der No-Op-Timer sorgt dafuer, dass das zeitnah passiert statt
+    # erst bei der naechsten GUI-Interaktion (siehe _handle_sigint()).
+    signal.signal(signal.SIGINT, _handle_sigint)
+    signal_timer = QTimer()
+    signal_timer.timeout.connect(lambda: None)
+    signal_timer.start(200)
+
+    exit_code = app.exec()
+    # os._exit() statt return: sobald app.exec() zurueckkehrt (regulaer ueber
+    # MainWindow.closeEvent()'s expliziten QApplication.quit()-Aufruf, oder
+    # ueber quitOnLastWindowClosed), soll der Prozess sofort enden - nicht
+    # ueber Pythons normale Interpreter-Shutdown-Sequenz, in der PySide beim
+    # atexit-Handling alle verbliebenen QObjects zerstoert (inkl. etwaiger
+    # noch lebender QThreads, was den urspruenglichen "QThread: Destroyed
+    # while thread ... is still running"-SIGABRT ausloest). Jeder
+    # DB-Schreibzugriff committet bereits einzeln (siehe db/repository.py),
+    # ein abgebrochener Shutdown verliert also hoechstens einen einzelnen,
+    # gerade laufenden Schreibzugriff.
+    os._exit(exit_code)
 
 
 if __name__ == "__main__":

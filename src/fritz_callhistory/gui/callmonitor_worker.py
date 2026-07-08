@@ -7,7 +7,7 @@ versucht, ohne die GUI zu blockieren oder die App abstürzen zu lassen.
 
 from __future__ import annotations
 
-import time
+import threading
 
 from PySide6.QtCore import QThread, Signal
 
@@ -39,22 +39,34 @@ class CallMonitorThread(QThread):
         self._address = address
         self._port = port
         self._reconnect_delay_seconds = reconnect_delay_seconds
-        self._stop_requested = False
+        # Das eigentliche Abbruchsignal: ein Event statt eines Bool+Lock, weil
+        # dessen wait() sowohl den Reconnect-Wartezeitraum (statt einem
+        # unterbrechungsfreien time.sleep(), das stop() bis zu
+        # reconnect_delay_seconds lang ignorieren wuerde) als auch die
+        # Stop-Pruefung nach connect() sofort abbrechbar macht.
+        self._stop_event = threading.Event()
         self._connection: CallMonitorConnection | None = None
+        # Schuetzt nur den Zugriff auf self._connection zwischen stop() und run().
+        self._connection_lock = threading.Lock()
 
     def stop(self) -> None:
-        self._stop_requested = True
-        if self._connection is not None:
-            self._connection.close()
+        self._stop_event.set()
+        with self._connection_lock:
+            if self._connection is not None:
+                self._connection.close()
 
     def run(self) -> None:
-        while not self._stop_requested:
-            self._connection = CallMonitorConnection(self._address, self._port)
+        while not self._stop_event.is_set():
+            with self._connection_lock:
+                self._connection = CallMonitorConnection(self._address, self._port)
             try:
                 self._connection.connect()
             except OSError as exc:
                 self.connection_lost.emit(str(exc))
             else:
+                if self._stop_event.is_set():
+                    self._connection.close()
+                    return
                 try:
                     for event in self._connection.events():
                         if isinstance(event, RingEvent):
@@ -68,6 +80,6 @@ class CallMonitorThread(QThread):
                 except OSError as exc:
                     self.connection_lost.emit(str(exc))
 
-            if self._stop_requested:
+            if self._stop_event.is_set():
                 return
-            time.sleep(self._reconnect_delay_seconds)
+            self._stop_event.wait(self._reconnect_delay_seconds)

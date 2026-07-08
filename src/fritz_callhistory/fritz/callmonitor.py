@@ -10,12 +10,14 @@ funktioniert.
 
 from __future__ import annotations
 
+import select
 import socket
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 CALL_MONITOR_PORT = 1012
 _CONNECT_TIMEOUT_SECONDS = 5.0
+_RECV_BUFFER_SIZE = 4096
 
 
 @dataclass
@@ -84,6 +86,15 @@ class CallMonitorConnection:
         self._address = address
         self._port = port
         self._socket: socket.socket | None = None
+        # Self-Pipe-Trick: ein blockierendes recv() in events() soll aus einem
+        # anderen Thread heraus abbrechbar sein. shutdown() auf den Socket
+        # weckt einen blockierten recv() zwar ueblicherweise auf, aber das
+        # haengt vom OS-Timing ab (das brachte bereits SIGABRTs beim App-Beenden,
+        # wenn der QThread nicht rechtzeitig aufwachte). select() ueber Socket
+        # UND diese Wakeup-Pipe gemeinsam macht den Abbruch stattdessen
+        # deterministisch: close() schreibt ein Byte, select() kehrt sofort
+        # zurueck, ganz unabhaengig vom shutdown()-Wakeup.
+        self._wakeup_r, self._wakeup_w = socket.socketpair()
 
     def connect(self) -> None:
         self._socket = socket.create_connection(
@@ -92,13 +103,12 @@ class CallMonitorConnection:
         self._socket.settimeout(None)  # nach Verbindungsaufbau blockierend lesen
 
     def close(self) -> None:
+        try:
+            self._wakeup_w.send(b"x")
+        except OSError:
+            pass
+        self._wakeup_w.close()
         if self._socket is not None:
-            # shutdown() statt nur close(): close() dekrementiert nur die
-            # Referenzzählung des Python-Socket-Objekts (makefile() hält eine
-            # eigene Referenz) und schließt den zugrunde liegenden OS-Deskriptor
-            # dadurch nicht zuverlässig - ein blockierender recv() in einem
-            # anderen Thread würde dann nicht unterbrochen. shutdown() wirkt
-            # sofort auf OS-Ebene.
             try:
                 self._socket.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -108,10 +118,23 @@ class CallMonitorConnection:
 
     def events(self) -> Iterator[CallMonitorEvent]:
         """Blockiert, bis Zeilen ankommen oder die Verbindung geschlossen wird."""
-        if self._socket is None:
+        sock = self._socket
+        if sock is None:
             raise RuntimeError("connect() muss vor events() aufgerufen werden")
-        with self._socket.makefile("r", encoding="utf-8") as stream:
-            for line in stream:
-                event = parse_event(line)
-                if event is not None:
-                    yield event
+        buffer = b""
+        try:
+            while True:
+                readable, _, _ = select.select([sock, self._wakeup_r], [], [])
+                if self._wakeup_r in readable:
+                    return
+                chunk = sock.recv(_RECV_BUFFER_SIZE)
+                if not chunk:
+                    return
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw_line, buffer = buffer.split(b"\n", 1)
+                    event = parse_event(raw_line.decode("utf-8", errors="replace"))
+                    if event is not None:
+                        yield event
+        finally:
+            self._wakeup_r.close()
