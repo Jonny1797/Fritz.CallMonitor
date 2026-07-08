@@ -1,6 +1,6 @@
 import threading
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
@@ -425,6 +425,9 @@ def test_on_ring_shows_known_contact_name(qtbot, connection, mocker):
     assert args[0] == "Eingehender Anruf"
     assert args[1] == "Max Mustermann"
 
+    popup = window._incoming_call_popups["0"]
+    assert popup.connection_id == "0"
+
 
 def test_on_ring_shows_number_for_unknown_contact(qtbot, connection, mocker):
     window = MainWindow(connection)
@@ -448,6 +451,94 @@ def test_on_ring_shows_anonymous_for_suppressed_number(qtbot, connection, mocker
     assert "unterdrückt" in args[1] or "Unbekannt" in args[1]
 
 
+def test_on_ring_popup_disabled_via_config_flag(qtbot, connection, mocker):
+    window = MainWindow(connection, show_incoming_call_popup=False)
+    qtbot.addWidget(window)
+    mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("0", "030 1234567", "069987654")
+
+    assert window._incoming_call_popups == {}
+
+
+def test_on_ring_popup_has_no_contact_action_for_anonymous_caller(qtbot, connection, mocker):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("0", "", "069987654")
+
+    popup = window._incoming_call_popups["0"]
+    button_labels = [button.text() for button in popup.findChildren(QPushButton)]
+    assert "Kontakt anzeigen" not in button_labels
+    assert "Schließen" in button_labels
+
+
+def test_connected_signal_closes_matching_popup(qtbot, connection, mocker):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("0", "030 1234567", "069987654")
+    popup = window._incoming_call_popups["0"]
+
+    window._close_incoming_call_popup("0")
+    assert popup.isVisible() is False
+    qtbot.waitUntil(lambda: "0" not in window._incoming_call_popups, timeout=1000)
+
+
+def test_disconnected_signal_closes_matching_popup(qtbot, connection, mocker):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("0", "030 1234567", "069987654")
+
+    window._close_incoming_call_popup("0")
+    qtbot.waitUntil(lambda: "0" not in window._incoming_call_popups, timeout=1000)
+
+
+def test_close_incoming_call_popup_ignores_unknown_connection_id(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    window._close_incoming_call_popup("does-not-exist")  # muss nicht (mit KeyError) crashen
+
+
+def test_two_simultaneous_calls_get_independent_popups(qtbot, connection, mocker):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("0", "030 1234567", "069987654")
+    window._on_ring("1", "030 7654321", "069987654")
+
+    assert set(window._incoming_call_popups) == {"0", "1"}
+
+    window._close_incoming_call_popup("0")
+    qtbot.waitUntil(lambda: "0" not in window._incoming_call_popups, timeout=1000)
+    assert "1" in window._incoming_call_popups
+
+
+def test_open_contact_requested_navigates_to_contact(qtbot, connection, mocker):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49301234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("0", "030 1234567", "069987654")
+    popup = window._incoming_call_popups["0"]
+    window._tabs.setCurrentIndex(0)
+
+    popup.open_contact_requested.emit(contact_id)
+
+    assert window._tabs.currentIndex() == 1
+    assert window._table.selectionModel().selectedRows()[0].row() == 0
+
+
 def test_call_monitor_connection_lost_message_shown_only_once(qtbot, connection):
     window = MainWindow(connection)
     qtbot.addWidget(window)
@@ -465,8 +556,8 @@ def test_main_window_has_three_tabs(qtbot, connection):
     qtbot.addWidget(window)
 
     assert window._tabs.count() == 3
-    assert window._tabs.tabText(0) == "Kontakte"
-    assert window._tabs.tabText(1) == "Alle Anrufe"
+    assert window._tabs.tabText(0) == "Alle Anrufe"
+    assert window._tabs.tabText(1) == "Kontakte"
     assert window._tabs.tabText(2) == "Telefonbuch"
 
 
@@ -506,7 +597,7 @@ def test_clicking_call_in_all_calls_view_switches_tab_and_selects_contact(qtbot,
 
     window._all_calls_view.contact_selected.emit(contact_id)
 
-    assert window._tabs.currentIndex() == 0
+    assert window._tabs.currentIndex() == 1
     assert "Max Mustermann" in window._detail._title_label.text()
 
 
@@ -548,21 +639,21 @@ def test_all_calls_tab_label_shows_new_missed_count_on_startup(qtbot, connection
     window = MainWindow(connection)
     qtbot.addWidget(window)
 
-    assert window._tabs.tabText(1) == "Alle Anrufe (1 neu verpasst)"
+    assert window._tabs.tabText(0) == "Alle Anrufe (1 neu verpasst)"
 
 
 def test_all_calls_tab_label_stays_plain_when_no_new_missed_calls(qtbot, connection):
     window = MainWindow(connection)
     qtbot.addWidget(window)
 
-    assert window._tabs.tabText(1) == "Alle Anrufe"
+    assert window._tabs.tabText(0) == "Alle Anrufe"
 
 
 def test_all_calls_tab_label_updates_after_manual_reload(qtbot, connection):
     SyncStateRepository(connection).set(_LAST_SEEN_KEY, "2026-06-01T00:00:00")
     window = MainWindow(connection)
     qtbot.addWidget(window)
-    assert window._tabs.tabText(1) == "Alle Anrufe"
+    assert window._tabs.tabText(0) == "Alle Anrufe"
 
     contacts = ContactRepository(connection)
     calls = CallRepository(connection)
@@ -580,7 +671,7 @@ def test_all_calls_tab_label_updates_after_manual_reload(qtbot, connection):
     )
     window._all_calls_view.reload()
 
-    assert window._tabs.tabText(1) == "Alle Anrufe (1 neu verpasst)"
+    assert window._tabs.tabText(0) == "Alle Anrufe (1 neu verpasst)"
 
 
 def test_live_call_ended_triggers_sync(qtbot, connection):
@@ -602,10 +693,10 @@ def test_call_monitor_signals_wired_to_all_calls_view(qtbot, connection, mocker)
     assert window._call_monitor is mock_thread
     mock_thread.ring.connect.assert_any_call(window._on_ring)
     mock_thread.ring.connect.assert_any_call(window._all_calls_view.on_live_ring)
-    mock_thread.connected.connect.assert_called_once_with(window._all_calls_view.on_live_connected)
-    mock_thread.disconnected.connect.assert_called_once_with(
-        window._all_calls_view.on_live_disconnected
-    )
+    mock_thread.connected.connect.assert_any_call(window._all_calls_view.on_live_connected)
+    mock_thread.disconnected.connect.assert_any_call(window._all_calls_view.on_live_disconnected)
+    mock_thread.connected.connect.assert_any_call(window._close_incoming_call_popup)
+    mock_thread.disconnected.connect.assert_any_call(window._close_incoming_call_popup)
     mock_thread.connection_lost.connect.assert_any_call(window._on_call_monitor_connection_lost)
     mock_thread.connection_lost.connect.assert_any_call(window._all_calls_view.clear_live_calls)
     mock_thread.start.assert_called_once()
@@ -709,7 +800,7 @@ def test_double_clicking_all_calls_row_navigates_to_kontakte(qtbot, connection):
 
     window._all_calls_view._table.doubleClicked.emit(window._all_calls_view._model.index(0, 2))
 
-    assert window._tabs.currentIndex() == 0
+    assert window._tabs.currentIndex() == 1
     assert "Max Mustermann" in window._detail._title_label.text()
 
 
@@ -731,8 +822,8 @@ def test_single_click_on_all_calls_row_no_longer_navigates(qtbot, connection):
     window = MainWindow(connection)
     qtbot.addWidget(window)
     window._all_calls_view.reload()
-    window._tabs.setCurrentIndex(1)  # Alle Anrufe
+    window._tabs.setCurrentIndex(0)  # Alle Anrufe
 
     window._all_calls_view._table.clicked.emit(window._all_calls_view._model.index(0, 2))
 
-    assert window._tabs.currentIndex() == 1  # kein Tabwechsel durch Einfachklick
+    assert window._tabs.currentIndex() == 0  # kein Tabwechsel durch Einfachklick

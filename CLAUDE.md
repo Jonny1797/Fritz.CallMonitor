@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A PySide6 desktop app that connects to an AVM Fritz!Box (TR-064) and shows a searchable call list (by name/number) plus the interaction history per contact. It syncs the box's call list into a local SQLite database so history outlives the box's own limited retention.
 
+## Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/2.0.0/). Whenever a notable
+feature or fix is implemented, add an entry under `[Unreleased]` (in the right `Added`/`Changed`/
+`Fixed`/etc. section). When cutting a new release, rename `[Unreleased]` to the new version + date
+and open a fresh `[Unreleased]` section above it.
+
 ## Commands
 
 ```bash

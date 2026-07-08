@@ -10,10 +10,6 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   `fritz/client.py` already talks to for phonebook sync. Right-click a
   contact/number → dial via the box, handset rings, pick up. Small addition
   given the existing client layer. **Top pick for "next thing".**
-- **Bigger incoming-call popup with actions**, not just the tray toast —
-  `RING` parsing + caller-name resolution already exist
-  (`MainWindow._on_ring`); a small always-on-top window (shows notes, more
-  reliable than tray notifications some OSes suppress) would build on that.
 - **Surface phonebook notes more prominently** — `notes` field already
   exists per local contact (`ContactEditDialog`). Also revisit the deferred
   backlog item from the missed-calls work: a per-contact "recent call

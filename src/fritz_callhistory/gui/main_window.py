@@ -24,10 +24,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fritz_callhistory.db.repository import ContactRepository
+from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
 from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.contact_detail import ContactDetailWidget
+from fritz_callhistory.gui.incoming_call_popup import IncomingCallPopup
 from fritz_callhistory.gui.models import ContactListModel, DataclassSortProxy, install_tristate_sorting
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from fritz_callhistory.gui.workers import ImportFromBoxFn, SyncFn, SyncWorker
@@ -51,6 +52,7 @@ class MainWindow(QMainWindow):
         auto_sync_interval_minutes: int | None = None,
         fritzbox_address: str | None = None,
         import_from_box_fn: ImportFromBoxFn | None = None,
+        show_incoming_call_popup: bool = True,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -62,7 +64,10 @@ class MainWindow(QMainWindow):
         self._shutdown_failsafe_timer: QTimer | None = None
 
         self._contacts_repo = ContactRepository(connection)
+        self._local_phonebook_repo = LocalPhonebookRepository(connection)
         self._contact_model = ContactListModel()
+        self._show_incoming_call_popup = show_incoming_call_popup
+        self._incoming_call_popups: dict[str, IncomingCallPopup] = {}
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Suche nach Name oder Nummer …")
@@ -139,8 +144,8 @@ class MainWindow(QMainWindow):
         self._detail.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
 
         self._tabs = QTabWidget()
-        self._tabs.addTab(contacts_tab, "Kontakte")
         self._tabs.addTab(self._all_calls_view, "Alle Anrufe")
+        self._tabs.addTab(contacts_tab, "Kontakte")
         self._tabs.addTab(self._phonebook_tab, "Telefonbuch")
         # AllCallsView.__init__ hat _reload() bereits vor der obigen Signal-
         # Verbindung ausgefuehrt - die erste new_missed_calls_changed-Emission
@@ -184,6 +189,8 @@ class MainWindow(QMainWindow):
             self._call_monitor.ring.connect(self._all_calls_view.on_live_ring)
             self._call_monitor.connected.connect(self._all_calls_view.on_live_connected)
             self._call_monitor.disconnected.connect(self._all_calls_view.on_live_disconnected)
+            self._call_monitor.connected.connect(self._close_incoming_call_popup)
+            self._call_monitor.disconnected.connect(self._close_incoming_call_popup)
             self._call_monitor.connection_lost.connect(self._on_call_monitor_connection_lost)
             self._call_monitor.connection_lost.connect(self._all_calls_view.clear_live_calls)
             self._call_monitor.start()
@@ -257,18 +264,58 @@ class MainWindow(QMainWindow):
 
     def _on_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
         normalized, is_anonymous = normalize_number(caller_number)
+        contact_id = None
+        notes = None
         if is_anonymous:
             message = "Unbekannte / unterdrückte Nummer"
         else:
             contact = self._contacts_repo.find_by_number(normalized)
             message = contact.display_name if (contact and contact.display_name) else normalized
+            contact_id = contact.id if contact else None
+            local_contact = self._local_phonebook_repo.find_by_number(normalized)
+            notes = local_contact.notes if local_contact else None
         self._tray_icon.showMessage(
             "Eingehender Anruf", message, QSystemTrayIcon.MessageIcon.Information, 8000
         )
+        if self._show_incoming_call_popup:
+            self._show_incoming_call_window(
+                connection_id, message, "" if is_anonymous else normalized, notes, contact_id
+            )
+
+    def _show_incoming_call_window(
+        self,
+        connection_id: str,
+        title: str,
+        subtitle: str,
+        notes: str | None,
+        contact_id: int | None,
+    ) -> None:
+        popup = IncomingCallPopup(connection_id, title, subtitle, notes, contact_id, parent=None)
+        popup.open_contact_requested.connect(self._on_all_calls_contact_selected)
+        popup.destroyed.connect(lambda: self._incoming_call_popups.pop(connection_id, None))
+        stack_index = len(self._incoming_call_popups)
+        self._incoming_call_popups[connection_id] = popup
+
+        screen = QApplication.primaryScreen()
+        margin = 16
+        popup.adjustSize()
+        if screen is not None:
+            geometry = screen.availableGeometry()
+            x = geometry.right() - popup.width() - margin
+            y = geometry.bottom() - popup.height() - margin - stack_index * (
+                popup.height() + margin
+            )
+            popup.move(x, y)
+        popup.show()
+
+    def _close_incoming_call_popup(self, connection_id: str) -> None:
+        popup = self._incoming_call_popups.get(connection_id)
+        if popup is not None:
+            popup.close()
 
     def _update_all_calls_tab_label(self, count: int) -> None:
         label = f"Alle Anrufe ({count} neu verpasst)" if count else "Alle Anrufe"
-        self._tabs.setTabText(1, label)
+        self._tabs.setTabText(0, label)
 
     def _on_new_missed_calls_changed(self, count: int) -> None:
         self._update_all_calls_tab_label(count)
@@ -295,7 +342,7 @@ class MainWindow(QMainWindow):
         self._search_edit.clear()
         self._search_timer.stop()
         self.reload_contacts()
-        self._tabs.setCurrentIndex(0)
+        self._tabs.setCurrentIndex(1)
         source_row = self._contact_model.index_of(contact_id)
         if source_row is not None:
             proxy_row = self._contact_proxy.mapFromSource(self._contact_model.index(source_row, 0)).row()

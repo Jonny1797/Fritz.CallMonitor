@@ -157,6 +157,7 @@ def main() -> int:
         auto_sync_interval_minutes=cfg.sync_interval_minutes,
         fritzbox_address=cfg.address,
         import_from_box_fn=_build_import_from_box_fn(cfg),
+        show_incoming_call_popup=cfg.show_incoming_call_popup,
     )
     window.show()
 
