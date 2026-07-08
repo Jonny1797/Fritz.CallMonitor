@@ -10,6 +10,9 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   `fritz/client.py` already talks to for phonebook sync. Right-click a
   contact/number → dial via the box, handset rings, pick up. Small addition
   given the existing client layer. **Top pick for "next thing".**
+- **Pick which number to dial for contacts with several numbers** — when a
+  contact has multiple stored numbers, click-to-dial needs a way to choose
+  which one to call (e.g. a small submenu) instead of guessing.
 - **Surface phonebook notes more prominently** — `notes` field already
   exists per local contact (`ContactEditDialog`). Also revisit the deferred
   backlog item from the missed-calls work: a per-contact "recent call
@@ -25,6 +28,9 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   pure GUI addition (use the dataviz skill when building this).
 - **"Call back" flag** — lightweight checkbox on missed calls/contacts
   ("needs follow-up"); the app already functions as a mini-CRM for callers.
+- **Hang-up control** — end a call in progress from the app. Needs more
+  thought: unclear which TR-064/call-monitor mechanism would trigger this,
+  and how to target the right active call.
 
 ## Opt-in, privacy tradeoff
 
