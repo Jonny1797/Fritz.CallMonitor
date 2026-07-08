@@ -5,14 +5,13 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 
 ## Quick wins (reuse existing TR-064 plumbing)
 
-- **Click-to-dial ("Wählhilfe")** — `fritzconnection`'s `FritzCall` already
-  exposes `dial_number`/`call_number` (`X_AVM-DE_OnTel`), the same service
-  `fritz/client.py` already talks to for phonebook sync. Right-click a
-  contact/number → dial via the box, handset rings, pick up. Small addition
-  given the existing client layer. **Top pick for "next thing".**
-- **Pick which number to dial for contacts with several numbers** — when a
-  contact has multiple stored numbers, click-to-dial needs a way to choose
-  which one to call (e.g. a small submenu) instead of guessing.
+- **Dial a specific number for Telefonbuch contacts with several numbers** —
+  click-to-dial (right-click "Anrufen", shipped 2026-07-08) only covers
+  Kontakte/Alle Anrufe/contact-detail, where each row has exactly one number.
+  The Telefonbuch tab's contact table collapses multiple stored numbers into
+  one joined display string per row, so it was deliberately left out of that
+  pass — needs a way to pick which one to call (e.g. a small submenu) instead
+  of guessing.
 - **Surface phonebook notes more prominently** — `notes` field already
   exists per local contact (`ContactEditDialog`). Also revisit the deferred
   backlog item from the missed-calls work: a per-contact "recent call
@@ -28,9 +27,13 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   pure GUI addition (use the dataviz skill when building this).
 - **"Call back" flag** — lightweight checkbox on missed calls/contacts
   ("needs follow-up"); the app already functions as a mini-CRM for callers.
-- **Hang-up control** — end a call in progress from the app. Needs more
-  thought: unclear which TR-064/call-monitor mechanism would trigger this,
-  and how to target the right active call.
+- **Hang-up control** — end a call in progress from the app.
+  `fritzconnection.lib.fritzcall.FritzCall.hangup()` (same class as the
+  `.dial()` click-to-dial now uses, wraps `X_AVM-DE_DialHangup`) takes no
+  target argument - it just ends whatever the box's Wählhilfe channel is
+  currently doing, so it'd be a `FritzBoxClient.hang_up()` method symmetric to
+  `dial_number()`. Still needs a UI affordance, e.g. an "Auflegen" button
+  shown only while `AllCallsView` is tracking a live (ringing/connected) call.
 
 ## Opt-in, privacy tradeoff
 
