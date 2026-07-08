@@ -10,6 +10,7 @@ from fritz_callhistory.fritz.exceptions import FritzBoxError
 
 SyncFn = Callable[[], tuple[int, int]]
 ImportFromBoxFn = Callable[[], int]
+DialFn = Callable[[str], None]
 
 
 class SyncWorker(QThread):
@@ -58,3 +59,28 @@ class ImportFromBoxWorker(QThread):
             self.import_failed.emit(f"Unerwarteter Fehler: {exc}")
             return
         self.finished_import.emit(imported)
+
+
+class DialWorker(QThread):
+    """Fuehrt einen einzelnen Waehlhilfe-Anruf (fritz/client.py's dial_number())
+    in einem eigenen Thread aus - gleiche Form wie SyncWorker. *dial_fn* ist ein
+    parameterloser Closure (die Nummer ist bereits eingebrannt), damit dieser
+    Worker wie die anderen keine Kenntnis von Fritz!Box/Config braucht."""
+
+    dial_succeeded = Signal()
+    dial_failed = Signal(str)
+
+    def __init__(self, dial_fn: Callable[[], None], parent=None) -> None:
+        super().__init__(parent)
+        self._dial_fn = dial_fn
+
+    def run(self) -> None:
+        try:
+            self._dial_fn()
+        except FritzBoxError as exc:
+            self.dial_failed.emit(str(exc))
+            return
+        except Exception as exc:  # Thread darf nie stillschweigend sterben
+            self.dial_failed.emit(f"Unerwarteter Fehler: {exc}")
+            return
+        self.dial_succeeded.emit()

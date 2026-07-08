@@ -804,6 +804,124 @@ def test_double_clicking_all_calls_row_navigates_to_kontakte(qtbot, connection):
     assert "Max Mustermann" in window._detail._title_label.text()
 
 
+def test_contact_number_for_row_returns_primary_number(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contacts.upsert("+491234567")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    assert window._contact_number_for_row(0) == "+491234567"
+
+
+def test_contact_number_for_row_returns_none_for_anonymous_contact(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contacts.upsert("anonymous", is_anonymous=True)
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    assert window._contact_number_for_row(0) is None
+
+
+def test_dial_number_shows_unavailable_message_without_dial_fn(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    window._dial_number("+491234567")
+
+    assert "nicht verfügbar" in window.statusBar().currentMessage()
+    assert window._dial_thread is None
+
+
+def test_dial_number_shows_success_message_and_calls_dial_fn(qtbot, connection):
+    dialed = []
+    window = MainWindow(connection, dial_fn=dialed.append)
+    qtbot.addWidget(window)
+
+    window._dial_number("+491234567")
+
+    qtbot.waitUntil(lambda: "ausgelöst" in window.statusBar().currentMessage(), timeout=2000)
+    assert dialed == ["+491234567"]
+    assert "+491234567" in window.statusBar().currentMessage()
+
+
+def test_dial_number_shows_error_on_failure(qtbot, connection):
+    def failing_dial_fn(number):
+        raise FritzBoxConnectionError("Box nicht erreichbar")
+
+    window = MainWindow(connection, dial_fn=failing_dial_fn)
+    qtbot.addWidget(window)
+
+    window._dial_number("+491234567")
+
+    qtbot.waitUntil(lambda: "fehlgeschlagen" in window.statusBar().currentMessage(), timeout=2000)
+    assert "Box nicht erreichbar" in window.statusBar().currentMessage()
+
+
+def test_dial_number_ignores_second_call_while_one_in_flight(qtbot, connection):
+    # release_dial.set() must run even if an assertion below fails - otherwise
+    # the DialWorker is still blocked in its network call when qtbot tears the
+    # window down at test end, and Qt aborts the process (SIGABRT) trying to
+    # destroy a still-running QThread (same bug class as
+    # test_close_while_sync_running_defers_until_sync_finishes, just in test code).
+    release_dial = threading.Event()
+    calls = []
+
+    def slow_dial(number):
+        calls.append(number)
+        release_dial.wait(5)
+
+    window = MainWindow(connection, dial_fn=slow_dial)
+    qtbot.addWidget(window)
+
+    try:
+        window._dial_number("+491111111")
+        # isRunning() flips True before slow_dial's first line actually runs -
+        # wait on the observable side effect itself, not the thread's state.
+        qtbot.waitUntil(lambda: len(calls) == 1, timeout=2000)
+        window._dial_number("+492222222")
+
+        assert calls == ["+491111111"]
+        assert "läuft bereits" in window.statusBar().currentMessage()
+    finally:
+        release_dial.set()
+        qtbot.waitUntil(
+            lambda: window._dial_thread is None or not window._dial_thread.isRunning(), timeout=2000
+        )
+
+
+def test_close_while_dial_running_defers_until_dial_finishes(qtbot, connection):
+    # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
+    # but for DialWorker - a right-click "Anrufen" triggers exactly the same
+    # single-blocking-network-call-with-no-cancellation-point pattern.
+    release_dial = threading.Event()
+
+    def slow_dial(number):
+        release_dial.wait(5)
+
+    window = MainWindow(connection, dial_fn=slow_dial)
+    qtbot.addWidget(window)
+    window.show()
+    try:
+        window._dial_number("+491234567")
+        qtbot.waitUntil(
+            lambda: window._dial_thread is not None and window._dial_thread.isRunning(), timeout=2000
+        )
+
+        closed = window.close()
+
+        assert closed is False
+        assert not window.isVisible()
+        assert window._dial_thread.isRunning()
+    finally:
+        release_dial.set()
+        qtbot.waitUntil(lambda: not window._dial_thread.isRunning(), timeout=2000)
+    qtbot.wait(50)
+
+    assert window.close() is True
+
+
 def test_single_click_on_all_calls_row_no_longer_navigates(qtbot, connection):
     contacts = ContactRepository(connection)
     contact_id = contacts.upsert("+491234567")

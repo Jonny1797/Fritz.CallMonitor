@@ -13,15 +13,18 @@ from fritz_callhistory.gui.models import (
     DataclassSortProxy,
     call_number,
     contact_display_label,
+    install_call_context_menu,
     install_tristate_sorting,
     port_device_display,
 )
+from fritz_callhistory.sync.normalize import ANONYMOUS_NUMBER
 
 _NUMBER_COLUMN = 2
 
 
 class ContactDetailWidget(QWidget):
     number_double_clicked = Signal(str)
+    call_requested = Signal(str)
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         super().__init__()
@@ -60,6 +63,9 @@ class ContactDetailWidget(QWidget):
         self._call_table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self._call_table.doubleClicked.connect(self._on_call_table_double_clicked)
         install_tristate_sorting(self._call_table, self._call_proxy)
+        install_call_context_menu(
+            self._call_table, self._call_proxy, self._number_for_row, self.call_requested.emit
+        )
 
         # Randlos: self._table (Kontakte links) haengt ohne umschliessendes
         # Layout direkt im Splitter und hat daher keine Aussenraender - ohne
@@ -101,3 +107,7 @@ class ContactDetailWidget(QWidget):
         number = call_number(call)
         if number:
             self.number_double_clicked.emit(number)
+
+    def _number_for_row(self, row: int) -> str | None:
+        number = call_number(self._call_model.call_at(row))
+        return None if number == ANONYMOUS_NUMBER else number

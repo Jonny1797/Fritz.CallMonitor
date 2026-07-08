@@ -16,6 +16,7 @@ from fritz_callhistory.gui.models import (
     DataclassSortProxy,
     PhonebookContactListModel,
     _format_call_date,
+    install_call_context_menu,
     install_tristate_sorting,
     port_device_display,
 )
@@ -311,3 +312,71 @@ def test_install_tristate_sorting_cycles_ascending_descending_unsorted(qtbot):
         "02.06.2026, 10:00",
     ]
     assert header.isSortIndicatorShown() is False
+
+
+class _FakeSignal:
+    def __init__(self):
+        self.callback = None
+
+    def connect(self, callback):
+        self.callback = callback
+
+
+class _FakeAction:
+    def __init__(self):
+        self.triggered = _FakeSignal()
+
+
+class _FakeMenu:
+    """Ersetzt QMenu in Tests: echtes QMenu.exec() oeffnet ein blockierendes
+    Popup, das sich in PySide6 nicht per einfachem Attribut-Patch abfangen
+    laesst (Shiboken-gewrappte Methoden ignorieren das) - dieser Fake ruft
+    stattdessen direkt den per triggered.connect() hinterlegten Callback auf."""
+
+    def __init__(self, parent=None):
+        self._action: _FakeAction | None = None
+
+    def addAction(self, text):
+        self._action = _FakeAction()
+        return self._action
+
+    def exec(self, pos):
+        if self._action is not None and self._action.triggered.callback is not None:
+            self._action.triggered.callback()
+
+
+def _table_with_one_row(qtbot) -> tuple[QTableView, DataclassSortProxy]:
+    model = CallListModel([_call_record(call_type=1)])
+    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={})
+    proxy.setSourceModel(model)
+    table = QTableView()
+    table.setModel(proxy)
+    qtbot.addWidget(table)
+    table.resize(400, 200)
+    table.show()
+    return table, proxy
+
+
+def test_install_call_context_menu_invokes_on_call_for_valid_number(qtbot, mocker):
+    table, proxy = _table_with_one_row(qtbot)
+    on_call = mocker.Mock()
+    install_call_context_menu(table, proxy, lambda row: "+491234567", on_call)
+    mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=_FakeMenu)
+
+    rect = table.visualRect(proxy.index(0, 0))
+    table.customContextMenuRequested.emit(rect.center())
+
+    on_call.assert_called_once_with("+491234567")
+
+
+def test_install_call_context_menu_shows_no_menu_when_number_missing(qtbot, mocker):
+    table, proxy = _table_with_one_row(qtbot)
+    on_call = mocker.Mock()
+    install_call_context_menu(table, proxy, lambda row: None, on_call)
+    fake_menu_cls = mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=_FakeMenu)
+
+    rect = table.visualRect(proxy.index(0, 0))
+    table.customContextMenuRequested.emit(rect.center())
+
+    on_call.assert_not_called()
+    fake_menu_cls.assert_not_called()

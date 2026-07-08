@@ -29,9 +29,14 @@ from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.contact_detail import ContactDetailWidget
 from fritz_callhistory.gui.incoming_call_popup import IncomingCallPopup
-from fritz_callhistory.gui.models import ContactListModel, DataclassSortProxy, install_tristate_sorting
+from fritz_callhistory.gui.models import (
+    ContactListModel,
+    DataclassSortProxy,
+    install_call_context_menu,
+    install_tristate_sorting,
+)
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
-from fritz_callhistory.gui.workers import ImportFromBoxFn, SyncFn, SyncWorker
+from fritz_callhistory.gui.workers import DialFn, DialWorker, ImportFromBoxFn, SyncFn, SyncWorker
 from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
@@ -53,6 +58,7 @@ class MainWindow(QMainWindow):
         fritzbox_address: str | None = None,
         import_from_box_fn: ImportFromBoxFn | None = None,
         show_incoming_call_popup: bool = True,
+        dial_fn: DialFn | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -60,6 +66,8 @@ class MainWindow(QMainWindow):
 
         self._sync_fn = sync_fn
         self._sync_thread: SyncWorker | None = None
+        self._dial_fn = dial_fn
+        self._dial_thread: DialWorker | None = None
         self._close_requested = False
         self._shutdown_failsafe_timer: QTimer | None = None
 
@@ -101,9 +109,13 @@ class MainWindow(QMainWindow):
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self._table.doubleClicked.connect(self._on_contact_table_double_clicked)
         install_tristate_sorting(self._table, self._contact_proxy)
+        install_call_context_menu(
+            self._table, self._contact_proxy, self._contact_number_for_row, self._dial_number
+        )
 
         self._detail = ContactDetailWidget(connection)
         self._contact_model.modelReset.connect(self._detail.clear)
+        self._detail.call_requested.connect(self._dial_number)
 
         # Titel/Untertitel des ausgewaehlten Kontakts laufen ueber die gesamte
         # Breite OBERHALB des Splitters, statt (wie frueher) nur ueber der
@@ -138,6 +150,7 @@ class MainWindow(QMainWindow):
         self._all_calls_view.contact_selected.connect(self._on_all_calls_contact_selected)
         self._all_calls_view.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
         self._all_calls_view.live_call_ended.connect(self._trigger_sync)
+        self._all_calls_view.call_requested.connect(self._dial_number)
 
         self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
         self._phonebook_tab.contacts_changed.connect(self.reload_contacts)
@@ -198,16 +211,19 @@ class MainWindow(QMainWindow):
         self.reload_contacts()
 
     def _busy_worker_threads(self) -> list[QThread]:
-        """SyncWorker/ImportFromBoxWorker fuehren einen einzelnen blockierenden
-        Netzwerkaufruf ohne Abbruchpunkte aus - beide muessen hier erkannt
-        werden, damit closeEvent() das Fenster nicht schliesst, waehrend einer
-        von ihnen noch laeuft (siehe closeEvent() fuer die Begruendung)."""
+        """SyncWorker/ImportFromBoxWorker/DialWorker fuehren einen einzelnen
+        blockierenden Netzwerkaufruf ohne Abbruchpunkte aus - alle drei muessen
+        hier erkannt werden, damit closeEvent() das Fenster nicht schliesst,
+        waehrend einer von ihnen noch laeuft (siehe closeEvent() fuer die
+        Begruendung)."""
         threads: list[QThread] = []
         if self._sync_thread is not None and self._sync_thread.isRunning():
             threads.append(self._sync_thread)
         import_thread = self._phonebook_tab.import_thread
         if import_thread is not None and import_thread.isRunning():
             threads.append(import_thread)
+        if self._dial_thread is not None and self._dial_thread.isRunning():
+            threads.append(self._dial_thread)
         return threads
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -356,6 +372,37 @@ class MainWindow(QMainWindow):
         if contact.is_anonymous:
             return
         self._phonebook_tab.add_or_edit_number(contact.primary_number)
+
+    def _contact_number_for_row(self, row: int) -> str | None:
+        contact = self._contact_model.contact_at(row)
+        return None if contact.is_anonymous else contact.primary_number
+
+    def _dial_number(self, number: str) -> None:
+        # _close_requested-Check aus demselben Grund wie in _trigger_sync():
+        # ohne ihn koennte ein Rechtsklick kurz vor dem Schliessen noch einen
+        # DialWorker starten, den closeEvent() (das den Schliessvorgang schon
+        # eingeleitet hat) nicht mehr erwartet.
+        if self._close_requested or self._dial_fn is None:
+            if not self._close_requested:
+                self.statusBar().showMessage(
+                    "Anrufen nicht verfügbar (keine Zugangsdaten hinterlegt)", 5000
+                )
+            return
+        if self._dial_thread is not None and self._dial_thread.isRunning():
+            self.statusBar().showMessage("Es läuft bereits ein Anruf-Versuch …", 5000)
+            return
+        self.statusBar().showMessage(f"Rufe {number} an …")
+
+        self._dial_thread = DialWorker(lambda: self._dial_fn(number), parent=self)
+        self._dial_thread.dial_succeeded.connect(lambda: self._on_dial_succeeded(number))
+        self._dial_thread.dial_failed.connect(self._on_dial_failed)
+        self._dial_thread.start()
+
+    def _on_dial_succeeded(self, number: str) -> None:
+        self.statusBar().showMessage(f"Anruf ausgelöst: {number}", 5000)
+
+    def _on_dial_failed(self, message: str) -> None:
+        self.statusBar().showMessage(f"Anruf fehlgeschlagen: {message}", 8000)
 
     def _on_selection_changed(self, selected, deselected) -> None:
         indexes = selected.indexes()

@@ -86,6 +86,34 @@ def test_get_calls_returns_result_on_success(mocker):
     assert client.get_calls() == ["call-1"]
 
 
+def test_dial_number_passes_number_through_on_success(mocker):
+    fake_call = mocker.Mock()
+    client = _make_client(call=fake_call)
+
+    client.dial_number("+491234567")
+
+    fake_call.dial.assert_called_once_with("+491234567")
+
+
+def test_dial_number_translates_permission_error(mocker):
+    fake_call = mocker.Mock()
+    fake_call.dial.side_effect = FritzAuthorizationError("forbidden")
+    client = _make_client(call=fake_call)
+
+    with pytest.raises(FritzBoxPermissionError):
+        client.dial_number("+491234567")
+
+
+def test_dial_number_translates_connection_error_after_retry(mocker):
+    fake_call = mocker.Mock()
+    fake_call.dial.side_effect = FritzConnectionException("down")
+    client = _make_client(call=fake_call)
+
+    with pytest.raises(FritzBoxConnectionError):
+        client.dial_number("+491234567")
+    assert fake_call.dial.call_count == 2
+
+
 def test_phonebook_ids_translates_connection_error(mocker):
     fake_phonebook = mocker.Mock()
     type(fake_phonebook).phonebook_ids = mocker.PropertyMock(

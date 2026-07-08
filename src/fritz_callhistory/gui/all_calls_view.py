@@ -34,6 +34,8 @@ from fritz_callhistory.gui.models import (
     LIVE_RINGING_CALL_TYPE,
     AllCallsListModel,
     DataclassSortProxy,
+    call_number,
+    install_call_context_menu,
     install_tristate_sorting,
     port_device_display,
 )
@@ -44,6 +46,7 @@ _ISO_DAY_END = "T23:59:59"
 _MISSED_CALL_TYPE = 2
 _LAST_SEEN_KEY = "missed_calls_last_seen_at"
 _NAME_NUMBER_COLUMN = 2
+_LIVE_CALL_SENTINEL_ID = -1
 
 
 @dataclass
@@ -60,6 +63,7 @@ class AllCallsView(QWidget):
     contact_selected = Signal(int)
     new_missed_calls_changed = Signal(int)
     live_call_ended = Signal()
+    call_requested = Signal(str)
 
     def __init__(
         self,
@@ -146,6 +150,9 @@ class AllCallsView(QWidget):
         self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self._table.doubleClicked.connect(self._on_row_double_clicked)
         install_tristate_sorting(self._table, self._proxy)
+        install_call_context_menu(
+            self._table, self._proxy, self._number_for_row, self.call_requested.emit
+        )
 
         layout = QVBoxLayout(self)
         layout.addLayout(filter_row)
@@ -242,7 +249,7 @@ class AllCallsView(QWidget):
             contact = self._contacts_repo.get(live.contact_id)
             result.append(
                 CallWithContact(
-                    id=-1,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
+                    id=_LIVE_CALL_SENTINEL_ID,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
                     contact_id=live.contact_id,
                     # Beendete Anrufe werden generisch als "Eingehend" dargestellt,
                     # statt sofort zu verschwinden - CallMonitor verfolgt ohnehin
@@ -330,3 +337,9 @@ class AllCallsView(QWidget):
         source_row = self._proxy.mapToSource(index).row()
         call = self._model.call_at(source_row)
         self.contact_selected.emit(call.contact_id)
+
+    def _number_for_row(self, row: int) -> str | None:
+        call = self._model.call_at(row)
+        if call.id == _LIVE_CALL_SENTINEL_ID or call.contact_is_anonymous:
+            return None
+        return call_number(call)

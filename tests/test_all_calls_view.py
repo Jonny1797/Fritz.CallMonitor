@@ -479,3 +479,35 @@ def test_live_call_excluded_from_new_missed_preset(qtbot, connection):
     view._new_missed_button.click()
 
     assert view._model.rowCount() == 0
+
+
+def test_number_for_row_returns_call_number(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+
+    assert view._number_for_row(0) == "+491234567"
+
+
+def test_number_for_row_returns_none_for_anonymous_contact(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("anonymous", is_anonymous=True)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+
+    assert view._number_for_row(0) is None
+
+
+def test_number_for_row_returns_none_for_live_call(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "030 1234567", "069987654")
+
+    assert view._number_for_row(0) is None

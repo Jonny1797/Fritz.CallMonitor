@@ -145,6 +145,18 @@ class FritzBoxClient:
         except _NETWORK_EXCEPTIONS as exc:
             raise FritzBoxConnectionError(str(exc)) from exc
 
+    def dial_number(self, number: str) -> None:
+        """Loest einen Anruf ueber die Box-Waehlhilfe aus (X_AVM-DE_DialNumber):
+        die Box ruft *number* an und laesst dann das angeschlossene Telefon klingeln."""
+        try:
+            _retry_network(self._call.dial, number)
+        except FritzAuthorizationError as exc:
+            raise FritzBoxPermissionError(
+                "Fehlendes Fritz!Box-Benutzerrecht für die Wählhilfe (X_AVM-DE_DialNumber)"
+            ) from exc
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+
     def phonebook_ids(self) -> list[int]:
         try:
             return list(_retry_network(lambda: self._phonebook.phonebook_ids))

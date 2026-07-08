@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Click-to-dial: right-click a phone number in the Kontakte, Alle Anrufe, or contact-detail
+  views and choose "Anrufen" to dial it via the Fritz!Box's Wählhilfe (rings a connected
+  handset).
+
 ## [0.2.0] - 2026-07-08
 
 ### Changed

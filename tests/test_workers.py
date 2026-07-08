@@ -1,5 +1,5 @@
 from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
-from fritz_callhistory.gui.workers import ImportFromBoxWorker, SyncWorker
+from fritz_callhistory.gui.workers import DialWorker, ImportFromBoxWorker, SyncWorker
 
 
 def test_sync_worker_emits_finished_signal_with_result(qtbot):
@@ -63,6 +63,40 @@ def test_import_from_box_worker_emits_failed_signal_on_unexpected_error(qtbot):
     worker = ImportFromBoxWorker(import_fn)
 
     with qtbot.waitSignal(worker.import_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert "boom" in blocker.args[0]
+
+
+def test_dial_worker_emits_succeeded_signal(qtbot):
+    calls = []
+    worker = DialWorker(lambda: calls.append("+491234567"))
+
+    with qtbot.waitSignal(worker.dial_succeeded, timeout=2000):
+        worker.start()
+
+    assert calls == ["+491234567"]
+
+
+def test_dial_worker_emits_failed_signal_on_fritzbox_error(qtbot):
+    def dial_fn():
+        raise FritzBoxConnectionError("Box nicht erreichbar")
+
+    worker = DialWorker(dial_fn)
+
+    with qtbot.waitSignal(worker.dial_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == ["Box nicht erreichbar"]
+
+
+def test_dial_worker_emits_failed_signal_on_unexpected_error(qtbot):
+    def dial_fn():
+        raise ValueError("boom")
+
+    worker = DialWorker(dial_fn)
+
+    with qtbot.waitSignal(worker.dial_failed, timeout=2000) as blocker:
         worker.start()
 
     assert "boom" in blocker.args[0]

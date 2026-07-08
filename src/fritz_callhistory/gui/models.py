@@ -8,7 +8,7 @@ from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QTableView
+from PySide6.QtWidgets import QMenu, QTableView
 
 from fritz_callhistory.db.repository import CallRecord, CallWithContact, Contact, LocalPhonebookContact
 
@@ -347,3 +347,29 @@ def install_tristate_sorting(table: QTableView, proxy: QSortFilterProxyModel) ->
             proxy.sort(state["column"], state["order"])
 
     header.sectionClicked.connect(on_section_clicked)
+
+
+def install_call_context_menu(
+    table: QTableView,
+    proxy: QSortFilterProxyModel,
+    number_for_row: Callable[[int], str | None],
+    on_call: Callable[[str], None],
+) -> None:
+    """Rechtsklick-Kontextmenü mit einem "Anrufen"-Eintrag fuer die Zeile unter
+    dem Mauszeiger. *number_for_row* liefert None, wenn die Zeile keine
+    anrufbare Nummer hat (z.B. anonym/unterdrueckt oder ein noch laufender
+    Live-Anruf) - dann erscheint gar kein Menü."""
+    table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def on_context_menu(pos) -> None:
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        number = number_for_row(proxy.mapToSource(index).row())
+        if not number:
+            return
+        menu = QMenu(table)
+        menu.addAction(f"Anrufen: {number}").triggered.connect(lambda: on_call(number))
+        menu.exec(table.viewport().mapToGlobal(pos))
+
+    table.customContextMenuRequested.connect(on_context_menu)

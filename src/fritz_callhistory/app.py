@@ -21,7 +21,7 @@ from fritz_callhistory.db.repository import (
 from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 from fritz_callhistory.gui.main_window import MainWindow
-from fritz_callhistory.gui.workers import ImportFromBoxFn, SyncFn
+from fritz_callhistory.gui.workers import DialFn, ImportFromBoxFn, SyncFn
 from fritz_callhistory.paths import database_file
 from fritz_callhistory.sync.normalize import normalize_number
 from fritz_callhistory.sync.service import SyncService
@@ -123,6 +123,22 @@ def _build_import_from_box_fn(cfg: config_module.Config) -> ImportFromBoxFn | No
     return import_from_box_fn
 
 
+def _build_dial_fn(cfg: config_module.Config) -> DialFn | None:
+    """Baut die Funktion fuer den einmaligen Anruf-Ausloese-Klick (DialWorker) -
+    gleiches Verbindungsaufbau-Muster wie _build_sync_fn (siehe dort für die
+    Begründung), aber ohne eigene DB-Verbindung, da dial_number() keine
+    Datenbank beruehrt."""
+    password = credentials.get_password(cfg.username) if cfg.username else None
+    if not cfg.username or not password:
+        return None
+
+    def dial_fn(number: str) -> None:
+        client = FritzBoxClient(cfg.address, cfg.username, password)
+        client.dial_number(number)
+
+    return dial_fn
+
+
 def _handle_sigint(*_args) -> None:
     """Strg+C beendet den Prozess sofort und hart, statt ueber window.close()
     zu gehen: MainWindow.closeEvent() wartet bei einem normalen Schliessen
@@ -158,6 +174,7 @@ def main() -> int:
         fritzbox_address=cfg.address,
         import_from_box_fn=_build_import_from_box_fn(cfg),
         show_incoming_call_popup=cfg.show_incoming_call_popup,
+        dial_fn=_build_dial_fn(cfg),
     )
     window.show()
 
