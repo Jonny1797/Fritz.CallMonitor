@@ -92,11 +92,23 @@ def _build_import_from_box_fn(cfg: config_module.Config) -> ImportFromBoxFn | No
                         else None
                     )
                     if existing:
+                        # Die Box kennt kein "Standardnummer"-Konzept - eine
+                        # zuvor lokal gesetzte Standardnummer muss ueber den
+                        # vollen delete+reinsert von update() hinweg erhalten
+                        # bleiben, gematcht ueber number_normalized (Zeilen-IDs
+                        # ueberleben update() nicht, siehe db/repository.py).
+                        existing_defaults = {
+                            n.number_normalized for n in existing.numbers if n.is_default
+                        }
+                        numbers_with_default = [
+                            (raw, normalized, number_type, normalized in existing_defaults)
+                            for raw, normalized, number_type in numbers
+                        ]
                         local_repo.update(
                             existing.id,
                             display_name=box_contact.name,
                             notes=existing.notes,
-                            numbers=numbers,
+                            numbers=numbers_with_default,
                         )
                     else:
                         # "Adoptieren": ein zuvor rein lokal angelegter Kontakt mit
@@ -112,7 +124,10 @@ def _build_import_from_box_fn(cfg: config_module.Config) -> ImportFromBoxFn | No
                             local_repo.create(
                                 display_name=box_contact.name,
                                 notes=None,
-                                numbers=numbers,
+                                numbers=[
+                                    (raw, normalized, number_type, False)
+                                    for raw, normalized, number_type in numbers
+                                ],
                                 box_uniqueid=box_contact.uniqueid,
                             )
                     imported += 1

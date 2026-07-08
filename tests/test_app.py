@@ -75,6 +75,69 @@ def test_build_import_from_box_fn_runs_in_real_worker_thread_and_creates_contact
     assert contacts[0].box_uniqueid == "7"
 
 
+def test_build_import_from_box_fn_preserves_default_number_across_reimport(
+    qtbot, tmp_path, mocker
+):
+    # Regression test: die Box kennt kein "Standardnummer"-Konzept, und
+    # LocalPhonebookRepository.update() ersetzt bei jedem Re-Import alle
+    # Nummern-Zeilen komplett - ohne explizites Matching per number_normalized
+    # wuerde eine zuvor lokal gesetzte Standardnummer beim naechsten
+    # "Von Box importieren" stillschweigend verloren gehen (siehe app.py's
+    # _build_import_from_box_fn).
+    db_path = tmp_path / "callhistory.sqlite3"
+    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+
+    connection = connect(db_path)
+    local_repo = LocalPhonebookRepository(connection)
+    contact_id = local_repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[
+            ("0171 2345678", "+491712345678", "mobile", False),
+            ("030 1234567", "+49301234567", "home", True),
+        ],
+        box_uniqueid="7",
+    )
+    connection.close()
+
+    fake_client = mocker.Mock()
+    fake_client.phonebook_ids.return_value = [0]
+    fake_client.phonebook_contacts_detailed.return_value = [
+        FritzPhonebookContact(
+            uniqueid="7",
+            name="Max Mustermann",
+            category="0",
+            numbers=[
+                FritzPhonebookNumber(value="0171 2345678", type="mobile"),
+                FritzPhonebookNumber(value="030 1234567", type="home"),
+            ],
+        )
+    ]
+    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    import_fn = _build_import_from_box_fn(cfg)
+    assert import_fn is not None
+
+    worker = ImportFromBoxWorker(import_fn)
+    failures = []
+    worker.import_failed.connect(failures.append)
+
+    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True):
+        worker.start()
+
+    assert failures == []
+
+    connection = connect(db_path)
+    contact = LocalPhonebookRepository(connection).get(contact_id)
+    connection.close()
+    assert {n.number_normalized: n.is_default for n in contact.numbers} == {
+        "+491712345678": False,
+        "+49301234567": True,
+    }
+
+
 def test_build_import_from_box_fn_returns_none_without_stored_password(mocker):
     mocker.patch("fritz_callhistory.app.credentials.get_password", return_value=None)
     cfg = Config(address="192.168.178.1", username="admin")

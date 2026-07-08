@@ -5,13 +5,6 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 
 ## Quick wins (reuse existing TR-064 plumbing)
 
-- **Dial a specific number for Telefonbuch contacts with several numbers** —
-  click-to-dial (right-click "Anrufen", shipped 2026-07-08) only covers
-  Kontakte/Alle Anrufe/contact-detail, where each row has exactly one number.
-  The Telefonbuch tab's contact table collapses multiple stored numbers into
-  one joined display string per row, so it was deliberately left out of that
-  pass — needs a way to pick which one to call (e.g. a small submenu) instead
-  of guessing.
 - **Surface phonebook notes more prominently** — `notes` field already
   exists per local contact (`ContactEditDialog`). Also revisit the deferred
   backlog item from the missed-calls work: a per-contact "recent call
@@ -45,6 +38,14 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 
 ## Polish / ease of operation
 
+- **"Clear default number" affordance for Telefonbuch contacts** — the
+  per-number "Standard" radio in `ContactEditDialog` (shipped alongside
+  Telefonbuch click-to-dial, 2026-07-08) uses a standard exclusive
+  `QButtonGroup`, which has no built-in "uncheck all" interaction. Right now
+  the only way back to "no default" is removing and re-adding the row. Fine
+  for now (not asked for), but a real fix would need e.g. click-to-toggle-off
+  (temporarily disabling group exclusivity around the click) or an explicit
+  "Kein Standard" option.
 - Backup/restore or "export DB + config" for moving to a new PC.
 - Keyboard shortcuts (e.g. `/` to focus search, `Ctrl+D` to dial selected
   contact).

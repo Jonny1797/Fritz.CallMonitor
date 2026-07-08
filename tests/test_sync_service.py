@@ -225,7 +225,7 @@ def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection
     local_phonebook.create(
         display_name="Lokaler Name",
         notes=None,
-        numbers=[("030 1234567", "+49301234567", "home")],
+        numbers=[("030 1234567", "+49301234567", "home", False)],
     )
 
     updated = resolve_contact_names(

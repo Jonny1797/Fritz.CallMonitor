@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-08
+
 ### Added
 
 - Click-to-dial: right-click a phone number in the Kontakte, Alle Anrufe, or contact-detail
   views and choose "Anrufen" to dial it via the Fritz!Box's Wählhilfe (rings a connected
   handset).
+- Click-to-dial now also works on the Telefonbuch tab: right-click a contact with one stored
+  number to dial it directly, or with several numbers to pick one from a submenu. Contacts with
+  2+ numbers can optionally get a user-set "Standardnummer" (a radio button per number row in
+  the edit dialog), which then dials directly from a top-level context-menu entry instead of
+  requiring the submenu.
 
 ## [0.2.0] - 2026-07-08
 

@@ -120,7 +120,9 @@ def test_add_or_edit_number_creates_new_contact_with_prefilled_number(qtbot, con
 def test_add_or_edit_number_edits_existing_contact_for_matching_number(qtbot, connection, mocker):
     repo = LocalPhonebookRepository(connection)
     contact_id = repo.create(
-        display_name="Max Mustermann", notes=None, numbers=[("0171 2345678", "+491712345678", "mobile")]
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("0171 2345678", "+491712345678", "mobile", False)],
     )
 
     tab = PhonebookTab(connection)
@@ -196,7 +198,7 @@ def test_adding_local_contact_renames_matching_call_history_contact(qtbot, conne
     window._phonebook_tab._repo.create(
         display_name="Neu Erkannt",
         notes=None,
-        numbers=[("0171 2345678", "+491234567", "mobile")],
+        numbers=[("0171 2345678", "+491234567", "mobile", False)],
     )
     window._phonebook_tab._after_local_change()
 

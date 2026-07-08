@@ -373,3 +373,50 @@ def install_call_context_menu(
         menu.exec(table.viewport().mapToGlobal(pos))
 
     table.customContextMenuRequested.connect(on_context_menu)
+
+
+def install_phonebook_call_context_menu(
+    table: QTableView,
+    proxy: QSortFilterProxyModel,
+    contact_at: Callable[[int], LocalPhonebookContact],
+    on_call: Callable[[str], None],
+) -> None:
+    """Wie install_call_context_menu, aber fuer Telefonbuch-Kontakte mit
+    potenziell mehreren Nummern: 0 Nummern -> kein Menü, 1 Nummer -> ein
+    "Anrufen: <Nummer>"-Eintrag, 2+ ohne Standardnummer -> "Anrufen"-Untermenü
+    mit je einem Eintrag pro Nummer, 2+ mit Standardnummer -> zwei Top-Level-
+    Eintraege ("Standardnummer anrufen" + "Nummer auswählen"-Untermenü).
+    Waehlt stets die normalisierte Nummer (nicht die roh eingegebene), damit
+    der Wählhilfe kein nutzerformatierter Freitext uebergeben wird."""
+    table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def on_context_menu(pos) -> None:
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        contact = contact_at(proxy.mapToSource(index).row())
+        numbers = contact.numbers
+        if not numbers:
+            return
+        menu = QMenu(table)
+        if len(numbers) == 1:
+            number = numbers[0]
+            menu.addAction(f"Anrufen: {number.number_raw}").triggered.connect(
+                lambda: on_call(number.number_normalized)
+            )
+        else:
+            default = next((n for n in numbers if n.is_default), None)
+            if default is not None:
+                menu.addAction(
+                    f"Standardnummer anrufen: {default.number_raw}"
+                ).triggered.connect(lambda: on_call(default.number_normalized))
+                submenu = menu.addMenu("Nummer auswählen")
+            else:
+                submenu = menu.addMenu("Anrufen")
+            for n in numbers:
+                submenu.addAction(n.number_raw).triggered.connect(
+                    lambda checked=False, num=n.number_normalized: on_call(num)
+                )
+        menu.exec(table.viewport().mapToGlobal(pos))
+
+    table.customContextMenuRequested.connect(on_context_menu)

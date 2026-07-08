@@ -10,6 +10,7 @@ from __future__ import annotations
 from functools import partial
 
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -54,15 +56,17 @@ class ContactEditDialog(QDialog):
         self._notes_edit.setFixedHeight(60)
 
         self._numbers_layout = QVBoxLayout()
-        self._number_rows: list[tuple[QWidget, QLineEdit, QComboBox]] = []
+        self._number_rows: list[tuple[QWidget, QLineEdit, QComboBox, QRadioButton]] = []
+        self._default_group = QButtonGroup(self)
         for number in (existing.numbers if existing else []):
-            self._add_number_row(number.number_raw, number.number_type)
+            self._add_number_row(number.number_raw, number.number_type, number.is_default)
         if not self._number_rows:
             # prefill_number: Einstiegspunkt "Nummer aus Kontakte/Alle Anrufe
             # per Doppelklick zum Telefonbuch hinzufuegen" (gui/phonebook_view.py's
             # add_or_edit_number) - nur relevant, wenn noch kein bestehender
             # Kontakt geladen wurde (sonst kommen die Nummern schon von existing).
             self._add_number_row(prefill_number or "")
+        self._update_default_radio_visibility()
 
         add_number_button = QPushButton("+ Nummer hinzufügen")
         add_number_button.clicked.connect(lambda: self._add_number_row())
@@ -83,7 +87,9 @@ class ContactEditDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
-    def _add_number_row(self, number_raw: str = "", number_type: str = "home") -> None:
+    def _add_number_row(
+        self, number_raw: str = "", number_type: str = "home", is_default: bool = False
+    ) -> None:
         container = QWidget()
         row = QHBoxLayout(container)
         row.setContentsMargins(0, 0, 0, 0)
@@ -94,24 +100,45 @@ class ContactEditDialog(QDialog):
             type_combo.addItem(_NUMBER_TYPE_LABELS[value], value)
         if number_type in _NUMBER_TYPES:
             type_combo.setCurrentIndex(type_combo.findData(number_type))
+        default_radio = QRadioButton("Standard")
+        default_radio.setChecked(is_default)
+        self._default_group.addButton(default_radio)
         remove_button = QPushButton("✕")
         remove_button.setFixedWidth(28)
         remove_button.clicked.connect(partial(self._remove_number_row, container))
 
         row.addWidget(number_edit)
         row.addWidget(type_combo)
+        row.addWidget(default_radio)
         row.addWidget(remove_button)
 
         self._numbers_layout.addWidget(container)
-        self._number_rows.append((container, number_edit, type_combo))
+        self._number_rows.append((container, number_edit, type_combo, default_radio))
+        self._update_default_radio_visibility()
 
     def _remove_number_row(self, container: QWidget) -> None:
         # Ueber das Container-Widget selbst statt eines Zeilenindex entfernen,
         # da Indizes sich beim Entfernen anderer Zeilen zuvor verschieben
         # koennten (jede Zeile bindet ihren eigenen partial() auf sich selbst).
+        removed = next((row for row in self._number_rows if row[0] is container), None)
         self._number_rows = [row for row in self._number_rows if row[0] is not container]
+        if removed is not None:
+            self._default_group.removeButton(removed[3])
         self._numbers_layout.removeWidget(container)
         container.deleteLater()
+        self._update_default_radio_visibility()
+
+    def _update_default_radio_visibility(self) -> None:
+        """Standard-Auswahl ist nur bei 2+ Nummern sinnvoll (siehe Feature-Plan) -
+        bei genau einer verbleibenden Zeile wird deren Radio versteckt und
+        zwangsweise deaktiviert, statt implizit is_default=True zu suggerieren."""
+        only_row = self._number_rows[0] if len(self._number_rows) == 1 else None
+        for _container, _number_edit, _type_combo, radio in self._number_rows:
+            if only_row is not None:
+                radio.setChecked(False)
+                radio.setVisible(False)
+            else:
+                radio.setVisible(True)
 
     def _on_accept_clicked(self) -> None:
         if not self._name_edit.text().strip():
@@ -127,18 +154,19 @@ class ContactEditDialog(QDialog):
                 return
         self.accept()
 
-    def contact_data(self) -> tuple[str, str | None, list[tuple[str, str, str]]]:
-        """(display_name, notes, [(number_raw, number_normalized, number_type), ...]).
+    def contact_data(self) -> tuple[str, str | None, list[tuple[str, str, str, bool]]]:
+        """(display_name, notes, [(number_raw, number_normalized, number_type, is_default), ...]).
 
         Numbers, die sich nach Normalisierung doppeln, werden entfernt (erste
-        Eingabe gewinnt) - verhindert doppelte Zeilen fuer denselben Kontakt,
-        wenn der Nutzer dieselbe Nummer versehentlich zweimal eintippt.
+        Eingabe gewinnt, inkl. ihres is_default) - verhindert doppelte Zeilen
+        fuer denselben Kontakt, wenn der Nutzer dieselbe Nummer versehentlich
+        zweimal eintippt.
         """
         name = self._name_edit.text().strip()
         notes = self._notes_edit.toPlainText().strip() or None
-        numbers: list[tuple[str, str, str]] = []
+        numbers: list[tuple[str, str, str, bool]] = []
         seen_normalized: set[str] = set()
-        for _container, number_edit, type_combo in self._number_rows:
+        for _container, number_edit, type_combo, radio in self._number_rows:
             raw = number_edit.text().strip()
             if not raw:
                 continue
@@ -146,5 +174,5 @@ class ContactEditDialog(QDialog):
             if is_anonymous or normalized in seen_normalized:
                 continue
             seen_normalized.add(normalized)
-            numbers.append((raw, normalized, type_combo.currentData()))
+            numbers.append((raw, normalized, type_combo.currentData(), radio.isChecked()))
         return name, notes, numbers

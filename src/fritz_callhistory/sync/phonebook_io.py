@@ -351,7 +351,9 @@ def import_contacts(repo: LocalPhonebookRepository, result: ImportResult) -> Imp
         repo.create(
             display_name=contact.display_name,
             notes=contact.notes,
-            numbers=[(n.number_raw, n.number_normalized, n.number_type) for n in contact.numbers],
+            numbers=[
+                (n.number_raw, n.number_normalized, n.number_type, False) for n in contact.numbers
+            ],
             box_uniqueid=contact.box_uniqueid,
         )
         created += 1

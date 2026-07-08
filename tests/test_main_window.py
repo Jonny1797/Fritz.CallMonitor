@@ -846,6 +846,16 @@ def test_dial_number_shows_success_message_and_calls_dial_fn(qtbot, connection):
     assert "+491234567" in window.statusBar().currentMessage()
 
 
+def test_phonebook_tab_call_requested_is_wired_to_dial_number(qtbot, connection):
+    dialed = []
+    window = MainWindow(connection, dial_fn=dialed.append)
+    qtbot.addWidget(window)
+
+    window._phonebook_tab.call_requested.emit("+491234567")
+
+    qtbot.waitUntil(lambda: dialed == ["+491234567"], timeout=2000)
+
+
 def test_dial_number_shows_error_on_failure(qtbot, connection):
     def failing_dial_fn(number):
         raise FritzBoxConnectionError("Box nicht erreichbar")

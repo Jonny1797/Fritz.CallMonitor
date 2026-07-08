@@ -17,6 +17,7 @@ from fritz_callhistory.gui.models import (
     PhonebookContactListModel,
     _format_call_date,
     install_call_context_menu,
+    install_phonebook_call_context_menu,
     install_tristate_sorting,
     port_device_display,
 )
@@ -227,8 +228,20 @@ def _local_phonebook_contact() -> LocalPhonebookContact:
         notes="VIP",
         box_uniqueid=None,
         numbers=[
-            PhonebookNumber(id=1, number_raw="+491234567", number_normalized="+491234567", number_type="mobile"),
-            PhonebookNumber(id=2, number_raw="030 123", number_normalized="+4930123", number_type="home"),
+            PhonebookNumber(
+                id=1,
+                number_raw="+491234567",
+                number_normalized="+491234567",
+                number_type="mobile",
+                is_default=False,
+            ),
+            PhonebookNumber(
+                id=2,
+                number_raw="030 123",
+                number_normalized="+4930123",
+                number_type="home",
+                is_default=False,
+            ),
         ],
     )
 
@@ -323,7 +336,8 @@ class _FakeSignal:
 
 
 class _FakeAction:
-    def __init__(self):
+    def __init__(self, text=""):
+        self.text = text
         self.triggered = _FakeSignal()
 
 
@@ -331,18 +345,42 @@ class _FakeMenu:
     """Ersetzt QMenu in Tests: echtes QMenu.exec() oeffnet ein blockierendes
     Popup, das sich in PySide6 nicht per einfachem Attribut-Patch abfangen
     laesst (Shiboken-gewrappte Methoden ignorieren das) - dieser Fake ruft
-    stattdessen direkt den per triggered.connect() hinterlegten Callback auf."""
+    stattdessen direkt die per triggered.connect() hinterlegten Callbacks der
+    top-level Actions auf (nicht rekursiv in Untermenues - Tests fuer
+    Untermenue-Eintraege loesen den gewuenschten Callback selbst manuell aus,
+    siehe install_phonebook_call_context_menu-Tests)."""
 
-    def __init__(self, parent=None):
-        self._action: _FakeAction | None = None
+    def __init__(self, parent=None, text=""):
+        self.text = text
+        self.actions: list[_FakeAction] = []
+        self.submenus: list["_FakeMenu"] = []
 
     def addAction(self, text):
-        self._action = _FakeAction()
-        return self._action
+        action = _FakeAction(text)
+        self.actions.append(action)
+        return action
+
+    def addMenu(self, text):
+        submenu = _FakeMenu(text=text)
+        self.submenus.append(submenu)
+        return submenu
 
     def exec(self, pos):
-        if self._action is not None and self._action.triggered.callback is not None:
-            self._action.triggered.callback()
+        for action in self.actions:
+            if action.triggered.callback is not None:
+                action.triggered.callback()
+
+
+def _capture_fake_menus(mocker) -> list[_FakeMenu]:
+    created: list[_FakeMenu] = []
+
+    def factory(parent=None):
+        menu = _FakeMenu()
+        created.append(menu)
+        return menu
+
+    mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=factory)
+    return created
 
 
 def _table_with_one_row(qtbot) -> tuple[QTableView, DataclassSortProxy]:
@@ -380,3 +418,180 @@ def test_install_call_context_menu_shows_no_menu_when_number_missing(qtbot, mock
 
     on_call.assert_not_called()
     fake_menu_cls.assert_not_called()
+
+
+def _phonebook_table_with_contacts(
+    qtbot, contacts: list[LocalPhonebookContact]
+) -> tuple[QTableView, DataclassSortProxy]:
+    model = PhonebookContactListModel(contacts)
+    proxy = DataclassSortProxy(row_getter=model.contact_at, key_fns={})
+    proxy.setSourceModel(model)
+    table = QTableView()
+    table.setModel(proxy)
+    qtbot.addWidget(table)
+    table.resize(400, 200)
+    table.show()
+    return table, proxy
+
+
+def test_install_phonebook_call_context_menu_no_menu_for_zero_numbers(qtbot, mocker):
+    contact = LocalPhonebookContact(
+        id=1, display_name="Nur Name", notes=None, box_uniqueid=None, numbers=[]
+    )
+    table, proxy = _phonebook_table_with_contacts(qtbot, [contact])
+    on_call = mocker.Mock()
+    install_phonebook_call_context_menu(table, proxy, proxy.sourceModel().contact_at, on_call)
+    fake_menu_cls = mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=_FakeMenu)
+
+    rect = table.visualRect(proxy.index(0, 0))
+    table.customContextMenuRequested.emit(rect.center())
+
+    on_call.assert_not_called()
+    fake_menu_cls.assert_not_called()
+
+
+def test_install_phonebook_call_context_menu_single_number_dials_normalized_number(qtbot, mocker):
+    contact = LocalPhonebookContact(
+        id=1,
+        display_name="Max Mustermann",
+        notes=None,
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(
+                id=1,
+                number_raw="0171 2345678",
+                number_normalized="+491712345678",
+                number_type="mobile",
+                is_default=False,
+            )
+        ],
+    )
+    table, proxy = _phonebook_table_with_contacts(qtbot, [contact])
+    on_call = mocker.Mock()
+    install_phonebook_call_context_menu(table, proxy, proxy.sourceModel().contact_at, on_call)
+    mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=_FakeMenu)
+
+    rect = table.visualRect(proxy.index(0, 0))
+    table.customContextMenuRequested.emit(rect.center())
+
+    on_call.assert_called_once_with("+491712345678")
+
+
+def test_install_phonebook_call_context_menu_multiple_no_default_builds_submenu_with_all_numbers(
+    qtbot, mocker
+):
+    contact = LocalPhonebookContact(
+        id=1,
+        display_name="Max Mustermann",
+        notes=None,
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(
+                id=1,
+                number_raw="+491234567",
+                number_normalized="+491234567",
+                number_type="home",
+                is_default=False,
+            ),
+            PhonebookNumber(
+                id=2,
+                number_raw="+499876543",
+                number_normalized="+499876543",
+                number_type="mobile",
+                is_default=False,
+            ),
+        ],
+    )
+    table, proxy = _phonebook_table_with_contacts(qtbot, [contact])
+    on_call = mocker.Mock()
+    install_phonebook_call_context_menu(table, proxy, proxy.sourceModel().contact_at, on_call)
+    created = _capture_fake_menus(mocker)
+
+    rect = table.visualRect(proxy.index(0, 0))
+    table.customContextMenuRequested.emit(rect.center())
+
+    menu = created[0]
+    assert menu.actions == []
+    assert len(menu.submenus) == 1
+    submenu = menu.submenus[0]
+    assert [a.text for a in submenu.actions] == ["+491234567", "+499876543"]
+    on_call.assert_not_called()
+
+    submenu.actions[1].triggered.callback()
+    on_call.assert_called_once_with("+499876543")
+
+
+def test_install_phonebook_call_context_menu_multiple_with_default_shows_standard_and_submenu_entries(
+    qtbot, mocker
+):
+    contact = LocalPhonebookContact(
+        id=1,
+        display_name="Max Mustermann",
+        notes=None,
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(
+                id=1,
+                number_raw="+491234567",
+                number_normalized="+491234567",
+                number_type="home",
+                is_default=False,
+            ),
+            PhonebookNumber(
+                id=2,
+                number_raw="+499876543",
+                number_normalized="+499876543",
+                number_type="mobile",
+                is_default=True,
+            ),
+        ],
+    )
+    table, proxy = _phonebook_table_with_contacts(qtbot, [contact])
+    on_call = mocker.Mock()
+    install_phonebook_call_context_menu(table, proxy, proxy.sourceModel().contact_at, on_call)
+    created = _capture_fake_menus(mocker)
+
+    rect = table.visualRect(proxy.index(0, 0))
+    table.customContextMenuRequested.emit(rect.center())
+
+    menu = created[0]
+    assert [a.text for a in menu.actions] == ["Standardnummer anrufen: +499876543"]
+    assert len(menu.submenus) == 1
+    assert [a.text for a in menu.submenus[0].actions] == ["+491234567", "+499876543"]
+    # exec() (bereits von on_context_menu selbst aufgerufen) loest die einzige
+    # Top-Level-Action automatisch aus, siehe _FakeMenu.exec().
+    on_call.assert_called_once_with("+499876543")
+
+
+def test_install_phonebook_call_context_menu_submenu_action_dials_correct_number_not_last_bound(
+    qtbot, mocker
+):
+    contact = LocalPhonebookContact(
+        id=1,
+        display_name="Max Mustermann",
+        notes=None,
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(
+                id=1, number_raw="A", number_normalized="+491111111", number_type="home", is_default=False
+            ),
+            PhonebookNumber(
+                id=2, number_raw="B", number_normalized="+492222222", number_type="home", is_default=False
+            ),
+            PhonebookNumber(
+                id=3, number_raw="C", number_normalized="+493333333", number_type="home", is_default=False
+            ),
+        ],
+    )
+    table, proxy = _phonebook_table_with_contacts(qtbot, [contact])
+    on_call = mocker.Mock()
+    install_phonebook_call_context_menu(table, proxy, proxy.sourceModel().contact_at, on_call)
+    created = _capture_fake_menus(mocker)
+
+    rect = table.visualRect(proxy.index(0, 0))
+    table.customContextMenuRequested.emit(rect.center())
+
+    submenu = created[0].submenus[0]
+    submenu.actions[0].triggered.callback()
+
+    on_call.assert_called_once_with("+491111111")

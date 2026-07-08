@@ -32,7 +32,12 @@ from fritz_callhistory.db.repository import (
     PhonebookRepository,
 )
 from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
-from fritz_callhistory.gui.models import DataclassSortProxy, PhonebookContactListModel, install_tristate_sorting
+from fritz_callhistory.gui.models import (
+    DataclassSortProxy,
+    PhonebookContactListModel,
+    install_phonebook_call_context_menu,
+    install_tristate_sorting,
+)
 from fritz_callhistory.gui.workers import ImportFromBoxFn, ImportFromBoxWorker
 from fritz_callhistory.sync.phonebook_io import (
     ImportedContact,
@@ -57,6 +62,7 @@ _WRITERS = {".xml": write_xml, ".csv": write_csv, ".vcf": write_vcard}
 
 class PhonebookTab(QWidget):
     contacts_changed = Signal()
+    call_requested = Signal(str)
 
     def __init__(
         self,
@@ -122,6 +128,9 @@ class PhonebookTab(QWidget):
         self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self._table.doubleClicked.connect(lambda _index: self._on_edit_clicked())
         install_tristate_sorting(self._table, self._proxy)
+        install_phonebook_call_context_menu(
+            self._table, self._proxy, self._model.contact_at, self.call_requested.emit
+        )
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._search_edit)

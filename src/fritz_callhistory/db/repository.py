@@ -306,6 +306,7 @@ class PhonebookNumber:
     number_raw: str
     number_normalized: str
     number_type: str
+    is_default: bool
 
 
 @dataclass
@@ -346,10 +347,10 @@ class LocalPhonebookRepository:
         *,
         display_name: str,
         notes: str | None,
-        numbers: list[tuple[str, str, str]],
+        numbers: list[tuple[str, str, str, bool]],
         box_uniqueid: str | None = None,
     ) -> int:
-        """numbers: Liste von (number_raw, number_normalized, number_type)."""
+        """numbers: Liste von (number_raw, number_normalized, number_type, is_default)."""
         now = datetime.now().isoformat()
         cursor = self._conn.execute(
             """
@@ -369,7 +370,7 @@ class LocalPhonebookRepository:
         *,
         display_name: str,
         notes: str | None,
-        numbers: list[tuple[str, str, str]],
+        numbers: list[tuple[str, str, str, bool]],
     ) -> None:
         now = datetime.now().isoformat()
         self._conn.execute(
@@ -480,14 +481,17 @@ class LocalPhonebookRepository:
             ).fetchall()
         }
 
-    def _insert_numbers(self, contact_id: int, numbers: list[tuple[str, str, str]]) -> None:
+    def _insert_numbers(self, contact_id: int, numbers: list[tuple[str, str, str, bool]]) -> None:
         self._conn.executemany(
             """
             INSERT INTO phonebook_contact_numbers
-                (phonebook_contact_id, number_raw, number_normalized, number_type)
-            VALUES (?, ?, ?, ?)
+                (phonebook_contact_id, number_raw, number_normalized, number_type, is_default)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            [(contact_id, raw, normalized, number_type) for raw, normalized, number_type in numbers],
+            [
+                (contact_id, raw, normalized, number_type, int(is_default))
+                for raw, normalized, number_type, is_default in numbers
+            ],
         )
 
     def _load(self, contact_id: int) -> LocalPhonebookContact:
@@ -496,7 +500,7 @@ class LocalPhonebookRepository:
             (contact_id,),
         ).fetchone()
         number_rows = self._conn.execute(
-            "SELECT id, number_raw, number_normalized, number_type "
+            "SELECT id, number_raw, number_normalized, number_type, is_default "
             "FROM phonebook_contact_numbers WHERE phonebook_contact_id = ? ORDER BY id",
             (contact_id,),
         ).fetchall()
@@ -511,6 +515,7 @@ class LocalPhonebookRepository:
                     number_raw=row["number_raw"],
                     number_normalized=row["number_normalized"],
                     number_type=row["number_type"],
+                    is_default=bool(row["is_default"]),
                 )
                 for row in number_rows
             ],

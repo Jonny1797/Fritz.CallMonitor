@@ -1,6 +1,6 @@
 [project]
 name = "fritz-callhistory"
-version = "0.2.0"
+version = "0.3.0"
 description = "Durchsuchbare Anrufliste und Kontakt-Historie für die AVM Fritz!Box"
 readme = "README.md"
 authors = [

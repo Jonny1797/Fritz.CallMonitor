@@ -154,6 +154,7 @@ class MainWindow(QMainWindow):
 
         self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
         self._phonebook_tab.contacts_changed.connect(self.reload_contacts)
+        self._phonebook_tab.call_requested.connect(self._dial_number)
         self._detail.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
 
         self._tabs = QTabWidget()

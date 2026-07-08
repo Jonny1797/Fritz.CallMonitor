@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from fritz_callhistory.db.repository import (
     CallRepository,
     ContactRepository,
@@ -337,7 +341,10 @@ def test_local_phonebook_create_and_get_round_trip(connection):
     contact_id = repo.create(
         display_name="Max Mustermann",
         notes="VIP",
-        numbers=[("0171 2345678", "+491712345678", "mobile"), ("030 1234567", "+49301234567", "home")],
+        numbers=[
+            ("0171 2345678", "+491712345678", "mobile", False),
+            ("030 1234567", "+49301234567", "home", False),
+        ],
     )
 
     contact = repo.get(contact_id)
@@ -365,14 +372,16 @@ def test_local_phonebook_create_with_zero_numbers_is_allowed(connection):
 def test_local_phonebook_update_replaces_numbers(connection):
     repo = LocalPhonebookRepository(connection)
     contact_id = repo.create(
-        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home")]
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("+491234567", "+491234567", "home", False)],
     )
 
     repo.update(
         contact_id,
         display_name="Max M.",
         notes="Neue Notiz",
-        numbers=[("+499876543", "+499876543", "mobile")],
+        numbers=[("+499876543", "+499876543", "mobile", False)],
     )
 
     contact = repo.get(contact_id)
@@ -381,10 +390,91 @@ def test_local_phonebook_update_replaces_numbers(connection):
     assert [n.number_normalized for n in contact.numbers] == ["+499876543"]
 
 
+def test_local_phonebook_create_persists_default_flag(connection):
+    repo = LocalPhonebookRepository(connection)
+    contact_id = repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[
+            ("+491234567", "+491234567", "home", False),
+            ("+499876543", "+499876543", "mobile", True),
+        ],
+    )
+
+    contact = repo.get(contact_id)
+    assert [(n.number_normalized, n.is_default) for n in contact.numbers] == [
+        ("+491234567", False),
+        ("+499876543", True),
+    ]
+
+
+def test_local_phonebook_update_can_set_default_across_delete_reinsert(connection):
+    repo = LocalPhonebookRepository(connection)
+    contact_id = repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[
+            ("+491234567", "+491234567", "home", False),
+            ("+499876543", "+499876543", "mobile", False),
+        ],
+    )
+
+    repo.update(
+        contact_id,
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[
+            ("+491234567", "+491234567", "home", False),
+            ("+499876543", "+499876543", "mobile", True),
+        ],
+    )
+
+    contact = repo.get(contact_id)
+    assert [n.is_default for n in contact.numbers] == [False, True]
+
+
+def test_local_phonebook_update_can_clear_default(connection):
+    repo = LocalPhonebookRepository(connection)
+    contact_id = repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[
+            ("+491234567", "+491234567", "home", False),
+            ("+499876543", "+499876543", "mobile", True),
+        ],
+    )
+
+    repo.update(
+        contact_id,
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[
+            ("+491234567", "+491234567", "home", False),
+            ("+499876543", "+499876543", "mobile", False),
+        ],
+    )
+
+    contact = repo.get(contact_id)
+    assert all(not n.is_default for n in contact.numbers)
+
+
+def test_local_phonebook_two_defaults_in_one_create_raises_integrity_error(connection):
+    repo = LocalPhonebookRepository(connection)
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.create(
+            display_name="Max Mustermann",
+            notes=None,
+            numbers=[
+                ("+491234567", "+491234567", "home", True),
+                ("+499876543", "+499876543", "mobile", True),
+            ],
+        )
+
+
 def test_local_phonebook_delete_removes_contact_and_numbers(connection):
     repo = LocalPhonebookRepository(connection)
     contact_id = repo.create(
-        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home")]
+        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home", False)]
     )
 
     repo.delete(contact_id)
@@ -399,7 +489,7 @@ def test_local_phonebook_delete_removes_contact_and_numbers(connection):
 def test_local_phonebook_find_by_number_returns_matching_contact(connection):
     repo = LocalPhonebookRepository(connection)
     contact_id = repo.create(
-        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home")]
+        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home", False)]
     )
 
     found = repo.find_by_number("+491234567")
@@ -415,8 +505,8 @@ def test_local_phonebook_find_by_number_returns_none_when_missing(connection):
 
 def test_local_phonebook_lookup_name_ties_break_by_lowest_id(connection):
     repo = LocalPhonebookRepository(connection)
-    repo.create(display_name="Erster", notes=None, numbers=[("+491234567", "+491234567", "home")])
-    repo.create(display_name="Zweiter", notes=None, numbers=[("+491234567", "+491234567", "home")])
+    repo.create(display_name="Erster", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
+    repo.create(display_name="Zweiter", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
 
     assert repo.lookup_name("+491234567") == "Erster"
 
@@ -443,7 +533,7 @@ def test_all_numbers_belong_to_one_contact_true_for_exact_match(connection):
     repo.create(
         display_name="Max Mustermann",
         notes=None,
-        numbers=[("+491234567", "+491234567", "home"), ("+499876543", "+499876543", "mobile")],
+        numbers=[("+491234567", "+491234567", "home", False), ("+499876543", "+499876543", "mobile", False)],
     )
 
     assert repo.all_numbers_belong_to_one_contact(["+491234567", "+499876543"]) is True
@@ -451,8 +541,8 @@ def test_all_numbers_belong_to_one_contact_true_for_exact_match(connection):
 
 def test_all_numbers_belong_to_one_contact_false_for_partial_overlap(connection):
     repo = LocalPhonebookRepository(connection)
-    repo.create(display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home")])
-    repo.create(display_name="Erika Musterfrau", notes=None, numbers=[("+499876543", "+499876543", "home")])
+    repo.create(display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
+    repo.create(display_name="Erika Musterfrau", notes=None, numbers=[("+499876543", "+499876543", "home", False)])
 
     assert repo.all_numbers_belong_to_one_contact(["+491234567", "+499876543"]) is False
 
@@ -465,7 +555,7 @@ def test_all_numbers_belong_to_one_contact_false_for_empty_list(connection):
 def test_find_local_only_contact_by_exact_numbers_matches_local_contact(connection):
     repo = LocalPhonebookRepository(connection)
     contact_id = repo.create(
-        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home")]
+        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home", False)]
     )
 
     found = repo.find_local_only_contact_by_exact_numbers(["+491234567"])
@@ -478,7 +568,7 @@ def test_find_local_only_contact_by_exact_numbers_ignores_box_linked_contacts(co
     contact_id = repo.create(
         display_name="Max Mustermann",
         notes=None,
-        numbers=[("+491234567", "+491234567", "home")],
+        numbers=[("+491234567", "+491234567", "home", False)],
         box_uniqueid="7",
     )
 
