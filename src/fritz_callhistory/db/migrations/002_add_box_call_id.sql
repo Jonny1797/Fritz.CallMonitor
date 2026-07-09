@@ -3,7 +3,7 @@
 -- Date-Zeitstempel selbst hat nur Minutengenauigkeit (fritzconnection parst
 -- ihn mit '%d.%m.%y %H:%M', keine Sekunden). Bei zwei Anrufen in derselben
 -- Minute lieferte "ORDER BY call_date DESC" daher eine unbestimmte
--- Reihenfolge. box_call_id dient als Tiebreaker (hoehere Id = neuer, gegen
+-- Reihenfolge. box_call_id dient als Tiebreaker (höhere Id = neuer, gegen
 -- eine echte Fritz!Box empirisch verifiziert) - bewusst NICHT Teil des
--- Dedupe-Schluessels, da diese Id ueber lange Zeitraeume rotiert.
+-- Dedupe-Schlüssels, da diese Id über lange Zeiträume rotiert.
 ALTER TABLE calls ADD COLUMN box_call_id INTEGER;

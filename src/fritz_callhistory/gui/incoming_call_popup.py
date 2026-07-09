@@ -1,9 +1,9 @@
-"""Immer-im-Vordergrund-Fenster fuer eingehende Anrufe, ergaenzend zum
+"""Immer-im-Vordergrund-Fenster für eingehende Anrufe, ergänzend zum
 Tray-Toast in gui/main_window.py's _on_ring() (der von manchen Fensterman-
-agern/Betriebssystemen unterdrueckt oder zu schnell wieder ausgeblendet
+agern/Betriebssystemen unterdrückt oder zu schnell wieder ausgeblendet
 wird). Zeigt Name/Nummer/Notizen und bietet optional eine
 "Kontakt anzeigen"-Aktion; Lebenszyklus (wann geschlossen wird) steuert
-main_window.py komplett von aussen ueber CONNECT/DISCONNECT."""
+main_window.py komplett von aussen über CONNECT/DISCONNECT."""
 
 from __future__ import annotations
 

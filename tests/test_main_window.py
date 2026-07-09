@@ -10,8 +10,8 @@ from fritz_callhistory.gui.main_window import MainWindow
 
 def test_contact_table_and_call_table_are_direct_splitter_children(qtbot, connection):
     # Beide Tabellen sind der alleinige Inhalt ihres jeweiligen Splitter-Kinds
-    # (kein interner Header mehr, der eine Tabelle kuerzer macht als die
-    # andere) - der Splitter gibt beiden Kindern dieselbe Gesamthoehe, also
+    # (kein interner Header mehr, der eine Tabelle kürzer macht als die
+    # andere) - der Splitter gibt beiden Kindern dieselbe Gesamthöhe, also
     # enden beide Tabellen automatisch gleich hoch.
     window = MainWindow(connection)
     qtbot.addWidget(window)
@@ -51,7 +51,7 @@ def test_contact_table_sorting_cycles_and_selection_still_resolves(qtbot, connec
     assert "Anton" in window._detail._title_label.text()
 
     header.sectionClicked.emit(0)  # absteigend
-    header.sectionClicked.emit(0)  # zurueck zur Ausgangsreihenfolge
+    header.sectionClicked.emit(0)  # zurück zur Ausgangsreihenfolge
 
     assert window._contact_proxy.data(window._contact_proxy.index(0, 0)) == "Bertha"
 
@@ -573,7 +573,7 @@ def test_existing_widgets_still_reachable_after_tab_refactor(qtbot, connection):
     window._search_edit.setText("kein-treffer")
     window._search_timer.timeout.emit()
     assert window._contact_model.rowCount() == 0
-    assert window._sync_button.isEnabled() is False  # kein sync_fn uebergeben
+    assert window._sync_button.isEnabled() is False  # kein sync_fn übergeben
 
 
 def test_clicking_call_in_all_calls_view_switches_tab_and_selects_contact(qtbot, connection):

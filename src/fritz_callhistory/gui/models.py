@@ -20,10 +20,10 @@ from fritz_callhistory.db.repository import (
 
 _MISSED_CALL_TYPE = 2
 
-# Pseudo-Call-Types fuer live per CallMonitor verfolgte, noch nicht
+# Pseudo-Call-Types für live per CallMonitor verfolgte, noch nicht
 # synchronisierte Anrufe (siehe gui/all_calls_view.py). Bewusst ausserhalb des
 # Wertebereichs echter Fritz!Box-Call-Type-Codes (>=1), damit sie z.B. nie
-# versehentlich als "verpasst" gezaehlt werden.
+# versehentlich als "verpasst" gezählt werden.
 LIVE_RINGING_CALL_TYPE = -1
 LIVE_CONNECTED_CALL_TYPE = -2
 
@@ -63,7 +63,7 @@ def _call_type_display(call_type: int) -> str:
 
 
 def call_number(call: CallRecord) -> str | None:
-    """Die fuer den Nutzer relevante Nummer: bei ausgehenden Anrufen die
+    """Die für den Nutzer relevante Nummer: bei ausgehenden Anrufen die
     angerufene, sonst die anrufende - geteilt zwischen der Tabellenanzeige
     (CallListModel) und dem Doppelklick-Handler in gui/contact_detail.py."""
     return call.called_number if call.call_type in (3, 11) else call.caller_number
@@ -77,7 +77,7 @@ def _format_call_date(call_date: str) -> str:
 
 
 def port_device_display(device: str | None, port: str | None) -> str:
-    """"-1" ist der Box-interne Platzhalter fuer "kein Geraet" (z.B. abgelehnte
+    """"-1" ist der Box-interne Platzhalter für "kein Gerät" (z.B. abgelehnte
     Anrufe) - defensiv auch hier herausfiltern, falls er je durchrutscht."""
     parts = [value for value in (device, port) if value and value != "-1"]
     return " / ".join(parts) or "-"
@@ -228,10 +228,10 @@ class CallListModel(_SimpleTableModel):
 
 
 class AllCallsListModel(_SimpleTableModel):
-    """Chronologische Anrufliste ueber alle Kontakte hinweg ("Alle Anrufe").
+    """Chronologische Anrufliste über alle Kontakte hinweg ("Alle Anrufe").
 
     Hebt neue verpasste Anrufe (call_date > last_seen_at) optisch hervor,
-    unabhaengig vom aktuell aktiven Datumsfilter/Preset in AllCallsView.
+    unabhängig vom aktuell aktiven Datumsfilter/Preset in AllCallsView.
     """
 
     _columns = _ALL_CALLS_COLUMNS
@@ -307,9 +307,9 @@ def voicemail_caller_display(message: VoicemailMessageRecord) -> str:
 class VoicemailListModel(_SimpleTableModel):
     """Anrufbeantworter-Nachrichtenliste ("Anrufbeantworter"-Tab).
 
-    Hebt neue (noch nicht gehoerte) Nachrichten optisch hervor, direkt anhand des
+    Hebt neue (noch nicht gehörte) Nachrichten optisch hervor, direkt anhand des
     Box-eigenen is_new-Flags - anders als bei AllCallsListModel wird hier kein
-    lokal verfolgtes last_seen_at gebraucht, die Box ist fuer "neu/gehoert" allein
+    lokal verfolgtes last_seen_at gebraucht, die Box ist für "neu/gehört" allein
     massgeblich (siehe VoicemailRepository.insert_or_update)."""
 
     _columns = _VOICEMAIL_COLUMNS
@@ -347,12 +347,12 @@ class VoicemailListModel(_SimpleTableModel):
 
 class DataclassSortProxy(QSortFilterProxyModel):
     """Sortiert nach typisierten Feldern der Quell-Dataclass statt der
-    angezeigten Text-Repraesentation (verhindert z.B. lexikographische
+    angezeigten Text-Repräsentation (verhindert z.B. lexikographische
     Fehlsortierung bei 'm:ss'-Dauer oder Anrufzahlen). row_getter ist die
     bestehende contact_at()/call_at()-Methode des Quellmodells; key_fns bildet
     Spaltenindex auf eine Funktion ab, die aus der Zeile einen vergleichbaren
-    Schluessel extrahiert. Spalten ohne Eintrag fallen auf den Standard-
-    Textvergleich zurueck."""
+    Schlüssel extrahiert. Spalten ohne Eintrag fallen auf den Standard-
+    Textvergleich zurück."""
 
     def __init__(
         self,
@@ -378,7 +378,7 @@ class DataclassSortProxy(QSortFilterProxyModel):
 
 
 def install_tristate_sorting(table: QTableView, proxy: QSortFilterProxyModel) -> None:
-    """Klick 1: aufsteigend, Klick 2: absteigend, Klick 3: zurueck zur
+    """Klick 1: aufsteigend, Klick 2: absteigend, Klick 3: zurück zur
     Ausgangsreihenfolge. QTableView.setSortingEnabled(True) allein bietet nur
     einen 2-stufigen Toggle (auf-/absteigend), daher hier manuell per
     sectionClicked verwaltet."""
@@ -411,9 +411,9 @@ def install_call_context_menu(
     number_for_row: Callable[[int], str | None],
     on_call: Callable[[str], None],
 ) -> None:
-    """Rechtsklick-Kontextmenü mit einem "Anrufen"-Eintrag fuer die Zeile unter
+    """Rechtsklick-Kontextmenü mit einem "Anrufen"-Eintrag für die Zeile unter
     dem Mauszeiger. *number_for_row* liefert None, wenn die Zeile keine
-    anrufbare Nummer hat (z.B. anonym/unterdrueckt oder ein noch laufender
+    anrufbare Nummer hat (z.B. anonym/unterdrückt oder ein noch laufender
     Live-Anruf) - dann erscheint gar kein Menü."""
     table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
@@ -437,13 +437,13 @@ def install_phonebook_call_context_menu(
     contact_at: Callable[[int], LocalPhonebookContact],
     on_call: Callable[[str], None],
 ) -> None:
-    """Wie install_call_context_menu, aber fuer Telefonbuch-Kontakte mit
+    """Wie install_call_context_menu, aber für Telefonbuch-Kontakte mit
     potenziell mehreren Nummern: 0 Nummern -> kein Menü, 1 Nummer -> ein
     "Anrufen: <Nummer>"-Eintrag, 2+ ohne Standardnummer -> "Anrufen"-Untermenü
     mit je einem Eintrag pro Nummer, 2+ mit Standardnummer -> zwei Top-Level-
-    Eintraege ("Standardnummer anrufen" + "Nummer auswählen"-Untermenü).
-    Waehlt stets die normalisierte Nummer (nicht die roh eingegebene), damit
-    der Wählhilfe kein nutzerformatierter Freitext uebergeben wird."""
+    Einträge ("Standardnummer anrufen" + "Nummer auswählen"-Untermenü).
+    Wählt stets die normalisierte Nummer (nicht die roh eingegebene), damit
+    der Wählhilfe kein nutzerformatierter Freitext übergeben wird."""
     table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def on_context_menu(pos) -> None:

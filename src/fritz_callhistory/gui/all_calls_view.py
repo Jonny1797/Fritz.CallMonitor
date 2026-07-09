@@ -1,7 +1,7 @@
-"""Chronologische Anrufliste ueber alle Kontakte hinweg, mit Datumsfilter.
+"""Chronologische Anrufliste über alle Kontakte hinweg, mit Datumsfilter.
 
-Ergaenzt die kontaktzentrierte Detailansicht (contact_detail.py) um eine
-zeitraumbasierte Sicht, aehnlich der nativen Anrufliste der Fritz!Box.
+Ergänzt die kontaktzentrierte Detailansicht (contact_detail.py) um eine
+zeitraumbasierte Sicht, ähnlich der nativen Anrufliste der Fritz!Box.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class _LiveCall:
     contact_id: int
     call_type: int  # LIVE_RINGING_CALL_TYPE oder LIVE_CONNECTED_CALL_TYPE
     started_at: str
-    ended: bool = False  # Anruf beendet, wartet auf den naechsten erfolgreichen Sync (siehe on_live_disconnected)
+    ended: bool = False  # Anruf beendet, wartet auf den nächsten erfolgreichen Sync (siehe on_live_disconnected)
 
 
 class AllCallsView(QWidget):
@@ -114,8 +114,8 @@ class AllCallsView(QWidget):
         filter_row.addWidget(self._all_button)
         filter_row.addWidget(self._new_missed_button)
 
-        # Eigene Zeile fuer "Als gesehen markieren": im Unterschied zu den
-        # Presets oben (reine Sichtfilter) veraendert dieser Button
+        # Eigene Zeile für "Als gesehen markieren": im Unterschied zu den
+        # Presets oben (reine Sichtfilter) verändert dieser Button
         # persistenten Zustand (last_seen_at in der DB) - bewusst visuell
         # abgesetzt, um Verwechslung mit einem reinen Filter-Klick zu vermeiden.
         self._new_missed_count_label = QLabel()
@@ -169,7 +169,7 @@ class AllCallsView(QWidget):
         value = self._sync_state.get(_LAST_SEEN_KEY)
         if value is None:
             # Erstlauf (keine bestehende Installation oder Update mit bereits
-            # vorhandener Historie): nichts rueckwirkend als "neu" markieren.
+            # vorhandener Historie): nichts rückwirkend als "neu" markieren.
             value = self._now_provider().isoformat()
             self._sync_state.set(_LAST_SEEN_KEY, value)
         return value
@@ -218,7 +218,7 @@ class AllCallsView(QWidget):
         self._reload()
 
     def reload(self) -> None:
-        """Laedt die Liste unter Beibehaltung des aktuellen Filters neu (z.B. nach einem Sync)."""
+        """Lädt die Liste unter Beibehaltung des aktuellen Filters neu (z.B. nach einem Sync)."""
         self._reload()
 
     def _reload(self) -> None:
@@ -235,7 +235,7 @@ class AllCallsView(QWidget):
 
         if not self._new_missed_only:
             # Live-Anrufe (klingelt/verbunden) immer oben zeigen, ausser im
-            # "Neu verpasst"-Preset - der ist semantisch nur fuer bereits
+            # "Neu verpasst"-Preset - der ist semantisch nur für bereits
             # abgeschlossene, verpasste Anrufe gedacht.
             calls = self._live_calls_as_call_with_contact() + calls
 
@@ -293,7 +293,7 @@ class AllCallsView(QWidget):
     def on_live_disconnected(self, connection_id: str) -> None:
         # Der Eintrag wird nicht sofort entfernt, sondern nur als beendet
         # markiert (siehe _live_calls_as_call_with_contact) - so bleibt die
-        # Zeile sichtbar, bis der dadurch ausgeloeste Sync (live_call_ended
+        # Zeile sichtbar, bis der dadurch ausgelöste Sync (live_call_ended
         # -> MainWindow._trigger_sync) den echten Eintrag gebracht hat, statt
         # kurz zu verschwinden und dann wieder aufzutauchen.
         live = self._live_calls.get(connection_id)
@@ -303,7 +303,7 @@ class AllCallsView(QWidget):
             self.live_call_ended.emit()
 
     def clear_ended_live_calls(self) -> None:
-        """Entfernt beendete Live-Anrufe, nachdem der dadurch ausgeloeste Sync
+        """Entfernt beendete Live-Anrufe, nachdem der dadurch ausgelöste Sync
         abgeschlossen ist (siehe MainWindow._on_sync_finished) - der echte,
         jetzt synchronisierte Eintrag ersetzt die Platzhalterzeile dann nahtlos."""
         ended_ids = [cid for cid, live in self._live_calls.items() if live.ended]
@@ -312,7 +312,7 @@ class AllCallsView(QWidget):
 
     def clear_live_calls(self) -> None:
         """Verwirft alle laufend verfolgten Anrufe, z.B. wenn die CallMonitor-
-        Verbindung abbricht und ihr Zustand nicht mehr vertrauenswuerdig ist."""
+        Verbindung abbricht und ihr Zustand nicht mehr vertrauenswürdig ist."""
         if self._live_calls:
             self._live_calls.clear()
             self._reload()

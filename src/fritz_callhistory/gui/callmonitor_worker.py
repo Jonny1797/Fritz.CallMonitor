@@ -42,11 +42,11 @@ class CallMonitorThread(QThread):
         # Das eigentliche Abbruchsignal: ein Event statt eines Bool+Lock, weil
         # dessen wait() sowohl den Reconnect-Wartezeitraum (statt einem
         # unterbrechungsfreien time.sleep(), das stop() bis zu
-        # reconnect_delay_seconds lang ignorieren wuerde) als auch die
-        # Stop-Pruefung nach connect() sofort abbrechbar macht.
+        # reconnect_delay_seconds lang ignorieren würde) als auch die
+        # Stop-Prüfung nach connect() sofort abbrechbar macht.
         self._stop_event = threading.Event()
         self._connection: CallMonitorConnection | None = None
-        # Schuetzt nur den Zugriff auf self._connection zwischen stop() und run().
+        # Schützt nur den Zugriff auf self._connection zwischen stop() und run().
         self._connection_lock = threading.Lock()
 
     def stop(self) -> None:

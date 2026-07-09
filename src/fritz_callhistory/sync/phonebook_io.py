@@ -133,7 +133,7 @@ def write_xml(
                 },
             )
             number_el.text = number.number_raw
-        # <uniqueid> nur setzen, wenn der Kontakt von einem frueheren Box-Import
+        # <uniqueid> nur setzen, wenn der Kontakt von einem früheren Box-Import
         # stammt - sonst vergibt die Box beim manuellen Import selbst eine neue
         # Id (siehe fritz/client.py phonebook_contacts_detailed()).
         if contact.box_uniqueid:

@@ -1,8 +1,8 @@
 """Dialog zum Anlegen/Bearbeiten eines lokalen Telefonbuch-Kontakts.
 
-Unterstuetzt eine dynamische Anzahl Rufnummern pro Kontakt (Fritz!Fon/Box-
-Telefonbuecher erlauben das ebenfalls). Persistiert nicht selbst - der
-Aufrufer (gui/phonebook_view.py) entscheidet ueber create() vs. update().
+Unterstützt eine dynamische Anzahl Rufnummern pro Kontakt (Fritz!Fon/Box-
+Telefonbücher erlauben das ebenfalls). Persistiert nicht selbst - der
+Aufrufer (gui/phonebook_view.py) entscheidet über create() vs. update().
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from fritz_callhistory.db.repository import LocalPhonebookContact
 from fritz_callhistory.sync.normalize import normalize_number
 
 _NUMBER_TYPES = ["home", "mobile", "work", "fax_work", "other"]
-# Werte bleiben die internen Speicher-/Interop-Schluessel (DB, vCard/XML-Export
+# Werte bleiben die internen Speicher-/Interop-Schlüssel (DB, vCard/XML-Export
 # in sync/phonebook_io.py) - nur die angezeigten Labels sind deutsch.
 _NUMBER_TYPE_LABELS = {
     "home": "Privat",
@@ -62,7 +62,7 @@ class ContactEditDialog(QDialog):
             self._add_number_row(number.number_raw, number.number_type, number.is_default)
         if not self._number_rows:
             # prefill_number: Einstiegspunkt "Nummer aus Kontakte/Alle Anrufe
-            # per Doppelklick zum Telefonbuch hinzufuegen" (gui/phonebook_view.py's
+            # per Doppelklick zum Telefonbuch hinzufügen" (gui/phonebook_view.py's
             # add_or_edit_number) - nur relevant, wenn noch kein bestehender
             # Kontakt geladen wurde (sonst kommen die Nummern schon von existing).
             self._add_number_row(prefill_number or "")
@@ -119,7 +119,7 @@ class ContactEditDialog(QDialog):
     def _remove_number_row(self, container: QWidget) -> None:
         # Ueber das Container-Widget selbst statt eines Zeilenindex entfernen,
         # da Indizes sich beim Entfernen anderer Zeilen zuvor verschieben
-        # koennten (jede Zeile bindet ihren eigenen partial() auf sich selbst).
+        # könnten (jede Zeile bindet ihren eigenen partial() auf sich selbst).
         removed = next((row for row in self._number_rows if row[0] is container), None)
         self._number_rows = [row for row in self._number_rows if row[0] is not container]
         if removed is not None:
@@ -159,7 +159,7 @@ class ContactEditDialog(QDialog):
 
         Numbers, die sich nach Normalisierung doppeln, werden entfernt (erste
         Eingabe gewinnt, inkl. ihres is_default) - verhindert doppelte Zeilen
-        fuer denselben Kontakt, wenn der Nutzer dieselbe Nummer versehentlich
+        für denselben Kontakt, wenn der Nutzer dieselbe Nummer versehentlich
         zweimal eintippt.
         """
         name = self._name_edit.text().strip()

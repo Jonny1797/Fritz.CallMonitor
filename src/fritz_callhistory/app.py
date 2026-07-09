@@ -98,10 +98,10 @@ def _build_import_from_box_fn(cfg: config_module.Config) -> ImportFromBoxFn | No
                     )
                     if existing:
                         # Die Box kennt kein "Standardnummer"-Konzept - eine
-                        # zuvor lokal gesetzte Standardnummer muss ueber den
+                        # zuvor lokal gesetzte Standardnummer muss über den
                         # vollen delete+reinsert von update() hinweg erhalten
-                        # bleiben, gematcht ueber number_normalized (Zeilen-IDs
-                        # ueberleben update() nicht, siehe db/repository.py).
+                        # bleiben, gematcht über number_normalized (Zeilen-IDs
+                        # überleben update() nicht, siehe db/repository.py).
                         existing_defaults = {
                             n.number_normalized for n in existing.numbers if n.is_default
                         }
@@ -118,7 +118,7 @@ def _build_import_from_box_fn(cfg: config_module.Config) -> ImportFromBoxFn | No
                     else:
                         # "Adoptieren": ein zuvor rein lokal angelegter Kontakt mit
                         # exakt derselben Nummernmenge wird mit dieser Box-Id
-                        # verknuepft statt dupliziert (siehe db/repository.py's
+                        # verknüpft statt dupliziert (siehe db/repository.py's
                         # find_local_only_contact_by_exact_numbers).
                         adopt_id = local_repo.find_local_only_contact_by_exact_numbers(
                             [n[1] for n in numbers]
@@ -144,10 +144,10 @@ def _build_import_from_box_fn(cfg: config_module.Config) -> ImportFromBoxFn | No
 
 
 def _build_dial_fn(cfg: config_module.Config) -> DialFn | None:
-    """Baut die Funktion fuer den einmaligen Anruf-Ausloese-Klick (DialWorker) -
+    """Baut die Funktion für den einmaligen Anruf-Auslöse-Klick (DialWorker) -
     gleiches Verbindungsaufbau-Muster wie _build_sync_fn (siehe dort für die
     Begründung), aber ohne eigene DB-Verbindung, da dial_number() keine
-    Datenbank beruehrt."""
+    Datenbank berührt."""
     password = credentials.get_password(cfg.username) if cfg.username else None
     if not cfg.username or not password:
         return None
@@ -160,10 +160,10 @@ def _build_dial_fn(cfg: config_module.Config) -> DialFn | None:
 
 
 def _resolve_box_index(client: FritzBoxClient, message: VoicemailMessageRecord) -> int | None:
-    """box_index ist nicht stabil ueber Loeschungen hinweg (siehe fritz/client.py's
+    """box_index ist nicht stabil über Löschungen hinweg (siehe fritz/client.py's
     VoicemailMessage.box_index-Kommentar) und wird deshalb nicht in der DB
-    gespeichert - jeder Aufruf, der ihn braucht (Gelesen-Markieren, Loeschen), muss
-    ihn unmittelbar vorher per Live-Abgleich ueber (box_path, message_date) neu
+    gespeichert - jeder Aufruf, der ihn braucht (Gelesen-Markieren, Löschen), muss
+    ihn unmittelbar vorher per Live-Abgleich über (box_path, message_date) neu
     ermitteln, statt einen zwischengespeicherten Wert zu benutzen."""
     for candidate in client.voicemail_messages(message.tam_index):
         if candidate.path == message.box_path and candidate.date == message.message_date:
@@ -172,12 +172,12 @@ def _resolve_box_index(client: FritzBoxClient, message: VoicemailMessageRecord) 
 
 
 def _build_voicemail_audio_fn(cfg: config_module.Config) -> AudioFetchFn | None:
-    """Baut die Funktion fuer den einmaligen Abspiel-Klick (VoicemailAudioWorker) -
+    """Baut die Funktion für den einmaligen Abspiel-Klick (VoicemailAudioWorker) -
     gleiches Verbindungsaufbau-Muster wie _build_dial_fn. Markiert die Nachricht
-    zusaetzlich auf der Box selbst als gelesen (X_AVM-DE_TAM/MarkMessage, verifiziert
+    zusätzlich auf der Box selbst als gelesen (X_AVM-DE_TAM/MarkMessage, verifiziert
     gegen eine echte Box); VoicemailView flippt den lokalen is_new-Zustand direkt im
     Anschluss selbst (VoicemailRepository.mark_read_locally), damit die rot/fett-
-    Markierung nicht erst auf den naechsten Sync warten muss."""
+    Markierung nicht erst auf den nächsten Sync warten muss."""
     password = credentials.get_password(cfg.username) if cfg.username else None
     if not cfg.username or not password:
         return None
@@ -194,8 +194,8 @@ def _build_voicemail_audio_fn(cfg: config_module.Config) -> AudioFetchFn | None:
 
 
 def _build_voicemail_mark_read_fn(cfg: config_module.Config) -> VoicemailActionFn | None:
-    """Baut die Funktion fuer den expliziten "Gelesen"-Button (VoicemailActionWorker) -
-    gleiches Verbindungsaufbau-/Index-Aufloesungs-Muster wie _build_voicemail_audio_fn,
+    """Baut die Funktion für den expliziten "Gelesen"-Button (VoicemailActionWorker) -
+    gleiches Verbindungsaufbau-/Index-Auflösungs-Muster wie _build_voicemail_audio_fn,
     aber ohne den Audio-Download: erlaubt, eine Nachricht als gelesen zu markieren,
     ohne sie abzuspielen."""
     password = credentials.get_password(cfg.username) if cfg.username else None
@@ -212,11 +212,11 @@ def _build_voicemail_mark_read_fn(cfg: config_module.Config) -> VoicemailActionF
 
 
 def _build_voicemail_delete_fn(cfg: config_module.Config) -> VoicemailActionFn | None:
-    """Baut die Funktion fuer den "Loeschen"-Button (VoicemailActionWorker) - loescht
+    """Baut die Funktion für den "Löschen"-Button (VoicemailActionWorker) - löscht
     die Nachricht echt auf der Box (X_AVM-DE_TAM/DeleteMessage). Die lokale Zeile wird
     nicht hier, sondern von VoicemailView nach erfolgreichem Abschluss entfernt
     (VoicemailRepository.delete), damit ein fehlgeschlagener Box-Aufruf die lokale
-    Kopie nicht verwaist zurueck laesst."""
+    Kopie nicht verwaist zurück lässt."""
     password = credentials.get_password(cfg.username) if cfg.username else None
     if not cfg.username or not password:
         return None
@@ -231,21 +231,21 @@ def _build_voicemail_delete_fn(cfg: config_module.Config) -> VoicemailActionFn |
 
 
 def _handle_sigint(*_args) -> None:
-    """Strg+C beendet den Prozess sofort und hart, statt ueber window.close()
+    """Strg+C beendet den Prozess sofort und hart, statt über window.close()
     zu gehen: MainWindow.closeEvent() wartet bei einem normalen Schliessen
     bewusst auf noch laufende Worker-Threads (Sync-/ImportFromBoxWorker) - das
-    ist fuer einen Klick auf X das richtige Verhalten, aber fuer Strg+C
+    ist für einen Klick auf X das richtige Verhalten, aber für Strg+C
     erwartet man in einem Terminal-Programm einen sofortigen Abbruch, egal was
-    gerade laeuft (z.B. ein Netzwerkaufruf, der trotz Timeout in
-    fritz/client.py haengt, etwa durch einen blockierenden DNS-Lookup, den
+    gerade läuft (z.B. ein Netzwerkaufruf, der trotz Timeout in
+    fritz/client.py hängt, etwa durch einen blockierenden DNS-Lookup, den
     requests' timeout-Parameter nicht abdeckt). os._exit() umgeht Qt's/Pythons
-    normale Aufraeum-Reihenfolge komplett - kein qFatal-Crash-Risiko durch noch
+    normale Aufräum-Reihenfolge komplett - kein qFatal-Crash-Risiko durch noch
     laufende QThreads, da deren Destruktoren gar nicht erst aufgerufen werden;
-    das Betriebssystem raeumt Sockets/Dateien beim Prozessende ohnehin auf, und
+    das Betriebssystem räumt Sockets/Dateien beim Prozessende ohnehin auf, und
     jeder DB-Schreibzugriff committet bereits einzeln (siehe db/repository.py),
-    es geht also hoechstens ein einzelner, gerade laufender Schreibzugriff
+    es geht also höchstens ein einzelner, gerade laufender Schreibzugriff
     verloren."""
-    os._exit(130)  # 128 + SIGINT, uebliche Exitcode-Konvention
+    os._exit(130)  # 128 + SIGINT, übliche Exitcode-Konvention
 
 
 def main() -> int:
@@ -273,23 +273,23 @@ def main() -> int:
     window.show()
 
     # Qt's C++-Eventloop liefert SIGINT erst, wenn wieder Python-Bytecode
-    # laeuft; der No-Op-Timer sorgt dafuer, dass das zeitnah passiert statt
-    # erst bei der naechsten GUI-Interaktion (siehe _handle_sigint()).
+    # läuft; der No-Op-Timer sorgt dafür, dass das zeitnah passiert statt
+    # erst bei der nächsten GUI-Interaktion (siehe _handle_sigint()).
     signal.signal(signal.SIGINT, _handle_sigint)
     signal_timer = QTimer()
     signal_timer.timeout.connect(lambda: None)
     signal_timer.start(200)
 
     exit_code = app.exec()
-    # os._exit() statt return: sobald app.exec() zurueckkehrt (regulaer ueber
+    # os._exit() statt return: sobald app.exec() zurückkehrt (regulär über
     # MainWindow.closeEvent()'s expliziten QApplication.quit()-Aufruf, oder
-    # ueber quitOnLastWindowClosed), soll der Prozess sofort enden - nicht
-    # ueber Pythons normale Interpreter-Shutdown-Sequenz, in der PySide beim
-    # atexit-Handling alle verbliebenen QObjects zerstoert (inkl. etwaiger
-    # noch lebender QThreads, was den urspruenglichen "QThread: Destroyed
-    # while thread ... is still running"-SIGABRT ausloest). Jeder
+    # über quitOnLastWindowClosed), soll der Prozess sofort enden - nicht
+    # über Pythons normale Interpreter-Shutdown-Sequenz, in der PySide beim
+    # atexit-Handling alle verbliebenen QObjects zerstört (inkl. etwaiger
+    # noch lebender QThreads, was den ursprünglichen "QThread: Destroyed
+    # while thread ... is still running"-SIGABRT auslöst). Jeder
     # DB-Schreibzugriff committet bereits einzeln (siehe db/repository.py),
-    # ein abgebrochener Shutdown verliert also hoechstens einen einzelnen,
+    # ein abgebrochener Shutdown verliert also höchstens einen einzelnen,
     # gerade laufenden Schreibzugriff.
     os._exit(exit_code)
 

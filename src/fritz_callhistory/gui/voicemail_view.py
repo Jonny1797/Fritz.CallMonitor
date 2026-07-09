@@ -43,9 +43,9 @@ def _format_ms(milliseconds: int) -> str:
 
 
 class _SeekSlider(QSlider):
-    """QSlider springt bei einem Klick auf die Leiste standardmaessig nur einen
-    Seitenschritt statt an die geklickte Position - ueberschreibt mousePressEvent,
-    um sofort dorthin zu springen (Drag-Verhalten bleibt ueber super() erhalten)."""
+    """QSlider springt bei einem Klick auf die Leiste standardmäßig nur einen
+    Seitenschritt statt an die geklickte Position - überschreibt mousePressEvent,
+    um sofort dorthin zu springen (Drag-Verhalten bleibt über super() erhalten)."""
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self.maximum() > self.minimum():
@@ -77,8 +77,8 @@ class VoicemailView(QWidget):
         self._action_thread: VoicemailActionWorker | None = None
         self._new_voicemail_count = 0
         # Player-Quelle (QByteArray/QBuffer) als Instanzattribute halten, damit sie
-        # waehrend der Wiedergabe nicht vom GC eingesammelt werden (QMediaPlayer
-        # haelt selbst keine Python-Referenz auf sourceDevice()).
+        # während der Wiedergabe nicht vom GC eingesammelt werden (QMediaPlayer
+        # hält selbst keine Python-Referenz auf sourceDevice()).
         self._audio_bytes: QByteArray | None = None
         self._audio_buffer: QBuffer | None = None
 
@@ -166,7 +166,7 @@ class VoicemailView(QWidget):
         return self._new_voicemail_count
 
     def reload(self) -> None:
-        """Laedt die Nachrichtenliste neu (z.B. nach einem Sync oder einer Aktion)."""
+        """Lädt die Nachrichtenliste neu (z.B. nach einem Sync oder einer Aktion)."""
         messages = self._voicemail_repo.list_messages()
         self._model.set_messages(messages)
         self._new_voicemail_count = sum(1 for m in messages if m.is_new)
@@ -180,9 +180,9 @@ class VoicemailView(QWidget):
         return self._model.message_at(self._proxy.mapToSource(rows[0]).row())
 
     def _update_action_buttons(self) -> None:
-        # Waehrend eine Gelesen-/Loeschen-Aktion noch laeuft, bleiben alle vier
-        # Buttons deaktiviert - sonst koennte z.B. eine Loeschen-Bestaetigung
-        # ueber eine noch laufende Gelesen-Aktion hinweg bestaetigt werden und
+        # Während eine Gelesen-/Löschen-Aktion noch läuft, bleiben alle vier
+        # Buttons deaktiviert - sonst könnte z.B. eine Löschen-Bestätigung
+        # über eine noch laufende Gelesen-Aktion hinweg bestätigt werden und
         # danach durch den geteilten _action_thread-Guard stillschweigend nichts
         # mehr tun.
         message = None if self._action_thread is not None else self._selected_message()
@@ -218,7 +218,7 @@ class VoicemailView(QWidget):
             self,
             "Nachricht löschen",
             f"Nachricht von {voicemail_caller_display(message)} wirklich löschen?\n"
-            "Dies loescht sie auch auf der Fritz!Box und kann nicht rueckgaengig "
+            "Dies löscht sie auch auf der Fritz!Box und kann nicht rückgängig "
             "gemacht werden.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,

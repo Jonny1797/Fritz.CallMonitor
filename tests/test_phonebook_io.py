@@ -235,7 +235,7 @@ def test_import_contacts_is_idempotent_for_contacts_with_numbers(connection):
 
 
 def test_import_contacts_recreates_name_only_contacts_on_repeated_import(connection):
-    # Bekannte Einschraenkung: ein namens-only-Kontakt (keine Nummern) hat kein
+    # Bekannte Einschränkung: ein namens-only-Kontakt (keine Nummern) hat kein
     # Merkmal, an dem sich ein Duplikat erkennen liesse, und wird bei jedem
     # erneuten Import als neuer Kontakt angelegt - siehe import_contacts()-Docstring.
     repo = LocalPhonebookRepository(connection)

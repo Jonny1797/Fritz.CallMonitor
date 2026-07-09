@@ -147,7 +147,7 @@ def test_manual_date_edit_activates_filter(qtbot, connection):
     qtbot.addWidget(view)
     assert view._model.rowCount() == 1  # kein Filter aktiv beim Start
 
-    view._from_edit.setDate(view._from_edit.date())  # setDate mit gleichem Wert loest dateChanged nicht aus
+    view._from_edit.setDate(view._from_edit.date())  # setDate mit gleichem Wert löst dateChanged nicht aus
     view._to_edit.setDate(view._to_edit.date().addDays(-1))
 
     assert view._model.rowCount() == 0
@@ -447,7 +447,7 @@ def test_table_sorting_cycles_asc_desc_unsorted(qtbot, connection):
     header.sectionClicked.emit(2)  # absteigend
     assert view._proxy.data(view._proxy.index(0, 2)) == "Bertha"
 
-    header.sectionClicked.emit(2)  # zurueck zur Ausgangsreihenfolge (neueste zuerst)
+    header.sectionClicked.emit(2)  # zurück zur Ausgangsreihenfolge (neueste zuerst)
     assert view._proxy.data(view._proxy.index(0, 2)) == "Anton"
 
 

@@ -111,7 +111,7 @@ def test_call_monitor_thread_stop_while_idle_in_recv_does_not_hang(qtbot):
     # state between calls) used to occasionally not unblock in time, since
     # close() relied purely on shutdown()'s cross-thread recv()-wakeup timing.
     port = _free_port()
-    server = _serve_once(port, [])  # akzeptiert, sendet nichts, haelt offen
+    server = _serve_once(port, [])  # akzeptiert, sendet nichts, hält offen
 
     worker = CallMonitorThread("127.0.0.1", port=port, reconnect_delay_seconds=0.05)
     try:

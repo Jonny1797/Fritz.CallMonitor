@@ -95,12 +95,12 @@ class ContactRepository:
         return [self._row_to_contact(row) for row in rows]
 
     def get(self, contact_id: int) -> Contact | None:
-        # c.id ist Primary Key: WHERE liefert hoechstens eine Zeile.
+        # c.id ist Primary Key: WHERE liefert höchstens eine Zeile.
         rows = self._query("c.id = ?", (contact_id,))
         return rows[0] if rows else None
 
     def find_by_number(self, primary_number: str) -> Contact | None:
-        # primary_number ist UNIQUE: WHERE liefert hoechstens eine Zeile.
+        # primary_number ist UNIQUE: WHERE liefert höchstens eine Zeile.
         rows = self._query("c.primary_number = ?", (primary_number,))
         return rows[0] if rows else None
 
@@ -144,10 +144,10 @@ class CallRepository:
     ) -> bool:
         """Fügt einen Anruf ein. Gibt False zurück, wenn er bereits existiert (Dedupe).
 
-        box_call_id ist die von der Box vergebene Id (fuer die Sortierung bei
+        box_call_id ist die von der Box vergebene Id (für die Sortierung bei
         exakt gleichem call_date - der Zeitstempel selbst hat nur Minuten-
         genauigkeit, siehe db/migrations/002_add_box_call_id.sql). Bewusst
-        NICHT Teil des Dedupe-Schluessels, da diese Id ueber lange Zeitraeume
+        NICHT Teil des Dedupe-Schlüssels, da diese Id über lange Zeiträume
         rotiert und daher nicht global stabil ist.
         """
         cursor = self._conn.execute(
@@ -192,7 +192,7 @@ class CallRepository:
         date_to: str | None = None,
         call_types: list[int] | None = None,
     ) -> list[CallWithContact]:
-        """Alle Anrufe ueber alle Kontakte hinweg, chronologisch, optional per
+        """Alle Anrufe über alle Kontakte hinweg, chronologisch, optional per
         ISO8601-Zeitstempel (inklusiv) und/oder call_type eingegrenzt."""
         conditions = []
         params: list = []
@@ -210,7 +210,7 @@ class CallRepository:
 
         # Explizite Spaltenliste mit Aliassen statt calls.*/contacts.*: beide
         # Tabellen haben eine id-Spalte, was sonst bei sqlite3.Row-Zugriff per
-        # Name mehrdeutig waere. INNER JOIN ist sicher, da sync/service.py fuer
+        # Name mehrdeutig wäre. INNER JOIN ist sicher, da sync/service.py für
         # jeden Call vorher immer ContactRepository.upsert() aufruft.
         rows = self._conn.execute(
             f"""
@@ -322,7 +322,7 @@ class LocalPhonebookRepository:
     """Lokales, vom Nutzer gepflegtes Telefonbuch (mehrere Nummern pro Kontakt).
 
     Im Unterschied zu PhonebookRepository (Wipe-and-Rewrite-Cache der
-    Box-Telefonbuecher) ist dies hier die Quelle der Wahrheit fuer den Nutzer.
+    Box-Telefonbücher) ist dies hier die Quelle der Wahrheit für den Nutzer.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:
@@ -401,7 +401,7 @@ class LocalPhonebookRepository:
         return row["display_name"] if row else None
 
     def find_by_number(self, number_normalized: str) -> LocalPhonebookContact | None:
-        """Wie lookup_name, aber gibt den vollen Kontakt zurueck - fuer den
+        """Wie lookup_name, aber gibt den vollen Kontakt zurück - für den
         Doppelklick-auf-Nummer-Einstiegspunkt (gui/phonebook_view.py's
         add_or_edit_number), der entscheiden muss, ob bearbeitet oder neu
         angelegt wird."""
@@ -432,7 +432,7 @@ class LocalPhonebookRepository:
 
     def all_numbers_belong_to_one_contact(self, numbers_normalized: list[str]) -> bool:
         """True, wenn jede angegebene Nummer zu genau demselben bestehenden
-        Kontakt gehoert und dieser exakt diese Nummernmenge hat - fuer
+        Kontakt gehört und dieser exakt diese Nummernmenge hat - für
         Idempotenz beim wiederholten Datei-Import (siehe sync/phonebook_io.py)."""
         if not numbers_normalized:
             return False
@@ -453,7 +453,7 @@ class LocalPhonebookRepository:
     def find_local_only_contact_by_exact_numbers(self, numbers_normalized: list[str]) -> int | None:
         """Wie all_numbers_belong_to_one_contact, aber nur unter Kontakten ohne
         box_uniqueid - die "Adoptieren"-Heuristik beim Box-Import: ein zuvor
-        lokal angelegter Kontakt wird mit dem passenden Box-Eintrag verknuepft,
+        lokal angelegter Kontakt wird mit dem passenden Box-Eintrag verknüpft,
         statt dupliziert zu werden (siehe app.py's _build_import_from_box_fn)."""
         if not numbers_normalized:
             return None
@@ -626,10 +626,10 @@ class VoicemailRepository:
         self._conn.commit()
 
     def mark_read_locally(self, message_id: int) -> None:
-        """Setzt is_new lokal sofort auf 0, ohne auf den naechsten Sync zu warten -
+        """Setzt is_new lokal sofort auf 0, ohne auf den nächsten Sync zu warten -
         genutzt direkt nach einem erfolgreichen MarkMessage-Aufruf auf der Box
         (Abspielen oder der explizite "Gelesen"-Button), damit die rot/fett-Markierung
-        sofort verschwindet statt erst beim naechsten Sync."""
+        sofort verschwindet statt erst beim nächsten Sync."""
         self._conn.execute(
             "UPDATE voicemail_messages SET is_new = 0 WHERE id = ?", (message_id,)
         )
@@ -638,16 +638,16 @@ class VoicemailRepository:
     def prune_missing(
         self, existing_keys: set[tuple[int, str, str]], queried_tam_indices: set[int]
     ) -> None:
-        """Entfernt lokale Nachrichten, die beim letzten vollstaendigen Sync nicht
-        mehr unter den Box-Nachrichten waren (z.B. an einem Telefon geloescht) -
+        """Entfernt lokale Nachrichten, die beim letzten vollständigen Sync nicht
+        mehr unter den Box-Nachrichten waren (z.B. an einem Telefon gelöscht) -
         existing_keys ist die Menge aller (tam_index, box_path, message_date) der
-        Nachrichten, die der letzte Sync tatsaechlich von der Box zurückbekommen hat.
+        Nachrichten, die der letzte Sync tatsächlich von der Box zurückbekommen hat.
 
-        Pruning bleibt auf queried_tam_indices beschraenkt (die TAM-Slots, die dieser
-        Sync tatsaechlich abgefragt hat): faellt ein Slot voruebergehend aus
+        Pruning bleibt auf queried_tam_indices beschränkt (die TAM-Slots, die dieser
+        Sync tatsächlich abgefragt hat): fällt ein Slot vorübergehend aus
         voicemail_tam_indices() heraus (z.B. ein GetList-Hickup oder der Nutzer
         deaktiviert ihn kurz), sollen dessen bereits synchronisierte Nachrichten nicht
-        faelschlich als "auf der Box geloescht" verschwinden."""
+        fälschlich als "auf der Box gelöscht" verschwinden."""
         rows = self._conn.execute(
             "SELECT id, tam_index, box_path, message_date FROM voicemail_messages"
         ).fetchall()

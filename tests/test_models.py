@@ -337,7 +337,7 @@ def test_install_tristate_sorting_cycles_ascending_descending_unsorted(qtbot):
         "01.06.2026, 10:00",
     ]
 
-    header.sectionClicked.emit(0)  # zurueck zur Ausgangsreihenfolge
+    header.sectionClicked.emit(0)  # zurück zur Ausgangsreihenfolge
     assert [proxy.data(proxy.index(r, 0)) for r in range(2)] == [
         "01.06.2026, 10:00",
         "02.06.2026, 10:00",
@@ -360,12 +360,12 @@ class _FakeAction:
 
 
 class _FakeMenu:
-    """Ersetzt QMenu in Tests: echtes QMenu.exec() oeffnet ein blockierendes
+    """Ersetzt QMenu in Tests: echtes QMenu.exec() öffnet ein blockierendes
     Popup, das sich in PySide6 nicht per einfachem Attribut-Patch abfangen
-    laesst (Shiboken-gewrappte Methoden ignorieren das) - dieser Fake ruft
+    lässt (Shiboken-gewrappte Methoden ignorieren das) - dieser Fake ruft
     stattdessen direkt die per triggered.connect() hinterlegten Callbacks der
-    top-level Actions auf (nicht rekursiv in Untermenues - Tests fuer
-    Untermenue-Eintraege loesen den gewuenschten Callback selbst manuell aus,
+    top-level Actions auf (nicht rekursiv in Untermenüs - Tests für
+    Untermenü-Einträge lösen den gewünschten Callback selbst manuell aus,
     siehe install_phonebook_call_context_menu-Tests)."""
 
     def __init__(self, parent=None, text=""):
@@ -576,7 +576,7 @@ def test_install_phonebook_call_context_menu_multiple_with_default_shows_standar
     assert [a.text for a in menu.actions] == ["Standardnummer anrufen: +499876543"]
     assert len(menu.submenus) == 1
     assert [a.text for a in menu.submenus[0].actions] == ["+491234567", "+499876543"]
-    # exec() (bereits von on_context_menu selbst aufgerufen) loest die einzige
+    # exec() (bereits von on_context_menu selbst aufgerufen) löst die einzige
     # Top-Level-Action automatisch aus, siehe _FakeMenu.exec().
     on_call.assert_called_once_with("+499876543")
 

@@ -1,11 +1,11 @@
 """Lokales, editierbares Telefonbuch ("Telefonbuch"-Tab).
 
 Getrennt von der Kontakte-Ansicht (anrufbasiert, ein Kontakt pro Nummer,
-automatisch befuellt) - dies hier ist die vom Nutzer gepflegte Quelle der
+automatisch befüllt) - dies hier ist die vom Nutzer gepflegte Quelle der
 Wahrheit mit Mehrfachnummern pro Kontakt, Datei-Import/-Export und optionalem
 einmaligen Import aus dem Box-Telefonbuch (siehe fritz/client.py's
-phonebook_contacts_detailed() - ein automatischer Push zur Box ist ueber
-TR-064 nicht moeglich, siehe CLAUDE.md/Planungsnotizen).
+phonebook_contacts_detailed() - ein automatischer Push zur Box ist über
+TR-064 nicht möglich, siehe CLAUDE.md/Planungsnotizen).
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class PhonebookTab(QWidget):
         self._import_from_box_fn = import_from_box_fn
         self._import_thread: ImportFromBoxWorker | None = None
         # Wird von MainWindow.closeEvent() gelesen, um das Fenster nicht zu
-        # schliessen, waehrend dieser Thread noch in seinem blockierenden
+        # schliessen, während dieser Thread noch in seinem blockierenden
         # Netzwerkaufruf steckt (gleicher Grund wie bei SyncWorker).
 
         self._search_edit = QLineEdit()
@@ -180,10 +180,10 @@ class PhonebookTab(QWidget):
         self._after_local_change()
 
     def add_or_edit_number(self, number_raw: str) -> None:
-        """Einstiegspunkt fuer Doppelklick auf eine Rufnummer in der Kontakte-
-        oder Alle-Anrufe-Ansicht (main_window.py): oeffnet den Bearbeiten-Dialog
-        fuer den Kontakt, dem diese Nummer bereits gehoert, oder sonst den
-        Neu-Dialog mit vorausgefuellter Nummer."""
+        """Einstiegspunkt für Doppelklick auf eine Rufnummer in der Kontakte-
+        oder Alle-Anrufe-Ansicht (main_window.py): öffnet den Bearbeiten-Dialog
+        für den Kontakt, dem diese Nummer bereits gehört, oder sonst den
+        Neu-Dialog mit vorausgefüllter Nummer."""
         normalized, is_anonymous = normalize_number(number_raw)
         if is_anonymous:
             return
@@ -250,7 +250,7 @@ class PhonebookTab(QWidget):
             return
         path = Path(path_str)
         if path.suffix.lower() not in _WRITERS:
-            # Endung aus dem gewaehlten Filter ableiten, falls der Nutzer keine angegeben hat.
+            # Endung aus dem gewählten Filter ableiten, falls der Nutzer keine angegeben hat.
             suffix = next((s for s in _WRITERS if s.lstrip(".") in selected_filter), ".xml")
             path = path.with_suffix(suffix)
         writer = _WRITERS[path.suffix.lower()]

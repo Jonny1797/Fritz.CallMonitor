@@ -155,7 +155,7 @@ _PHONEBOOK_XML = """<?xml version="1.0" encoding="utf-8"?>
 
 def test_phonebook_contacts_detailed_parses_uniqueid_and_number_type(mocker, tmp_path):
     # get_xml_root akzeptiert auch Dateipfade als "source" - spart einen echten
-    # HTTP-Mock fuer diesen Test.
+    # HTTP-Mock für diesen Test.
     xml_path = tmp_path / "phonebook.xml"
     xml_path.write_text(_PHONEBOOK_XML)
 

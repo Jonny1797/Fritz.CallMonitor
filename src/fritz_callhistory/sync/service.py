@@ -47,7 +47,7 @@ def resolve_contact_names(
 ) -> int:
     """Aktualisiert contacts.display_name aus dem lokalen Telefonbuch und dem
     Box-Telefonbuch-Cache. Das lokale Telefonbuch hat Vorrang, da vom Nutzer
-    gepflegt (der Box-Cache wird komplett ueberschrieben bei jedem Sync).
+    gepflegt (der Box-Cache wird komplett überschrieben bei jedem Sync).
 
     Kein Netzwerkzugriff, daher bewusst eine freie Funktion statt einer
     SyncService-Methode - kann auch von der GUI direkt nach lokalen
@@ -99,7 +99,7 @@ class SyncService:
                 caller_number=call.CallerNumber or call.Caller,
                 called_number=call.CalledNumber or call.Called,
                 port=call.Port,
-                # Die Box sendet "-1" im <Device>-Feld, wenn kein Geraet zutrifft
+                # Die Box sendet "-1" im <Device>-Feld, wenn kein Gerät zutrifft
                 # (z.B. abgelehnte/nicht angenommene Anrufe) - als NULL speichern.
                 device=call.Device if call.Device not in (None, "-1") else None,
                 call_date=_call_date_iso(call),

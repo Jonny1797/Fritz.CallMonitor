@@ -30,13 +30,13 @@ class ContactDetailWidget(QWidget):
         super().__init__()
         self._calls_repo = CallRepository(connection)
 
-        # Titel/Untertitel werden bewusst NICHT hier ins eigene Layout gehaengt:
-        # main_window.py platziert sie stattdessen in einer eigenen, ueber die
+        # Titel/Untertitel werden bewusst NICHT hier ins eigene Layout gehängt:
+        # main_window.py platziert sie stattdessen in einer eigenen, über die
         # gesamte Breite laufenden Kopfzeile OBERHALB des Splitters (statt nur
-        # ueber der rechten Tabelle). Damit starten beide Tabellen exakt auf
-        # derselben Hoehe und der Splitter (der beiden Kindern dieselbe
-        # Gesamthoehe gibt) macht sie automatisch gleich hoch - ohne die
-        # Kopfzeilenhoehe manuell nachbilden zu muessen (siehe vorherigen,
+        # über der rechten Tabelle). Damit starten beide Tabellen exakt auf
+        # derselben Höhe und der Splitter (der beiden Kindern dieselbe
+        # Gesamthöhe gibt) macht sie automatisch gleich hoch - ohne die
+        # Kopfzeilenhöhe manuell nachbilden zu müssen (siehe vorherigen,
         # fragilen sizeHint()-Ansatz, der je nach Theme/Polish-Zeitpunkt leicht
         # danebenlag).
         self._title_label = QLabel()
@@ -67,10 +67,10 @@ class ContactDetailWidget(QWidget):
             self._call_table, self._call_proxy, self._number_for_row, self.call_requested.emit
         )
 
-        # Randlos: self._table (Kontakte links) haengt ohne umschliessendes
-        # Layout direkt im Splitter und hat daher keine Aussenraender - ohne
-        # Angleichung hier waere diese Tabelle sonst um die QVBoxLayout-
-        # Standardraender kuerzer als die linke.
+        # Randlos: self._table (Kontakte links) hängt ohne umschliessendes
+        # Layout direkt im Splitter und hat daher keine Außenränder - ohne
+        # Angleichung hier wäre diese Tabelle sonst um die QVBoxLayout-
+        # Standardränder kürzer als die linke.
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._call_table)
@@ -79,8 +79,8 @@ class ContactDetailWidget(QWidget):
 
     @property
     def title_label(self) -> QLabel:
-        """Fuer main_window.py, das Titel/Untertitel in eine eigene, ueber die
-        gesamte Breite laufende Kopfzeile oberhalb des Splitters einhaengt
+        """Für main_window.py, das Titel/Untertitel in eine eigene, über die
+        gesamte Breite laufende Kopfzeile oberhalb des Splitters einhängt
         (siehe Kommentar oben im Konstruktor)."""
         return self._title_label
 

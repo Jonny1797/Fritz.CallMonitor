@@ -170,10 +170,10 @@ def test_table_sorting_cycles_and_edit_still_resolves_correct_contact(qtbot, con
     header.sectionClicked.emit(0)  # absteigend
     assert tab._proxy.data(tab._proxy.index(0, 0)) == "Bertha"
 
-    header.sectionClicked.emit(0)  # zurueck zur Ausgangsreihenfolge
+    header.sectionClicked.emit(0)  # zurück zur Ausgangsreihenfolge
     # list_all() liefert die Ausgangsreihenfolge bereits alphabetisch (ORDER BY
     # display_name in LocalPhonebookRepository.list_all) - "unsortiert" ist
-    # hier zufaellig identisch zu "aufsteigend".
+    # hier zufällig identisch zu "aufsteigend".
     tab._table.selectRow(0)
     assert tab._selected_contact_id() == id_b
 
@@ -185,7 +185,7 @@ def test_table_sorting_cycles_and_edit_still_resolves_correct_contact(qtbot, con
     tab._on_edit_clicked()
 
     assert repo.get(id_b).display_name == "Anton Aktualisiert"
-    assert repo.get(id_a).display_name == "Bertha"  # unveraendert
+    assert repo.get(id_a).display_name == "Bertha"  # unverändert
 
 
 def test_adding_local_contact_renames_matching_call_history_contact(qtbot, connection):

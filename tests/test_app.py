@@ -93,7 +93,7 @@ def test_build_import_from_box_fn_preserves_default_number_across_reimport(
     # Regression test: die Box kennt kein "Standardnummer"-Konzept, und
     # LocalPhonebookRepository.update() ersetzt bei jedem Re-Import alle
     # Nummern-Zeilen komplett - ohne explizites Matching per number_normalized
-    # wuerde eine zuvor lokal gesetzte Standardnummer beim naechsten
+    # würde eine zuvor lokal gesetzte Standardnummer beim nächsten
     # "Von Box importieren" stillschweigend verloren gehen (siehe app.py's
     # _build_import_from_box_fn).
     db_path = tmp_path / "callhistory.sqlite3"

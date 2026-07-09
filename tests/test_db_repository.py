@@ -257,14 +257,14 @@ def test_all_calls_call_types_none_or_empty_returns_all(connection):
 
 def test_all_calls_breaks_ties_on_same_call_date_by_box_call_id(connection):
     # Zwei Anrufe in derselben Minute (call_date hat nur Minutengenauigkeit,
-    # siehe Migration 002) - box_call_id muss die tatsaechliche Reihenfolge
-    # wiederherstellen (hoehere Id = neuer, empirisch gegen echte Box verifiziert).
+    # siehe Migration 002) - box_call_id muss die tatsächliche Reihenfolge
+    # wiederherstellen (höhere Id = neuer, empirisch gegen echte Box verifiziert).
     contacts = ContactRepository(connection)
     calls = CallRepository(connection)
     contact_id = contacts.upsert("+491234567")
-    # Unterschiedliche duration_seconds, damit die beiden Anrufe nicht ueber
+    # Unterschiedliche duration_seconds, damit die beiden Anrufe nicht über
     # den Dedupe-Unique-Index (call_date, Nummern, duration_seconds) als
-    # derselbe Anruf zusammenfallen - realistisch fuer zwei echte Anrufe.
+    # derselbe Anruf zusammenfallen - realistisch für zwei echte Anrufe.
     _insert_call(
         calls,
         contact_id=contact_id,
@@ -574,7 +574,7 @@ def test_find_local_only_contact_by_exact_numbers_ignores_box_linked_contacts(co
     )
 
     assert repo.find_local_only_contact_by_exact_numbers(["+491234567"]) is None
-    assert contact_id is not None  # sanity: der Kontakt existiert tatsaechlich
+    assert contact_id is not None  # sanity: der Kontakt existiert tatsächlich
 
 
 def _insert_message(repo, **overrides):

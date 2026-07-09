@@ -42,11 +42,11 @@ from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
 _CONTACT_PHONEBOOK_COLUMNS = (0, 1)  # Name, Nummer
-# Letzte Absicherung fuer closeEvent(): SyncWorker/ImportFromBoxWorker haben
+# Letzte Absicherung für closeEvent(): SyncWorker/ImportFromBoxWorker haben
 # in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
-# haengenden DNS-Lookup ab (socket.getaddrinfo() kennt kein Timeout). Damit
-# das Beenden trotzdem nie unbegrenzt haengen bleibt, wird nach dieser Frist
-# hart abgebrochen, falls dann immer noch ein Worker-Thread laeuft.
+# hängenden DNS-Lookup ab (socket.getaddrinfo() kennt kein Timeout). Damit
+# das Beenden trotzdem nie unbegrenzt hängen bleibt, wird nach dieser Frist
+# hart abgebrochen, falls dann immer noch ein Worker-Thread läuft.
 _SHUTDOWN_FAILSAFE_MS = 30_000
 
 
@@ -121,12 +121,12 @@ class MainWindow(QMainWindow):
         self._contact_model.modelReset.connect(self._detail.clear)
         self._detail.call_requested.connect(self._dial_number)
 
-        # Titel/Untertitel des ausgewaehlten Kontakts laufen ueber die gesamte
-        # Breite OBERHALB des Splitters, statt (wie frueher) nur ueber der
-        # rechten Anrufliste zu stehen - sonst waere die linke Kontaktliste um
-        # genau diese Kopfzeilenhoehe kuerzer als die rechte Tabelle (der
-        # Splitter gibt beiden Kindern dieselbe Gesamthoehe, aber nur die
-        # rechte Seite haette intern eine Kopfzeile). So haben beide Splitter-
+        # Titel/Untertitel des ausgewählten Kontakts laufen über die gesamte
+        # Breite OBERHALB des Splitters, statt (wie früher) nur über der
+        # rechten Anrufliste zu stehen - sonst wäre die linke Kontaktliste um
+        # genau diese Kopfzeilenhöhe kürzer als die rechte Tabelle (der
+        # Splitter gibt beiden Kindern dieselbe Gesamthöhe, aber nur die
+        # rechte Seite hätte intern eine Kopfzeile). So haben beide Splitter-
         # Kinder von Anfang an nur eine Tabelle als Inhalt und werden dadurch
         # automatisch gleich hoch.
         detail_header_row = QHBoxLayout()
@@ -144,10 +144,10 @@ class MainWindow(QMainWindow):
         contacts_layout = QVBoxLayout(contacts_tab)
         contacts_layout.addWidget(self._search_edit)
         contacts_layout.addLayout(detail_header_row)
-        # stretch=1: ohne das teilt Qt den uebrigen vertikalen Platz zwischen
+        # stretch=1: ohne das teilt Qt den übrigen vertikalen Platz zwischen
         # der Kopfzeile (QLabels sind per Default "Preferred", also wachstums-
-        # faehig, nicht nur der Splitter) etwa haelftig auf - der Splitter soll
-        # aber den gesamten Platz bekommen, die Kopfzeile nur ihre Zeilenhoehe.
+        # fähig, nicht nur der Splitter) etwa hälftig auf - der Splitter soll
+        # aber den gesamten Platz bekommen, die Kopfzeile nur ihre Zeilenhöhe.
         contacts_layout.addWidget(splitter, 1)
 
         self._all_calls_view = AllCallsView(connection)
@@ -178,8 +178,8 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(contacts_tab, "Kontakte")
         self._tabs.addTab(self._phonebook_tab, "Telefonbuch")
         # AllCallsView.__init__ hat _reload() bereits vor der obigen Signal-
-        # Verbindung ausgefuehrt - die erste new_missed_calls_changed-Emission
-        # kam daher ohne Empfaenger an. Deshalb hier einmalig den bereits
+        # Verbindung ausgeführt - die erste new_missed_calls_changed-Emission
+        # kam daher ohne Empfänger an. Deshalb hier einmalig den bereits
         # berechneten, gecachten Wert direkt abfragen statt nur aufs Signal zu vertrauen.
         self._update_all_calls_tab_label(self._all_calls_view.new_missed_calls_count)
         self._update_voicemail_tab_label(self._voicemail_view.new_voicemail_count)
@@ -201,8 +201,8 @@ class MainWindow(QMainWindow):
             self._auto_sync_timer.timeout.connect(self._trigger_sync)
             self._auto_sync_timer.start()
 
-        # Verzoegert per singleShot(0, ...) statt direktem Aufruf: so kehrt
-        # __init__ zuerst zurueck und das Fenster wird sichtbar, bevor der
+        # Verzögert per singleShot(0, ...) statt direktem Aufruf: so kehrt
+        # __init__ zuerst zurück und das Fenster wird sichtbar, bevor der
         # Sync-Thread im Hintergrund lostippt.
         QTimer.singleShot(0, self._trigger_sync)
 
@@ -230,10 +230,10 @@ class MainWindow(QMainWindow):
 
     def _busy_worker_threads(self) -> list[QThread]:
         """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker/
-        VoicemailActionWorker fuehren einen einzelnen blockierenden Netzwerkaufruf
-        ohne Abbruchpunkte aus - alle muessen hier erkannt werden, damit
-        closeEvent() das Fenster nicht schliesst, waehrend einer von ihnen noch
-        laeuft (siehe closeEvent() fuer die Begruendung)."""
+        VoicemailActionWorker führen einen einzelnen blockierenden Netzwerkaufruf
+        ohne Abbruchpunkte aus - alle müssen hier erkannt werden, damit
+        closeEvent() das Fenster nicht schliesst, während einer von ihnen noch
+        läuft (siehe closeEvent() für die Begründung)."""
         threads: list[QThread] = []
         if self._sync_thread is not None and self._sync_thread.isRunning():
             threads.append(self._sync_thread)
@@ -256,13 +256,13 @@ class MainWindow(QMainWindow):
             if self._call_monitor is not None:
                 self._call_monitor.stop()
 
-        # Ein festes wait(N) koennte ablaufen, waehrend so ein Thread noch in
-        # seinem HTTP-Request steckt, und Qt wuerde ihn beim Zerstoeren des
+        # Ein festes wait(N) könnte ablaufen, während so ein Thread noch in
+        # seinem HTTP-Request steckt, und Qt würde ihn beim Zerstören des
         # Fensters mit SIGABRT abbrechen. Stattdessen wird das Fenster nur
-        # versteckt (wirkt fuer den Nutzer bereits geschlossen); sobald der
-        # letzte betroffene Thread von selbst fertig ist, loest sein
+        # versteckt (wirkt für den Nutzer bereits geschlossen); sobald der
+        # letzte betroffene Thread von selbst fertig ist, löst sein
         # finished-Signal close() erneut aus - dann ist die Liste leer und der
-        # eigentliche Schliessvorgang laeuft durch.
+        # eigentliche Schliessvorgang läuft durch.
         busy_threads = self._busy_worker_threads()
         if busy_threads:
             self.hide()
@@ -281,13 +281,13 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
         # quitOnLastWindowClosed (Qt's impliziter "letztes Fenster zu ->
-        # beenden"-Mechanismus) hat sich in der Praxis als nicht zuverlaessig
-        # herausgestellt, um app.exec() tatsaechlich zurueckkehren zu lassen -
-        # vermutlich abhaengig von Plattform/Compositor und dem hier immer
+        # beenden"-Mechanismus) hat sich in der Praxis als nicht zuverlässig
+        # herausgestellt, um app.exec() tatsächlich zurückkehren zu lassen -
+        # vermutlich abhängig von Plattform/Compositor und dem hier immer
         # sichtbaren QSystemTrayIcon. Explizit quit() aufzurufen macht das
-        # unabhaengig davon; main() in app.py sorgt zusaetzlich dafuer, dass
-        # der Prozess unmittelbar endet, sobald app.exec() zurueckkehrt (statt
-        # sich auf Pythons normale, langsamere Aufraeum-Reihenfolge zu
+        # unabhängig davon; main() in app.py sorgt zusätzlich dafür, dass
+        # der Prozess unmittelbar endet, sobald app.exec() zurückkehrt (statt
+        # sich auf Pythons normale, langsamere Aufräum-Reihenfolge zu
         # verlassen).
         app_instance = QApplication.instance()
         if app_instance is not None:
@@ -295,10 +295,10 @@ class MainWindow(QMainWindow):
 
     def _force_exit_if_still_busy(self) -> None:
         # Feuert nur, wenn ein Worker-Thread _SHUTDOWN_FAILSAFE_MS nach dem
-        # ersten Schliessversuch immer noch laeuft - regulaer erfolgreiche
-        # Sync-/Import-Vorgaenge haben laengst ueber ihr finished-Signal einen
-        # erneuten, diesmal erfolgreichen close() ausgeloest und diese Methode
-        # laeuft dann entweder gar nicht mehr oder trifft auf eine leere Liste.
+        # ersten Schliessversuch immer noch läuft - regulär erfolgreiche
+        # Sync-/Import-Vorgänge haben längst über ihr finished-Signal einen
+        # erneuten, diesmal erfolgreichen close() ausgelöst und diese Methode
+        # läuft dann entweder gar nicht mehr oder trifft auf eine leere Liste.
         if self._busy_worker_threads():
             os._exit(1)
 
@@ -381,10 +381,10 @@ class MainWindow(QMainWindow):
         self._contact_model.set_contacts(self._contacts_repo.search(self._search_edit.text()))
 
     def _on_all_calls_contact_selected(self, contact_id: int) -> None:
-        # search_timer.stop() ist noetig: search_edit.clear() loest ueber
-        # textChanged sonst den 250ms-Debounce-Timer aus, der 250ms spaeter
-        # einen zweiten, ueberfluessigen reload_contacts() feuern wuerde -
-        # dessen modelReset raeumt ueber die bestehende Verbindung die gerade
+        # search_timer.stop() ist nötig: search_edit.clear() löst über
+        # textChanged sonst den 250ms-Debounce-Timer aus, der 250ms später
+        # einen zweiten, überflüssigen reload_contacts() feuern würde -
+        # dessen modelReset räumt über die bestehende Verbindung die gerade
         # frisch angezeigte Detailansicht wieder leer.
         self._search_edit.clear()
         self._search_timer.stop()
@@ -410,7 +410,7 @@ class MainWindow(QMainWindow):
 
     def _dial_number(self, number: str) -> None:
         # _close_requested-Check aus demselben Grund wie in _trigger_sync():
-        # ohne ihn koennte ein Rechtsklick kurz vor dem Schliessen noch einen
+        # ohne ihn könnte ein Rechtsklick kurz vor dem Schliessen noch einen
         # DialWorker starten, den closeEvent() (das den Schliessvorgang schon
         # eingeleitet hat) nicht mehr erwartet.
         if self._close_requested or self._dial_fn is None:
@@ -445,14 +445,14 @@ class MainWindow(QMainWindow):
         self._detail.show_contact(contact)
 
     def _trigger_sync(self) -> None:
-        # _close_requested-Check ist noetig, weil der Start-Sync per
-        # singleShot(0, ...) erst in einem spaeteren Event-Loop-Durchlauf
+        # _close_requested-Check ist nötig, weil der Start-Sync per
+        # singleShot(0, ...) erst in einem späteren Event-Loop-Durchlauf
         # feuert - schliesst der Nutzer das Fenster, bevor dieser Zero-Delay-
-        # Timer dran war, saehe closeEvent() noch keinen laufenden Thread und
-        # wuerde sofort schliessen; der danach doch noch feuernde Sync wuerde
+        # Timer dran war, sähe closeEvent() noch keinen laufenden Thread und
+        # würde sofort schliessen; der danach doch noch feuernde Sync würde
         # dann einen neuen, von niemandem mehr erwarteten SyncWorker starten,
-        # der beim Interpreter-Shutdown wieder als laufender QThread zerstoert
-        # wird (derselbe SIGABRT/Haenger wie beim urspruenglichen Bug).
+        # der beim Interpreter-Shutdown wieder als laufender QThread zerstört
+        # wird (derselbe SIGABRT/Hänger wie beim ursprünglichen Bug).
         if (
             self._close_requested
             or self._sync_fn is None

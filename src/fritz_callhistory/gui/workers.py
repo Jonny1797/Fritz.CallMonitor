@@ -39,7 +39,7 @@ class SyncWorker(QThread):
 
 
 class ImportFromBoxWorker(QThread):
-    """Fuehrt den einmaligen "Von Box importieren"-Zug (fritz/client.py's
+    """Führt den einmaligen "Von Box importieren"-Zug (fritz/client.py's
     phonebook_contacts_detailed() -> LocalPhonebookRepository) in einem
     eigenen Thread aus - gleiche Form wie SyncWorker."""
 
@@ -63,7 +63,7 @@ class ImportFromBoxWorker(QThread):
 
 
 class DialWorker(QThread):
-    """Fuehrt einen einzelnen Waehlhilfe-Anruf (fritz/client.py's dial_number())
+    """Führt einen einzelnen Wählhilfe-Anruf (fritz/client.py's dial_number())
     in einem eigenen Thread aus - gleiche Form wie SyncWorker. *dial_fn* ist ein
     parameterloser Closure (die Nummer ist bereits eingebrannt), damit dieser
     Worker wie die anderen keine Kenntnis von Fritz!Box/Config braucht."""
@@ -88,9 +88,9 @@ class DialWorker(QThread):
 
 
 class VoicemailActionWorker(QThread):
-    """Fuehrt eine einzelne Box-Aktion auf einer Anrufbeantworter-Nachricht aus
-    (Gelesen-Markieren oder Loeschen) in einem eigenen Thread - gleiche Form wie
-    DialWorker, wiederverwendet fuer beide Aktionen (der jeweilige Closure traegt
+    """Führt eine einzelne Box-Aktion auf einer Anrufbeantworter-Nachricht aus
+    (Gelesen-Markieren oder Löschen) in einem eigenen Thread - gleiche Form wie
+    DialWorker, wiederverwendet für beide Aktionen (der jeweilige Closure trägt
     schon die Zielnachricht in sich)."""
 
     action_succeeded = Signal()

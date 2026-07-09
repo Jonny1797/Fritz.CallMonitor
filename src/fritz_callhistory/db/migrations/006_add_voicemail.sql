@@ -13,10 +13,10 @@ CREATE TABLE voicemail_messages (
 
 -- box_path allein reicht als Dedupe-Key nicht sicher aus: die Box nummeriert
 -- Aufnahmedateien pro Slot durch (z.B. "rec.0.000") und kann einen Pfad nach dem
--- Loeschen der zugehoerigen Nachricht fuer eine spaetere, voellig andere Nachricht
--- wiederverwenden. message_date zusaetzlich in den Dedupe-Key aufzunehmen macht eine
--- faelschliche Dedupe-Kollision praktisch ausgeschlossen (zwei verschiedene
--- Nachrichten muessten exakt denselben Pfad UND dieselbe Minute treffen).
+-- Löschen der zugehörigen Nachricht für eine spätere, völlig andere Nachricht
+-- wiederverwenden. message_date zusätzlich in den Dedupe-Key aufzunehmen macht eine
+-- fälschliche Dedupe-Kollision praktisch ausgeschlossen (zwei verschiedene
+-- Nachrichten müssten exakt denselben Pfad UND dieselbe Minute treffen).
 CREATE UNIQUE INDEX idx_voicemail_dedupe ON voicemail_messages (tam_index, box_path, message_date);
 
 CREATE INDEX idx_voicemail_date ON voicemail_messages (message_date DESC);

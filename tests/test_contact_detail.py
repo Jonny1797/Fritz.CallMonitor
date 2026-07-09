@@ -75,7 +75,7 @@ def test_call_table_sorting_cycles_asc_desc_unsorted(qtbot, connection):
     header.sectionClicked.emit(0)  # absteigend
     assert widget._call_proxy.data(widget._call_proxy.index(0, 0)) == "03.06.2026, 10:00"
 
-    header.sectionClicked.emit(0)  # zurueck zur Ausgangsreihenfolge (neueste zuerst)
+    header.sectionClicked.emit(0)  # zurück zur Ausgangsreihenfolge (neueste zuerst)
     assert widget._call_proxy.data(widget._call_proxy.index(0, 0)) == "03.06.2026, 10:00"
 
 
@@ -109,7 +109,7 @@ def test_double_click_number_resolves_correct_row_while_sorted(qtbot, connection
     widget = ContactDetailWidget(connection)
     qtbot.addWidget(widget)
     widget.show_contact(contacts.get(contact_id))
-    widget._call_table.horizontalHeader().sectionClicked.emit(0)  # aufsteigend -> aeltester zuerst
+    widget._call_table.horizontalHeader().sectionClicked.emit(0)  # aufsteigend -> ältester zuerst
     signal_spy = []
     widget.number_double_clicked.connect(signal_spy.append)
 
@@ -178,8 +178,8 @@ class _FakeAction:
 
 
 class _FakeMenu:
-    """Siehe tests/test_models.py fuer die Begruendung: echtes QMenu.exec()
-    laesst sich in PySide6 nicht per einfachem Attribut-Patch abfangen."""
+    """Siehe tests/test_models.py für die Begründung: echtes QMenu.exec()
+    lässt sich in PySide6 nicht per einfachem Attribut-Patch abfangen."""
 
     def __init__(self, parent=None):
         self._action: _FakeAction | None = None

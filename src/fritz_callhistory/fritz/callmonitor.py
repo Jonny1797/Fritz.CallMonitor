@@ -53,7 +53,7 @@ def parse_event(line: str) -> CallMonitorEvent | None:
     Feld dort ist die interne Nebenstelle, keine Anrufdauer (ein offizielles
     AVM-Beispiel zeigt "CONNECT;2;4;..." gefolgt von "DISCONNECT;2;4;" - die "4"
     bleibt zwischen beiden Zeilen gleich, obwohl der Anruf mehrere Sekunden
-    dauerte). Die tatsächliche Dauer liefert ohnehin erst der spaetere Sync
+    dauerte). Die tatsächliche Dauer liefert ohnehin erst der spätere Sync
     von der Box, nicht das CallMonitor-Protokoll.
 
     CALL-Ereignisse (ausgehende Anrufe) sowie unparsebare Zeilen liefern None.
@@ -88,12 +88,12 @@ class CallMonitorConnection:
         self._socket: socket.socket | None = None
         # Self-Pipe-Trick: ein blockierendes recv() in events() soll aus einem
         # anderen Thread heraus abbrechbar sein. shutdown() auf den Socket
-        # weckt einen blockierten recv() zwar ueblicherweise auf, aber das
-        # haengt vom OS-Timing ab (das brachte bereits SIGABRTs beim App-Beenden,
-        # wenn der QThread nicht rechtzeitig aufwachte). select() ueber Socket
+        # weckt einen blockierten recv() zwar üblicherweise auf, aber das
+        # hängt vom OS-Timing ab (das brachte bereits SIGABRTs beim App-Beenden,
+        # wenn der QThread nicht rechtzeitig aufwachte). select() über Socket
         # UND diese Wakeup-Pipe gemeinsam macht den Abbruch stattdessen
         # deterministisch: close() schreibt ein Byte, select() kehrt sofort
-        # zurueck, ganz unabhaengig vom shutdown()-Wakeup.
+        # zurück, ganz unabhängig vom shutdown()-Wakeup.
         self._wakeup_r, self._wakeup_w = socket.socketpair()
 
     def connect(self) -> None:
