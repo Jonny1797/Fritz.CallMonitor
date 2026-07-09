@@ -5,15 +5,6 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 
 ## Quick wins (reuse existing TR-064 plumbing)
 
-- **Real deletion of Anrufbeantworter messages** — the Anrufbeantworter tab
-  (shipped 2026-07-09) only ever hides a message locally (`is_hidden`); the
-  box itself exposes a real `DeleteMessage(NewIndex, NewMessageIndex)`
-  TR-064 action (confirmed against a real box, alongside the `MarkMessage`
-  action already used for the read-state sync) that was deliberately not
-  wired up — hiding was chosen as the safer default so a misclick can never
-  actually delete a message. Would need `FritzBoxClient.voicemail_delete()`
-  symmetric to the existing `voicemail_mark_read()`, plus swapping
-  "Ausblenden" for a real "Löschen" action (or offering both).
 - **Surface phonebook notes more prominently** — `notes` field already
   exists per local contact (`ContactEditDialog`). Also revisit the deferred
   backlog item from the missed-calls work: a per-contact "recent call
@@ -30,7 +21,8 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   `fritzconnection.lib.fritzcall.FritzCall.hangup()` (same class as the
   `.dial()` click-to-dial now uses, wraps `X_AVM-DE_DialHangup`) takes no
   target argument - it just ends whatever the box's Wählhilfe channel is
-  currently doing, so it'd be a `FritzBoxClient.hang_up()` method symmetric to
+  currentlydialing a
+  specific one of several numbers doing, so it'd be a `FritzBoxClient.hang_up()` method symmetric to
   `dial_number()`. Still needs a UI affordance, e.g. an "Auflegen" button
   shown only while `AllCallsView` is tracking a live (ringing/connected) call.
 

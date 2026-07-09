@@ -554,7 +554,6 @@ class VoicemailMessageRecord:
     duration_seconds: int | None
     raw_name: str | None
     is_new: bool
-    is_hidden: bool
 
 
 class VoicemailRepository:
@@ -578,8 +577,7 @@ class VoicemailRepository:
         Anders als CallRepository.insert() aktualisiert ein Dedupe-Treffer zusätzlich
         is_new auf der bestehenden Zeile: die Box ist für "neu/gehört" allein
         maßgeblich (kann sich z.B. ändern, wenn die Nachricht an einem Telefon
-        abgehört wurde) und muss bei jedem Sync aktualisierbar bleiben. is_hidden ist
-        rein lokaler Zustand (das App-seitige "Löschen") und wird hier nie berührt.
+        abgehört wurde) und muss bei jedem Sync aktualisierbar bleiben.
         """
         cursor = self._conn.execute(
             """
@@ -611,9 +609,9 @@ class VoicemailRepository:
         self._conn.commit()
         return was_inserted
 
-    def list_visible(self) -> list[VoicemailMessageRecord]:
+    def list_messages(self) -> list[VoicemailMessageRecord]:
         rows = self._conn.execute(
-            "SELECT * FROM voicemail_messages WHERE is_hidden = 0 ORDER BY message_date DESC"
+            "SELECT * FROM voicemail_messages ORDER BY message_date DESC"
         ).fetchall()
         return [self._row_to_message(row) for row in rows]
 
@@ -623,12 +621,48 @@ class VoicemailRepository:
         ).fetchone()
         return self._row_to_message(row) if row else None
 
-    def set_hidden(self, message_id: int, hidden: bool = True) -> None:
+    def delete(self, message_id: int) -> None:
+        self._conn.execute("DELETE FROM voicemail_messages WHERE id = ?", (message_id,))
+        self._conn.commit()
+
+    def mark_read_locally(self, message_id: int) -> None:
+        """Setzt is_new lokal sofort auf 0, ohne auf den naechsten Sync zu warten -
+        genutzt direkt nach einem erfolgreichen MarkMessage-Aufruf auf der Box
+        (Abspielen oder der explizite "Gelesen"-Button), damit die rot/fett-Markierung
+        sofort verschwindet statt erst beim naechsten Sync."""
         self._conn.execute(
-            "UPDATE voicemail_messages SET is_hidden = ? WHERE id = ?",
-            (int(hidden), message_id),
+            "UPDATE voicemail_messages SET is_new = 0 WHERE id = ?", (message_id,)
         )
         self._conn.commit()
+
+    def prune_missing(
+        self, existing_keys: set[tuple[int, str, str]], queried_tam_indices: set[int]
+    ) -> None:
+        """Entfernt lokale Nachrichten, die beim letzten vollstaendigen Sync nicht
+        mehr unter den Box-Nachrichten waren (z.B. an einem Telefon geloescht) -
+        existing_keys ist die Menge aller (tam_index, box_path, message_date) der
+        Nachrichten, die der letzte Sync tatsaechlich von der Box zurückbekommen hat.
+
+        Pruning bleibt auf queried_tam_indices beschraenkt (die TAM-Slots, die dieser
+        Sync tatsaechlich abgefragt hat): faellt ein Slot voruebergehend aus
+        voicemail_tam_indices() heraus (z.B. ein GetList-Hickup oder der Nutzer
+        deaktiviert ihn kurz), sollen dessen bereits synchronisierte Nachrichten nicht
+        faelschlich als "auf der Box geloescht" verschwinden."""
+        rows = self._conn.execute(
+            "SELECT id, tam_index, box_path, message_date FROM voicemail_messages"
+        ).fetchall()
+        stale_ids = [
+            row["id"]
+            for row in rows
+            if row["tam_index"] in queried_tam_indices
+            and (row["tam_index"], row["box_path"], row["message_date"]) not in existing_keys
+        ]
+        if stale_ids:
+            self._conn.executemany(
+                "DELETE FROM voicemail_messages WHERE id = ?",
+                [(message_id,) for message_id in stale_ids],
+            )
+            self._conn.commit()
 
     @staticmethod
     def _row_to_message(row: sqlite3.Row) -> VoicemailMessageRecord:
@@ -642,5 +676,4 @@ class VoicemailRepository:
             duration_seconds=row["duration_seconds"],
             raw_name=row["raw_name"],
             is_new=bool(row["is_new"]),
-            is_hidden=bool(row["is_hidden"]),
         )

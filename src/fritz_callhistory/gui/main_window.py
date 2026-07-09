@@ -36,7 +36,7 @@ from fritz_callhistory.gui.models import (
     install_tristate_sorting,
 )
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
-from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailView
+from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn, VoicemailView
 from fritz_callhistory.gui.workers import DialFn, DialWorker, ImportFromBoxFn, SyncFn, SyncWorker
 from fritz_callhistory.sync.normalize import normalize_number
 
@@ -61,6 +61,8 @@ class MainWindow(QMainWindow):
         show_incoming_call_popup: bool = True,
         dial_fn: DialFn | None = None,
         voicemail_audio_fn: AudioFetchFn | None = None,
+        voicemail_mark_read_fn: VoicemailActionFn | None = None,
+        voicemail_delete_fn: VoicemailActionFn | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -154,7 +156,12 @@ class MainWindow(QMainWindow):
         self._all_calls_view.live_call_ended.connect(self._trigger_sync)
         self._all_calls_view.call_requested.connect(self._dial_number)
 
-        self._voicemail_view = VoicemailView(connection, audio_fetch_fn=voicemail_audio_fn)
+        self._voicemail_view = VoicemailView(
+            connection,
+            audio_fetch_fn=voicemail_audio_fn,
+            mark_read_fn=voicemail_mark_read_fn,
+            delete_fn=voicemail_delete_fn,
+        )
         self._voicemail_view.call_requested.connect(self._dial_number)
         self._voicemail_view.new_voicemail_count_changed.connect(
             self._on_new_voicemail_count_changed
@@ -222,11 +229,11 @@ class MainWindow(QMainWindow):
         self.reload_contacts()
 
     def _busy_worker_threads(self) -> list[QThread]:
-        """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker fuehren
-        einen einzelnen blockierenden Netzwerkaufruf ohne Abbruchpunkte aus - alle
-        muessen hier erkannt werden, damit closeEvent() das Fenster nicht schliesst,
-        waehrend einer von ihnen noch laeuft (siehe closeEvent() fuer die
-        Begruendung)."""
+        """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker/
+        VoicemailActionWorker fuehren einen einzelnen blockierenden Netzwerkaufruf
+        ohne Abbruchpunkte aus - alle muessen hier erkannt werden, damit
+        closeEvent() das Fenster nicht schliesst, waehrend einer von ihnen noch
+        laeuft (siehe closeEvent() fuer die Begruendung)."""
         threads: list[QThread] = []
         if self._sync_thread is not None and self._sync_thread.isRunning():
             threads.append(self._sync_thread)
@@ -238,6 +245,9 @@ class MainWindow(QMainWindow):
         audio_thread = self._voicemail_view.audio_thread
         if audio_thread is not None and audio_thread.isRunning():
             threads.append(audio_thread)
+        action_thread = self._voicemail_view.action_thread
+        if action_thread is not None and action_thread.isRunning():
+            threads.append(action_thread)
         return threads
 
     def closeEvent(self, event: QCloseEvent) -> None:

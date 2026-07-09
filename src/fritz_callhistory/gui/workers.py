@@ -87,6 +87,31 @@ class DialWorker(QThread):
         self.dial_succeeded.emit()
 
 
+class VoicemailActionWorker(QThread):
+    """Fuehrt eine einzelne Box-Aktion auf einer Anrufbeantworter-Nachricht aus
+    (Gelesen-Markieren oder Loeschen) in einem eigenen Thread - gleiche Form wie
+    DialWorker, wiederverwendet fuer beide Aktionen (der jeweilige Closure traegt
+    schon die Zielnachricht in sich)."""
+
+    action_succeeded = Signal()
+    action_failed = Signal(str)
+
+    def __init__(self, action_fn: Callable[[], None], parent=None) -> None:
+        super().__init__(parent)
+        self._action_fn = action_fn
+
+    def run(self) -> None:
+        try:
+            self._action_fn()
+        except FritzBoxError as exc:
+            self.action_failed.emit(str(exc))
+            return
+        except Exception as exc:  # Thread darf nie stillschweigend sterben
+            self.action_failed.emit(f"Unerwarteter Fehler: {exc}")
+            return
+        self.action_succeeded.emit()
+
+
 class VoicemailAudioWorker(QThread):
     """Holt die Audiodaten einer einzelnen Anrufbeantworter-Nachricht
     (fritz/client.py's voicemail_audio()) in einem eigenen Thread - gleiche Form

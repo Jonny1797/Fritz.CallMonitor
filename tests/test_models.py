@@ -21,7 +21,6 @@ from fritz_callhistory.gui.models import (
     install_call_context_menu,
     install_phonebook_call_context_menu,
     install_tristate_sorting,
-    install_voicemail_context_menu,
     port_device_display,
 )
 
@@ -37,7 +36,6 @@ def _voicemail_message(**overrides) -> VoicemailMessageRecord:
         duration_seconds=4,
         raw_name=None,
         is_new=True,
-        is_hidden=False,
     )
     defaults.update(overrides)
     return VoicemailMessageRecord(**defaults)
@@ -651,73 +649,3 @@ def test_voicemail_caller_column_shows_placeholder_when_anonymous(qtbot):
     assert model.data(model.index(0, 1)) == "Anonym / unterdrückt"
 
 
-def _voicemail_table_with_one_row(qtbot, message=None) -> tuple[QTableView, DataclassSortProxy]:
-    model = VoicemailListModel([message or _voicemail_message()])
-    proxy = DataclassSortProxy(row_getter=model.message_at, key_fns={})
-    proxy.setSourceModel(model)
-    table = QTableView()
-    table.setModel(proxy)
-    qtbot.addWidget(table)
-    table.resize(400, 200)
-    table.show()
-    return table, proxy
-
-
-def test_install_voicemail_context_menu_call_action_uses_caller_number(qtbot, mocker):
-    table, proxy = _voicemail_table_with_one_row(qtbot)
-    on_call = mocker.Mock()
-    install_voicemail_context_menu(
-        table, proxy, proxy.sourceModel().message_at, on_call, mocker.Mock(), mocker.Mock()
-    )
-    mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=_FakeMenu)
-
-    rect = table.visualRect(proxy.index(0, 0))
-    table.customContextMenuRequested.emit(rect.center())
-
-    on_call.assert_called_once_with("+491712345678")
-
-
-def test_install_voicemail_context_menu_hides_call_action_when_anonymous(qtbot, mocker):
-    message = _voicemail_message(caller_number=None)
-    table, proxy = _voicemail_table_with_one_row(qtbot, message)
-    on_call = mocker.Mock()
-    install_voicemail_context_menu(
-        table, proxy, proxy.sourceModel().message_at, on_call, mocker.Mock(), mocker.Mock()
-    )
-    created = _capture_fake_menus(mocker)
-
-    rect = table.visualRect(proxy.index(0, 0))
-    table.customContextMenuRequested.emit(rect.center())
-
-    assert not any(action.text.startswith("Anrufen") for action in created[0].actions)
-    on_call.assert_not_called()
-
-
-def test_install_voicemail_context_menu_play_action_invokes_callback(qtbot, mocker):
-    message = _voicemail_message()
-    table, proxy = _voicemail_table_with_one_row(qtbot, message)
-    on_play = mocker.Mock()
-    install_voicemail_context_menu(
-        table, proxy, proxy.sourceModel().message_at, mocker.Mock(), on_play, mocker.Mock()
-    )
-    mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=_FakeMenu)
-
-    rect = table.visualRect(proxy.index(0, 0))
-    table.customContextMenuRequested.emit(rect.center())
-
-    on_play.assert_called_once_with(message)
-
-
-def test_install_voicemail_context_menu_hide_action_invokes_callback(qtbot, mocker):
-    message = _voicemail_message()
-    table, proxy = _voicemail_table_with_one_row(qtbot, message)
-    on_hide = mocker.Mock()
-    install_voicemail_context_menu(
-        table, proxy, proxy.sourceModel().message_at, mocker.Mock(), mocker.Mock(), on_hide
-    )
-    mocker.patch("fritz_callhistory.gui.models.QMenu", side_effect=_FakeMenu)
-
-    rect = table.visualRect(proxy.index(0, 0))
-    table.customContextMenuRequested.emit(rect.center())
-
-    on_hide.assert_called_once_with(message)

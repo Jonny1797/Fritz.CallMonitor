@@ -478,31 +478,3 @@ def install_phonebook_call_context_menu(
     table.customContextMenuRequested.connect(on_context_menu)
 
 
-def install_voicemail_context_menu(
-    table: QTableView,
-    proxy: QSortFilterProxyModel,
-    message_at: Callable[[int], VoicemailMessageRecord],
-    on_call: Callable[[str], None],
-    on_play: Callable[[VoicemailMessageRecord], None],
-    on_hide: Callable[[VoicemailMessageRecord], None],
-) -> None:
-    """Rechtsklick-Kontextmenü fuer Anrufbeantworter-Nachrichten: "Anrufen" (nur wenn
-    eine Nummer bekannt ist), "Abspielen", "Ausblenden" (lokales "Löschen" - siehe
-    VoicemailRepository.set_hidden, die Nachricht bleibt auf der Box unberührt)."""
-    table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-
-    def on_context_menu(pos) -> None:
-        index = table.indexAt(pos)
-        if not index.isValid():
-            return
-        message = message_at(proxy.mapToSource(index).row())
-        menu = QMenu(table)
-        if message.caller_number:
-            menu.addAction(f"Anrufen: {message.caller_number}").triggered.connect(
-                lambda: on_call(message.caller_number)
-            )
-        menu.addAction("Abspielen").triggered.connect(lambda: on_play(message))
-        menu.addAction("Ausblenden").triggered.connect(lambda: on_hide(message))
-        menu.exec(table.viewport().mapToGlobal(pos))
-
-    table.customContextMenuRequested.connect(on_context_menu)

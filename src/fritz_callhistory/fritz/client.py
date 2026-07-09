@@ -38,6 +38,23 @@ _REQUEST_TIMEOUT_SECONDS = 15.0
 _T = TypeVar("_T")
 
 
+def _install_default_session_timeout(session: requests.Session) -> None:
+    """FritzConnection versorgt SOAP-Aufrufe (soaper/device_manager) intern mit dem
+    beim Konstruktor uebergebenen timeout, aber HttpInterface.call_url() (genutzt von
+    voicemail_audio() fuer den download.lua-Abruf) reicht keinen Timeout durch - dessen
+    Signatur nimmt nur (url, payload) entgegen und ruft darunter session.get() ohne
+    timeout auf. requests kennt keinen Session-weiten Default, daher wird hier
+    session.request() gewrappt, um jedem Aufruf ueber diese Session einen Timeout
+    aufzuzwingen, falls keiner explizit gesetzt ist."""
+    original_request = session.request
+
+    def request_with_timeout(*args, **kwargs):
+        kwargs.setdefault("timeout", _REQUEST_TIMEOUT_SECONDS)
+        return original_request(*args, **kwargs)
+
+    session.request = request_with_timeout
+
+
 def _retry_network(fn, *args, **kwargs) -> _T:
     """Ruft fn(*args, **kwargs) auf, mit einem Retry bei transienten Verbindungs-
     fehlern (z.B. abgelaufene Session, kurzer Netzwerkausfall). Rechte-/Login-
@@ -178,6 +195,7 @@ class FritzBoxClient:
         except _NETWORK_EXCEPTIONS as exc:
             raise FritzBoxConnectionError(str(exc)) from exc
 
+        _install_default_session_timeout(self._connection.session)
         self._call = FritzCall(self._connection)
         self._phonebook = FritzPhonebook(self._connection)
 
@@ -308,6 +326,28 @@ class FritzBoxClient:
                 NewIndex=tam_index,
                 NewMessageIndex=message_index,
                 NewMarkedAsRead=1,
+            )
+        except FritzAuthorizationError as exc:
+            raise FritzBoxPermissionError(
+                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
+                "Anrufliste und FRITZ!App Fon'"
+            ) from exc
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+
+    def voicemail_delete(self, tam_index: int, message_index: int) -> None:
+        """Loescht eine Nachricht auf der Box selbst (X_AVM-DE_TAM/DeleteMessage) -
+        verifiziert gegen eine echte Box, nicht umkehrbar. message_index ist wie bei
+        voicemail_mark_read() der Box-eigene <Index>, der nicht stabil ueber
+        Loeschungen hinweg ist - Aufrufer muessen ihn unmittelbar vor diesem Aufruf
+        ueber voicemail_messages() neu aufloesen."""
+        try:
+            _retry_network(
+                self._connection.call_action,
+                "X_AVM-DE_TAM",
+                "DeleteMessage",
+                NewIndex=tam_index,
+                NewMessageIndex=message_index,
             )
         except FritzAuthorizationError as exc:
             raise FritzBoxPermissionError(

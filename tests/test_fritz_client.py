@@ -1,7 +1,13 @@
 import pytest
+import requests
 from fritzconnection.core.exceptions import FritzAuthorizationError, FritzConnectionException
 
-from fritz_callhistory.fritz.client import FritzBoxClient, _retry_network
+from fritz_callhistory.fritz.client import (
+    _REQUEST_TIMEOUT_SECONDS,
+    FritzBoxClient,
+    _install_default_session_timeout,
+    _retry_network,
+)
 from fritz_callhistory.fritz.exceptions import (
     FritzBoxConnectionError,
     FritzBoxPermissionError,
@@ -287,6 +293,38 @@ def test_voicemail_audio_fetches_bytes_via_http_interface(mocker):
     )
 
 
+def test_install_default_session_timeout_applies_default(mocker):
+    session = requests.Session()
+    recorded_kwargs = {}
+
+    def fake_request(*args, **kwargs):
+        recorded_kwargs.update(kwargs)
+        return mocker.Mock()
+
+    session.request = fake_request
+    _install_default_session_timeout(session)
+
+    session.get("http://192.168.100.1:49000/download.lua", params={"path": "x"})
+
+    assert recorded_kwargs["timeout"] == _REQUEST_TIMEOUT_SECONDS
+
+
+def test_install_default_session_timeout_respects_explicit_timeout(mocker):
+    session = requests.Session()
+    recorded_kwargs = {}
+
+    def fake_request(*args, **kwargs):
+        recorded_kwargs.update(kwargs)
+        return mocker.Mock()
+
+    session.request = fake_request
+    _install_default_session_timeout(session)
+
+    session.get("http://192.168.100.1:49000/download.lua", timeout=5)
+
+    assert recorded_kwargs["timeout"] == 5
+
+
 def test_voicemail_audio_translates_connection_error(mocker):
     fake_connection = mocker.Mock()
     fake_connection.address = "http://192.168.100.1"
@@ -316,3 +354,32 @@ def test_voicemail_mark_read_translates_permission_error(mocker):
 
     with pytest.raises(FritzBoxPermissionError):
         client.voicemail_mark_read(0, 3)
+
+
+def test_voicemail_delete_calls_delete_message_action(mocker):
+    fake_connection = mocker.Mock()
+    client = _make_client(connection=fake_connection)
+
+    client.voicemail_delete(0, 3)
+
+    fake_connection.call_action.assert_called_once_with(
+        "X_AVM-DE_TAM", "DeleteMessage", NewIndex=0, NewMessageIndex=3
+    )
+
+
+def test_voicemail_delete_translates_permission_error(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.side_effect = FritzAuthorizationError("forbidden")
+    client = _make_client(connection=fake_connection)
+
+    with pytest.raises(FritzBoxPermissionError):
+        client.voicemail_delete(0, 3)
+
+
+def test_voicemail_delete_translates_connection_error(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.side_effect = FritzConnectionException("down")
+    client = _make_client(connection=fake_connection)
+
+    with pytest.raises(FritzBoxConnectionError):
+        client.voicemail_delete(0, 3)

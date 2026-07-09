@@ -112,15 +112,24 @@ class SyncService:
         return inserted
 
     def sync_voicemail(self) -> int:
-        """Holt Anrufbeantworter-Nachrichten aller aktivierten Slots und übernimmt
-        neue Einträge in die lokale DB (siehe VoicemailRepository.insert_or_update
-        für die is_new-Refresh-Semantik bei bereits bekannten Nachrichten).
+        """Holt Anrufbeantworter-Nachrichten aller aktivierten Slots, übernimmt neue
+        Einträge in die lokale DB (siehe VoicemailRepository.insert_or_update für die
+        is_new-Refresh-Semantik bei bereits bekannten Nachrichten) und entfernt lokale
+        Nachrichten, die auf der Box nicht mehr existieren (z.B. an einem Telefon
+        gelöscht) - siehe VoicemailRepository.prune_missing. Das Pruning läuft nur
+        nach einem vollständig erfolgreichen Durchlauf aller aktivierten Slots: ein
+        Fehler mittendrin propagiert als FritzBoxError und lässt diese Methode gar
+        nicht erst bis zum prune_missing()-Aufruf kommen.
 
         Gibt die Anzahl tatsächlich neu eingefügter Nachrichten zurück.
         """
         inserted = 0
+        seen_keys: set[tuple[int, str, str]] = set()
+        queried_tam_indices: set[int] = set()
         for tam_index in self._client.voicemail_tam_indices():
+            queried_tam_indices.add(tam_index)
             for message in self._client.voicemail_messages(tam_index):
+                seen_keys.add((tam_index, message.path, message.date))
                 was_inserted = self._voicemail.insert_or_update(
                     tam_index=tam_index,
                     box_path=message.path,
@@ -133,6 +142,7 @@ class SyncService:
                 )
                 if was_inserted:
                     inserted += 1
+        self._voicemail.prune_missing(seen_keys, queried_tam_indices)
         return inserted
 
     def sync_phonebook(self, phonebook_ids: list[int] | None = None) -> int:

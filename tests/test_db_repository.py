@@ -598,10 +598,9 @@ def test_voicemail_insert_or_update_inserts_new_message(connection):
     was_inserted = _insert_message(repo)
 
     assert was_inserted is True
-    messages = repo.list_visible()
+    messages = repo.list_messages()
     assert len(messages) == 1
     assert messages[0].is_new is True
-    assert messages[0].is_hidden is False
 
 
 def test_voicemail_insert_or_update_dedupes_on_natural_key(connection):
@@ -611,43 +610,65 @@ def test_voicemail_insert_or_update_dedupes_on_natural_key(connection):
     was_inserted_again = _insert_message(repo)
 
     assert was_inserted_again is False
-    assert len(repo.list_visible()) == 1
+    assert len(repo.list_messages()) == 1
 
 
-def test_voicemail_insert_or_update_refreshes_is_new_on_dedupe_hit_but_preserves_is_hidden(
-    connection,
-):
+def test_voicemail_insert_or_update_refreshes_is_new_on_dedupe_hit(connection):
     repo = VoicemailRepository(connection)
     _insert_message(repo, is_new=True)
-    message_id = repo.list_visible()[0].id
-    repo.set_hidden(message_id, True)
+    message_id = repo.list_messages()[0].id
 
     _insert_message(repo, is_new=False)
 
     stored = repo.get(message_id)
     assert stored.is_new is False
-    assert stored.is_hidden is True
 
 
-def test_voicemail_list_visible_excludes_hidden(connection):
+def test_voicemail_delete_removes_message(connection):
     repo = VoicemailRepository(connection)
     _insert_message(repo)
-    message_id = repo.list_visible()[0].id
+    message_id = repo.list_messages()[0].id
 
-    repo.set_hidden(message_id, True)
+    repo.delete(message_id)
 
-    assert repo.list_visible() == []
+    assert repo.list_messages() == []
+    assert repo.get(message_id) is None
 
 
-def test_voicemail_set_hidden_can_be_reverted(connection):
+def test_voicemail_mark_read_locally_clears_is_new(connection):
     repo = VoicemailRepository(connection)
-    _insert_message(repo)
-    message_id = repo.list_visible()[0].id
+    _insert_message(repo, is_new=True)
+    message_id = repo.list_messages()[0].id
 
-    repo.set_hidden(message_id, True)
-    repo.set_hidden(message_id, False)
+    repo.mark_read_locally(message_id)
 
-    assert len(repo.list_visible()) == 1
+    assert repo.get(message_id).is_new is False
+
+
+def test_voicemail_prune_missing_removes_messages_absent_from_existing_keys(connection):
+    repo = VoicemailRepository(connection)
+    _insert_message(repo, box_path="/download.lua?path=/data/tam/rec/rec.0.000")
+    _insert_message(repo, box_path="/download.lua?path=/data/tam/rec/rec.0.001")
+    kept = repo.list_messages()[0]
+
+    repo.prune_missing({(kept.tam_index, kept.box_path, kept.message_date)}, {kept.tam_index})
+
+    remaining = repo.list_messages()
+    assert len(remaining) == 1
+    assert remaining[0].id == kept.id
+
+
+def test_voicemail_prune_missing_leaves_unqueried_tam_indices_untouched(connection):
+    repo = VoicemailRepository(connection)
+    _insert_message(repo, tam_index=0, box_path="/download.lua?path=/data/tam/rec/rec.0.000")
+    _insert_message(repo, tam_index=1, box_path="/download.lua?path=/data/tam/rec/rec.1.000")
+
+    # tam_index 1 was not queried this round - its message must survive even
+    # though it's absent from existing_keys.
+    repo.prune_missing(set(), {0})
+
+    assert len(repo.list_messages()) == 1
+    assert repo.list_messages()[0].tam_index == 1
 
 
 def test_voicemail_different_tam_indices_are_not_deduped_together(connection):
@@ -657,4 +678,4 @@ def test_voicemail_different_tam_indices_are_not_deduped_together(connection):
     was_inserted = _insert_message(repo, tam_index=1)
 
     assert was_inserted is True
-    assert len(repo.list_visible()) == 2
+    assert len(repo.list_messages()) == 2

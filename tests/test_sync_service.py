@@ -284,7 +284,7 @@ def test_sync_voicemail_inserts_new_messages(connection):
     inserted = service.sync_voicemail()
 
     assert inserted == 1
-    messages = VoicemailRepository(connection).list_visible()
+    messages = VoicemailRepository(connection).list_messages()
     assert len(messages) == 1
     assert messages[0].box_path == message.path
     assert messages[0].is_new is True
@@ -298,16 +298,13 @@ def test_sync_voicemail_is_idempotent(connection):
     inserted = service.sync_voicemail()
 
     assert inserted == 0
-    assert len(VoicemailRepository(connection).list_visible()) == 1
+    assert len(VoicemailRepository(connection).list_messages()) == 1
 
 
-def test_sync_voicemail_refreshes_is_new_without_touching_is_hidden(connection):
+def test_sync_voicemail_refreshes_is_new(connection):
     message = _make_voicemail_message(is_new=True)
     service = _service(connection, voicemail_messages={0: [message]})
     service.sync_voicemail()
-
-    repo = VoicemailRepository(connection)
-    repo.set_hidden(repo.list_visible()[0].id, True)
 
     heard_message = _make_voicemail_message(is_new=False)
     service_after_heard = _service(connection, voicemail_messages={0: [heard_message]})
@@ -315,5 +312,31 @@ def test_sync_voicemail_refreshes_is_new_without_touching_is_hidden(connection):
 
     all_messages = connection.execute("SELECT * FROM voicemail_messages").fetchall()
     assert len(all_messages) == 1
-    assert bool(all_messages[0]["is_hidden"]) is True
     assert bool(all_messages[0]["is_new"]) is False
+
+
+def test_sync_voicemail_prunes_messages_deleted_on_box(connection):
+    message = _make_voicemail_message()
+    service = _service(connection, voicemail_messages={0: [message]})
+    service.sync_voicemail()
+    assert len(VoicemailRepository(connection).list_messages()) == 1
+
+    # Same TAM slot queried again, but the box no longer returns the message
+    # (e.g. deleted via a handset) - the local row must be pruned.
+    service_after_delete = _service(connection, voicemail_messages={0: []})
+    service_after_delete.sync_voicemail()
+
+    assert VoicemailRepository(connection).list_messages() == []
+
+
+def test_sync_voicemail_does_not_prune_slots_that_were_not_queried(connection):
+    message = _make_voicemail_message(tam_index=0)
+    service = _service(connection, voicemail_messages={0: [message]})
+    service.sync_voicemail()
+
+    # A later sync where slot 0 is disabled (not returned by
+    # voicemail_tam_indices() at all) must leave its messages untouched.
+    service_no_slots = _service(connection, voicemail_messages={})
+    service_no_slots.sync_voicemail()
+
+    assert len(VoicemailRepository(connection).list_messages()) == 1

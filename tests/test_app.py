@@ -2,6 +2,8 @@ from fritz_callhistory.app import (
     _build_import_from_box_fn,
     _build_sync_fn,
     _build_voicemail_audio_fn,
+    _build_voicemail_delete_fn,
+    _build_voicemail_mark_read_fn,
     _handle_sigint,
 )
 from fritz_callhistory.config import Config
@@ -195,7 +197,6 @@ def test_build_voicemail_audio_fn_fetches_audio_and_marks_read(mocker):
         duration_seconds=4,
         raw_name=None,
         is_new=True,
-        is_hidden=False,
     )
 
     audio = audio_fn(record)
@@ -203,6 +204,108 @@ def test_build_voicemail_audio_fn_fetches_audio_and_marks_read(mocker):
     assert audio == b"RIFF..."
     fake_client.voicemail_audio.assert_called_once_with(record.box_path)
     fake_client.voicemail_mark_read.assert_called_once_with(0, 3)
+
+
+def _matching_voicemail_message() -> VoicemailMessage:
+    return VoicemailMessage(
+        tam_index=0,
+        box_index=3,
+        caller_number="0171 2345678",
+        called_number="06898123456",
+        date="2026-06-01T10:00:00",
+        duration_seconds=4,
+        name=None,
+        path="/download.lua?path=/data/tam/rec/rec.0.003",
+        is_new=True,
+    )
+
+
+def _voicemail_record() -> VoicemailMessageRecord:
+    return VoicemailMessageRecord(
+        id=1,
+        tam_index=0,
+        box_path="/download.lua?path=/data/tam/rec/rec.0.003",
+        caller_number="0171 2345678",
+        called_number="06898123456",
+        message_date="2026-06-01T10:00:00",
+        duration_seconds=4,
+        raw_name=None,
+        is_new=True,
+    )
+
+
+def test_build_voicemail_mark_read_fn_returns_none_without_stored_password(mocker):
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value=None)
+    cfg = Config(address="192.168.178.1", username="admin")
+
+    assert _build_voicemail_mark_read_fn(cfg) is None
+
+
+def test_build_voicemail_mark_read_fn_resolves_box_index_and_marks_read(mocker):
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+    fake_client = mocker.Mock()
+    fake_client.voicemail_messages.return_value = [_matching_voicemail_message()]
+    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    mark_read_fn = _build_voicemail_mark_read_fn(cfg)
+    assert mark_read_fn is not None
+
+    mark_read_fn(_voicemail_record())
+
+    fake_client.voicemail_mark_read.assert_called_once_with(0, 3)
+
+
+def test_build_voicemail_mark_read_fn_does_nothing_when_message_gone_from_box(mocker):
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+    fake_client = mocker.Mock()
+    fake_client.voicemail_messages.return_value = []
+    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    mark_read_fn = _build_voicemail_mark_read_fn(cfg)
+    assert mark_read_fn is not None
+
+    mark_read_fn(_voicemail_record())
+
+    fake_client.voicemail_mark_read.assert_not_called()
+
+
+def test_build_voicemail_delete_fn_returns_none_without_stored_password(mocker):
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value=None)
+    cfg = Config(address="192.168.178.1", username="admin")
+
+    assert _build_voicemail_delete_fn(cfg) is None
+
+
+def test_build_voicemail_delete_fn_resolves_box_index_and_deletes(mocker):
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+    fake_client = mocker.Mock()
+    fake_client.voicemail_messages.return_value = [_matching_voicemail_message()]
+    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    delete_fn = _build_voicemail_delete_fn(cfg)
+    assert delete_fn is not None
+
+    delete_fn(_voicemail_record())
+
+    fake_client.voicemail_delete.assert_called_once_with(0, 3)
+
+
+def test_build_voicemail_delete_fn_does_nothing_when_message_gone_from_box(mocker):
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+    fake_client = mocker.Mock()
+    fake_client.voicemail_messages.return_value = []
+    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    delete_fn = _build_voicemail_delete_fn(cfg)
+    assert delete_fn is not None
+
+    delete_fn(_voicemail_record())
+
+    fake_client.voicemail_delete.assert_not_called()
 
 
 def test_sigint_handler_forces_immediate_exit_unconditionally(mocker):

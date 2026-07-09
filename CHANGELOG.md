@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-09
+
+### Added
+
+- Real deletion of Anrufbeantworter messages: the "Löschen" button calls the Fritz!Box's
+  `DeleteMessage` action directly, replacing the old local-only "Ausblenden".
+
+### Changed
+
+- Anrufbeantworter tab redesign: a visible action row (Abspielen/Anrufen/Gelesen/Löschen,
+  each enabled only when applicable to the current selection) replaces the right-click
+  context menu, and the player moved to the bottom of the tab. The seek bar now jumps to
+  the clicked position instead of only reacting to dragging the handle. "Ausblenden" is
+  gone — deleting a message removes it for real, and playing/marking a message read now
+  clears its unread styling immediately instead of waiting for the next sync. Sync now
+  also prunes messages that were deleted on the box through another channel (e.g. a
+  handset), so the local list stays in sync with the box's actual state.
+
+### Fixed
+
+- `voicemail_audio()` (the voicemail playback download) had no request timeout, unlike
+  every other Fritz!Box network call — a stalled download could leave the Anrufbeantworter
+  tab stuck on "Lade Nachricht …" indefinitely instead of surfacing a connection error.
+
 ## [0.4.0] - 2026-07-09
 
 ### Added

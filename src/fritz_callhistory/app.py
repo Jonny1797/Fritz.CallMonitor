@@ -23,7 +23,7 @@ from fritz_callhistory.db.repository import (
 from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 from fritz_callhistory.gui.main_window import MainWindow
-from fritz_callhistory.gui.voicemail_view import AudioFetchFn
+from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn
 from fritz_callhistory.gui.workers import DialFn, ImportFromBoxFn, SyncFn
 from fritz_callhistory.paths import database_file
 from fritz_callhistory.sync.normalize import normalize_number
@@ -159,14 +159,25 @@ def _build_dial_fn(cfg: config_module.Config) -> DialFn | None:
     return dial_fn
 
 
+def _resolve_box_index(client: FritzBoxClient, message: VoicemailMessageRecord) -> int | None:
+    """box_index ist nicht stabil ueber Loeschungen hinweg (siehe fritz/client.py's
+    VoicemailMessage.box_index-Kommentar) und wird deshalb nicht in der DB
+    gespeichert - jeder Aufruf, der ihn braucht (Gelesen-Markieren, Loeschen), muss
+    ihn unmittelbar vorher per Live-Abgleich ueber (box_path, message_date) neu
+    ermitteln, statt einen zwischengespeicherten Wert zu benutzen."""
+    for candidate in client.voicemail_messages(message.tam_index):
+        if candidate.path == message.box_path and candidate.date == message.message_date:
+            return candidate.box_index
+    return None
+
+
 def _build_voicemail_audio_fn(cfg: config_module.Config) -> AudioFetchFn | None:
     """Baut die Funktion fuer den einmaligen Abspiel-Klick (VoicemailAudioWorker) -
     gleiches Verbindungsaufbau-Muster wie _build_dial_fn. Markiert die Nachricht
     zusaetzlich auf der Box selbst als gelesen (X_AVM-DE_TAM/MarkMessage, verifiziert
-    gegen eine echte Box) - der lokale is_new-Zustand wird davon nicht direkt
-    beeinflusst, sondern erst beim naechsten Sync aus der Box neu uebernommen
-    (siehe VoicemailRepository.insert_or_update), genau wie ein am Telefon
-    abgehoerter Anruf auch nur ueber den naechsten Sync sichtbar wird."""
+    gegen eine echte Box); VoicemailView flippt den lokalen is_new-Zustand direkt im
+    Anschluss selbst (VoicemailRepository.mark_read_locally), damit die rot/fett-
+    Markierung nicht erst auf den naechsten Sync warten muss."""
     password = credentials.get_password(cfg.username) if cfg.username else None
     if not cfg.username or not password:
         return None
@@ -174,13 +185,49 @@ def _build_voicemail_audio_fn(cfg: config_module.Config) -> AudioFetchFn | None:
     def voicemail_audio_fn(message: VoicemailMessageRecord) -> bytes:
         client = FritzBoxClient(cfg.address, cfg.username, password)
         audio = client.voicemail_audio(message.box_path)
-        for candidate in client.voicemail_messages(message.tam_index):
-            if candidate.path == message.box_path and candidate.date == message.message_date:
-                client.voicemail_mark_read(message.tam_index, candidate.box_index)
-                break
+        box_index = _resolve_box_index(client, message)
+        if box_index is not None:
+            client.voicemail_mark_read(message.tam_index, box_index)
         return audio
 
     return voicemail_audio_fn
+
+
+def _build_voicemail_mark_read_fn(cfg: config_module.Config) -> VoicemailActionFn | None:
+    """Baut die Funktion fuer den expliziten "Gelesen"-Button (VoicemailActionWorker) -
+    gleiches Verbindungsaufbau-/Index-Aufloesungs-Muster wie _build_voicemail_audio_fn,
+    aber ohne den Audio-Download: erlaubt, eine Nachricht als gelesen zu markieren,
+    ohne sie abzuspielen."""
+    password = credentials.get_password(cfg.username) if cfg.username else None
+    if not cfg.username or not password:
+        return None
+
+    def voicemail_mark_read_fn(message: VoicemailMessageRecord) -> None:
+        client = FritzBoxClient(cfg.address, cfg.username, password)
+        box_index = _resolve_box_index(client, message)
+        if box_index is not None:
+            client.voicemail_mark_read(message.tam_index, box_index)
+
+    return voicemail_mark_read_fn
+
+
+def _build_voicemail_delete_fn(cfg: config_module.Config) -> VoicemailActionFn | None:
+    """Baut die Funktion fuer den "Loeschen"-Button (VoicemailActionWorker) - loescht
+    die Nachricht echt auf der Box (X_AVM-DE_TAM/DeleteMessage). Die lokale Zeile wird
+    nicht hier, sondern von VoicemailView nach erfolgreichem Abschluss entfernt
+    (VoicemailRepository.delete), damit ein fehlgeschlagener Box-Aufruf die lokale
+    Kopie nicht verwaist zurueck laesst."""
+    password = credentials.get_password(cfg.username) if cfg.username else None
+    if not cfg.username or not password:
+        return None
+
+    def voicemail_delete_fn(message: VoicemailMessageRecord) -> None:
+        client = FritzBoxClient(cfg.address, cfg.username, password)
+        box_index = _resolve_box_index(client, message)
+        if box_index is not None:
+            client.voicemail_delete(message.tam_index, box_index)
+
+    return voicemail_delete_fn
 
 
 def _handle_sigint(*_args) -> None:
@@ -220,6 +267,8 @@ def main() -> int:
         show_incoming_call_popup=cfg.show_incoming_call_popup,
         dial_fn=_build_dial_fn(cfg),
         voicemail_audio_fn=_build_voicemail_audio_fn(cfg),
+        voicemail_mark_read_fn=_build_voicemail_mark_read_fn(cfg),
+        voicemail_delete_fn=_build_voicemail_delete_fn(cfg),
     )
     window.show()
 
