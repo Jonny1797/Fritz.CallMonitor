@@ -535,7 +535,7 @@ def test_open_contact_requested_navigates_to_contact(qtbot, connection, mocker):
 
     popup.open_contact_requested.emit(contact_id)
 
-    assert window._tabs.currentIndex() == 1
+    assert window._tabs.currentIndex() == 2
     assert window._table.selectionModel().selectedRows()[0].row() == 0
 
 
@@ -551,14 +551,15 @@ def test_call_monitor_connection_lost_message_shown_only_once(qtbot, connection)
     assert window.statusBar().currentMessage() == ""
 
 
-def test_main_window_has_three_tabs(qtbot, connection):
+def test_main_window_has_four_tabs(qtbot, connection):
     window = MainWindow(connection)
     qtbot.addWidget(window)
 
-    assert window._tabs.count() == 3
+    assert window._tabs.count() == 4
     assert window._tabs.tabText(0) == "Alle Anrufe"
-    assert window._tabs.tabText(1) == "Kontakte"
-    assert window._tabs.tabText(2) == "Telefonbuch"
+    assert window._tabs.tabText(1) == "Anrufbeantworter"
+    assert window._tabs.tabText(2) == "Kontakte"
+    assert window._tabs.tabText(3) == "Telefonbuch"
 
 
 def test_existing_widgets_still_reachable_after_tab_refactor(qtbot, connection):
@@ -597,7 +598,7 @@ def test_clicking_call_in_all_calls_view_switches_tab_and_selects_contact(qtbot,
 
     window._all_calls_view.contact_selected.emit(contact_id)
 
-    assert window._tabs.currentIndex() == 1
+    assert window._tabs.currentIndex() == 2
     assert "Max Mustermann" in window._detail._title_label.text()
 
 
@@ -800,7 +801,7 @@ def test_double_clicking_all_calls_row_navigates_to_kontakte(qtbot, connection):
 
     window._all_calls_view._table.doubleClicked.emit(window._all_calls_view._model.index(0, 2))
 
-    assert window._tabs.currentIndex() == 1
+    assert window._tabs.currentIndex() == 2
     assert "Max Mustermann" in window._detail._title_label.text()
 
 

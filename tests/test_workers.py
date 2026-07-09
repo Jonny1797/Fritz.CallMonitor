@@ -1,5 +1,10 @@
 from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
-from fritz_callhistory.gui.workers import DialWorker, ImportFromBoxWorker, SyncWorker
+from fritz_callhistory.gui.workers import (
+    DialWorker,
+    ImportFromBoxWorker,
+    SyncWorker,
+    VoicemailAudioWorker,
+)
 
 
 def test_sync_worker_emits_finished_signal_with_result(qtbot):
@@ -97,6 +102,39 @@ def test_dial_worker_emits_failed_signal_on_unexpected_error(qtbot):
     worker = DialWorker(dial_fn)
 
     with qtbot.waitSignal(worker.dial_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert "boom" in blocker.args[0]
+
+
+def test_voicemail_audio_worker_emits_ready_signal_with_bytes(qtbot):
+    worker = VoicemailAudioWorker(lambda: b"RIFF...")
+
+    with qtbot.waitSignal(worker.audio_ready, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == [b"RIFF..."]
+
+
+def test_voicemail_audio_worker_emits_failed_signal_on_fritzbox_error(qtbot):
+    def audio_fn():
+        raise FritzBoxConnectionError("Box nicht erreichbar")
+
+    worker = VoicemailAudioWorker(audio_fn)
+
+    with qtbot.waitSignal(worker.audio_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == ["Box nicht erreichbar"]
+
+
+def test_voicemail_audio_worker_emits_failed_signal_on_unexpected_error(qtbot):
+    def audio_fn():
+        raise ValueError("boom")
+
+    worker = VoicemailAudioWorker(audio_fn)
+
+    with qtbot.waitSignal(worker.audio_failed, timeout=2000) as blocker:
         worker.start()
 
     assert "boom" in blocker.args[0]

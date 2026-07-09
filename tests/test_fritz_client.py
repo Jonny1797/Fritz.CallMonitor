@@ -181,3 +181,138 @@ def test_phonebook_contacts_detailed_translates_connection_error(mocker):
 
     with pytest.raises(FritzBoxConnectionError):
         client.phonebook_contacts_detailed(0)
+
+
+_VOICEMAIL_TAM_LIST_XML = (
+    "<List><TAMRunning>1</TAMRunning><Item><Index>0</Index><Enable>1</Enable>"
+    "<Name>Anrufbeantworter</Name></Item><Item><Index>1</Index><Enable>0</Enable>"
+    "<Name></Name></Item></List>"
+)
+
+_VOICEMAIL_MESSAGE_LIST_XML = """<?xml version="1.0" encoding="utf-8"?>
+<Root>
+<Message>
+<Index>0</Index>
+<Tam>0</Tam>
+<Called>65831249</Called>
+<Date>09.07.26 16:43</Date>
+<Duration>0:04</Duration>
+<Inbook>1</Inbook>
+<Name>Georg</Name>
+<New>1</New>
+<Number>015905094489</Number>
+<Path>/download.lua?path=/data/tam/rec/rec.0.000</Path>
+</Message>
+</Root>
+"""
+
+
+def test_voicemail_tam_indices_returns_only_enabled_slots(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.return_value = {"NewTAMList": _VOICEMAIL_TAM_LIST_XML}
+    client = _make_client(connection=fake_connection)
+
+    assert client.voicemail_tam_indices() == [0]
+    fake_connection.call_action.assert_called_once_with("X_AVM-DE_TAM", "GetList")
+
+
+def test_voicemail_tam_indices_translates_permission_error(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.side_effect = FritzAuthorizationError("forbidden")
+    client = _make_client(connection=fake_connection)
+
+    with pytest.raises(FritzBoxPermissionError):
+        client.voicemail_tam_indices()
+
+
+def test_voicemail_tam_indices_translates_connection_error(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.side_effect = FritzConnectionException("down")
+    client = _make_client(connection=fake_connection)
+
+    with pytest.raises(FritzBoxConnectionError):
+        client.voicemail_tam_indices()
+
+
+def test_voicemail_messages_parses_xml_fields(mocker, tmp_path):
+    xml_path = tmp_path / "messages.xml"
+    xml_path.write_text(_VOICEMAIL_MESSAGE_LIST_XML)
+
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.return_value = {"NewURL": str(xml_path)}
+    client = _make_client(connection=fake_connection)
+
+    messages = client.voicemail_messages(0)
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.tam_index == 0
+    assert message.box_index == 0
+    assert message.caller_number == "015905094489"
+    assert message.called_number == "65831249"
+    assert message.date == "2026-07-09T16:43:00"
+    assert message.duration_seconds == 4
+    assert message.name == "Georg"
+    assert message.path == "/download.lua?path=/data/tam/rec/rec.0.000"
+    assert message.is_new is True
+    fake_connection.call_action.assert_called_once_with(
+        "X_AVM-DE_TAM", "GetMessageList", NewIndex=0
+    )
+
+
+def test_voicemail_messages_translates_permission_error(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.side_effect = FritzAuthorizationError("forbidden")
+    client = _make_client(connection=fake_connection)
+
+    with pytest.raises(FritzBoxPermissionError):
+        client.voicemail_messages(0)
+
+
+def test_voicemail_audio_fetches_bytes_via_http_interface(mocker):
+    fake_response = mocker.Mock()
+    fake_response.content = b"RIFF..."
+    fake_connection = mocker.Mock()
+    fake_connection.address = "http://192.168.100.1"
+    fake_connection.port = 49000
+    fake_connection.http_interface.call_url.return_value = fake_response
+    client = _make_client(connection=fake_connection)
+
+    audio = client.voicemail_audio("/download.lua?path=/data/tam/rec/rec.0.000")
+
+    assert audio == b"RIFF..."
+    fake_connection.http_interface.call_url.assert_called_once_with(
+        "http://192.168.100.1:49000/download.lua",
+        {"path": "/data/tam/rec/rec.0.000"},
+    )
+
+
+def test_voicemail_audio_translates_connection_error(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.address = "http://192.168.100.1"
+    fake_connection.port = 49000
+    fake_connection.http_interface.call_url.side_effect = FritzConnectionException("down")
+    client = _make_client(connection=fake_connection)
+
+    with pytest.raises(FritzBoxConnectionError):
+        client.voicemail_audio("/download.lua?path=/data/tam/rec/rec.0.000")
+
+
+def test_voicemail_mark_read_calls_mark_message_action(mocker):
+    fake_connection = mocker.Mock()
+    client = _make_client(connection=fake_connection)
+
+    client.voicemail_mark_read(0, 3)
+
+    fake_connection.call_action.assert_called_once_with(
+        "X_AVM-DE_TAM", "MarkMessage", NewIndex=0, NewMessageIndex=3, NewMarkedAsRead=1
+    )
+
+
+def test_voicemail_mark_read_translates_permission_error(mocker):
+    fake_connection = mocker.Mock()
+    fake_connection.call_action.side_effect = FritzAuthorizationError("forbidden")
+    client = _make_client(connection=fake_connection)
+
+    with pytest.raises(FritzBoxPermissionError):
+        client.voicemail_mark_read(0, 3)

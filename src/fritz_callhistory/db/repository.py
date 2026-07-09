@@ -541,3 +541,106 @@ class SyncStateRepository:
             (key, value),
         )
         self._conn.commit()
+
+
+@dataclass
+class VoicemailMessageRecord:
+    id: int
+    tam_index: int
+    box_path: str
+    caller_number: str | None
+    called_number: str | None
+    message_date: str
+    duration_seconds: int | None
+    raw_name: str | None
+    is_new: bool
+    is_hidden: bool
+
+
+class VoicemailRepository:
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
+
+    def insert_or_update(
+        self,
+        *,
+        tam_index: int,
+        box_path: str,
+        caller_number: str | None,
+        called_number: str | None,
+        message_date: str,
+        duration_seconds: int | None,
+        raw_name: str | None,
+        is_new: bool,
+    ) -> bool:
+        """Fügt eine Nachricht ein. Gibt False zurück, wenn sie bereits existiert (Dedupe).
+
+        Anders als CallRepository.insert() aktualisiert ein Dedupe-Treffer zusätzlich
+        is_new auf der bestehenden Zeile: die Box ist für "neu/gehört" allein
+        maßgeblich (kann sich z.B. ändern, wenn die Nachricht an einem Telefon
+        abgehört wurde) und muss bei jedem Sync aktualisierbar bleiben. is_hidden ist
+        rein lokaler Zustand (das App-seitige "Löschen") und wird hier nie berührt.
+        """
+        cursor = self._conn.execute(
+            """
+            INSERT OR IGNORE INTO voicemail_messages (
+                tam_index, box_path, caller_number, called_number,
+                message_date, duration_seconds, raw_name, is_new
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tam_index,
+                box_path,
+                caller_number,
+                called_number,
+                message_date,
+                duration_seconds,
+                raw_name,
+                int(is_new),
+            ),
+        )
+        was_inserted = cursor.rowcount > 0
+        if not was_inserted:
+            self._conn.execute(
+                """
+                UPDATE voicemail_messages SET is_new = ?
+                WHERE tam_index = ? AND box_path = ? AND message_date = ?
+                """,
+                (int(is_new), tam_index, box_path, message_date),
+            )
+        self._conn.commit()
+        return was_inserted
+
+    def list_visible(self) -> list[VoicemailMessageRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM voicemail_messages WHERE is_hidden = 0 ORDER BY message_date DESC"
+        ).fetchall()
+        return [self._row_to_message(row) for row in rows]
+
+    def get(self, message_id: int) -> VoicemailMessageRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM voicemail_messages WHERE id = ?", (message_id,)
+        ).fetchone()
+        return self._row_to_message(row) if row else None
+
+    def set_hidden(self, message_id: int, hidden: bool = True) -> None:
+        self._conn.execute(
+            "UPDATE voicemail_messages SET is_hidden = ? WHERE id = ?",
+            (int(hidden), message_id),
+        )
+        self._conn.commit()
+
+    @staticmethod
+    def _row_to_message(row: sqlite3.Row) -> VoicemailMessageRecord:
+        return VoicemailMessageRecord(
+            id=row["id"],
+            tam_index=row["tam_index"],
+            box_path=row["box_path"],
+            caller_number=row["caller_number"],
+            called_number=row["called_number"],
+            message_date=row["message_date"],
+            duration_seconds=row["duration_seconds"],
+            raw_name=row["raw_name"],
+            is_new=bool(row["is_new"]),
+            is_hidden=bool(row["is_hidden"]),
+        )

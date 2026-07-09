@@ -11,6 +11,7 @@ from fritz_callhistory.db.repository import (
     ContactRepository,
     LocalPhonebookRepository,
     PhonebookRepository,
+    VoicemailRepository,
 )
 from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.sync.normalize import normalize_number
@@ -71,12 +72,14 @@ class SyncService:
         calls: CallRepository,
         phonebook: PhonebookRepository,
         local_phonebook: LocalPhonebookRepository,
+        voicemail: VoicemailRepository,
     ) -> None:
         self._client = client
         self._contacts = contacts
         self._calls = calls
         self._phonebook = phonebook
         self._local_phonebook = local_phonebook
+        self._voicemail = voicemail
 
     def sync_calls(self, *, days: int | None = None) -> int:
         """Holt Anrufe von der Box und übernimmt neue Einträge in die lokale DB.
@@ -106,6 +109,30 @@ class SyncService:
             )
             if was_inserted:
                 inserted += 1
+        return inserted
+
+    def sync_voicemail(self) -> int:
+        """Holt Anrufbeantworter-Nachrichten aller aktivierten Slots und übernimmt
+        neue Einträge in die lokale DB (siehe VoicemailRepository.insert_or_update
+        für die is_new-Refresh-Semantik bei bereits bekannten Nachrichten).
+
+        Gibt die Anzahl tatsächlich neu eingefügter Nachrichten zurück.
+        """
+        inserted = 0
+        for tam_index in self._client.voicemail_tam_indices():
+            for message in self._client.voicemail_messages(tam_index):
+                was_inserted = self._voicemail.insert_or_update(
+                    tam_index=tam_index,
+                    box_path=message.path,
+                    caller_number=message.caller_number,
+                    called_number=message.called_number,
+                    message_date=message.date,
+                    duration_seconds=message.duration_seconds,
+                    raw_name=message.name,
+                    is_new=message.is_new,
+                )
+                if was_inserted:
+                    inserted += 1
         return inserted
 
     def sync_phonebook(self, phonebook_ids: list[int] | None = None) -> int:

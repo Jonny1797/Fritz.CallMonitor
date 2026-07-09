@@ -7,6 +7,7 @@ from fritz_callhistory.db.repository import (
     ContactRepository,
     LocalPhonebookRepository,
     SyncStateRepository,
+    VoicemailRepository,
 )
 
 
@@ -574,3 +575,86 @@ def test_find_local_only_contact_by_exact_numbers_ignores_box_linked_contacts(co
 
     assert repo.find_local_only_contact_by_exact_numbers(["+491234567"]) is None
     assert contact_id is not None  # sanity: der Kontakt existiert tatsaechlich
+
+
+def _insert_message(repo, **overrides):
+    defaults = dict(
+        tam_index=0,
+        box_path="/download.lua?path=/data/tam/rec/rec.0.000",
+        caller_number="+491712345678",
+        called_number="+4969123456",
+        message_date="2026-06-01T10:00:00",
+        duration_seconds=4,
+        raw_name=None,
+        is_new=True,
+    )
+    defaults.update(overrides)
+    return repo.insert_or_update(**defaults)
+
+
+def test_voicemail_insert_or_update_inserts_new_message(connection):
+    repo = VoicemailRepository(connection)
+
+    was_inserted = _insert_message(repo)
+
+    assert was_inserted is True
+    messages = repo.list_visible()
+    assert len(messages) == 1
+    assert messages[0].is_new is True
+    assert messages[0].is_hidden is False
+
+
+def test_voicemail_insert_or_update_dedupes_on_natural_key(connection):
+    repo = VoicemailRepository(connection)
+    _insert_message(repo)
+
+    was_inserted_again = _insert_message(repo)
+
+    assert was_inserted_again is False
+    assert len(repo.list_visible()) == 1
+
+
+def test_voicemail_insert_or_update_refreshes_is_new_on_dedupe_hit_but_preserves_is_hidden(
+    connection,
+):
+    repo = VoicemailRepository(connection)
+    _insert_message(repo, is_new=True)
+    message_id = repo.list_visible()[0].id
+    repo.set_hidden(message_id, True)
+
+    _insert_message(repo, is_new=False)
+
+    stored = repo.get(message_id)
+    assert stored.is_new is False
+    assert stored.is_hidden is True
+
+
+def test_voicemail_list_visible_excludes_hidden(connection):
+    repo = VoicemailRepository(connection)
+    _insert_message(repo)
+    message_id = repo.list_visible()[0].id
+
+    repo.set_hidden(message_id, True)
+
+    assert repo.list_visible() == []
+
+
+def test_voicemail_set_hidden_can_be_reverted(connection):
+    repo = VoicemailRepository(connection)
+    _insert_message(repo)
+    message_id = repo.list_visible()[0].id
+
+    repo.set_hidden(message_id, True)
+    repo.set_hidden(message_id, False)
+
+    assert len(repo.list_visible()) == 1
+
+
+def test_voicemail_different_tam_indices_are_not_deduped_together(connection):
+    repo = VoicemailRepository(connection)
+    _insert_message(repo, tam_index=0)
+
+    was_inserted = _insert_message(repo, tam_index=1)
+
+    assert was_inserted is True
+    assert len(repo.list_visible()) == 2

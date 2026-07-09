@@ -36,6 +36,7 @@ from fritz_callhistory.gui.models import (
     install_tristate_sorting,
 )
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
+from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailView
 from fritz_callhistory.gui.workers import DialFn, DialWorker, ImportFromBoxFn, SyncFn, SyncWorker
 from fritz_callhistory.sync.normalize import normalize_number
 
@@ -59,6 +60,7 @@ class MainWindow(QMainWindow):
         import_from_box_fn: ImportFromBoxFn | None = None,
         show_incoming_call_popup: bool = True,
         dial_fn: DialFn | None = None,
+        voicemail_audio_fn: AudioFetchFn | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -152,6 +154,12 @@ class MainWindow(QMainWindow):
         self._all_calls_view.live_call_ended.connect(self._trigger_sync)
         self._all_calls_view.call_requested.connect(self._dial_number)
 
+        self._voicemail_view = VoicemailView(connection, audio_fetch_fn=voicemail_audio_fn)
+        self._voicemail_view.call_requested.connect(self._dial_number)
+        self._voicemail_view.new_voicemail_count_changed.connect(
+            self._on_new_voicemail_count_changed
+        )
+
         self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
         self._phonebook_tab.contacts_changed.connect(self.reload_contacts)
         self._phonebook_tab.call_requested.connect(self._dial_number)
@@ -159,6 +167,7 @@ class MainWindow(QMainWindow):
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self._all_calls_view, "Alle Anrufe")
+        self._tabs.addTab(self._voicemail_view, "Anrufbeantworter")
         self._tabs.addTab(contacts_tab, "Kontakte")
         self._tabs.addTab(self._phonebook_tab, "Telefonbuch")
         # AllCallsView.__init__ hat _reload() bereits vor der obigen Signal-
@@ -166,6 +175,7 @@ class MainWindow(QMainWindow):
         # kam daher ohne Empfaenger an. Deshalb hier einmalig den bereits
         # berechneten, gecachten Wert direkt abfragen statt nur aufs Signal zu vertrauen.
         self._update_all_calls_tab_label(self._all_calls_view.new_missed_calls_count)
+        self._update_voicemail_tab_label(self._voicemail_view.new_voicemail_count)
 
         top_row = QHBoxLayout()
         top_row.addStretch()
@@ -212,9 +222,9 @@ class MainWindow(QMainWindow):
         self.reload_contacts()
 
     def _busy_worker_threads(self) -> list[QThread]:
-        """SyncWorker/ImportFromBoxWorker/DialWorker fuehren einen einzelnen
-        blockierenden Netzwerkaufruf ohne Abbruchpunkte aus - alle drei muessen
-        hier erkannt werden, damit closeEvent() das Fenster nicht schliesst,
+        """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker fuehren
+        einen einzelnen blockierenden Netzwerkaufruf ohne Abbruchpunkte aus - alle
+        muessen hier erkannt werden, damit closeEvent() das Fenster nicht schliesst,
         waehrend einer von ihnen noch laeuft (siehe closeEvent() fuer die
         Begruendung)."""
         threads: list[QThread] = []
@@ -225,6 +235,9 @@ class MainWindow(QMainWindow):
             threads.append(import_thread)
         if self._dial_thread is not None and self._dial_thread.isRunning():
             threads.append(self._dial_thread)
+        audio_thread = self._voicemail_view.audio_thread
+        if audio_thread is not None and audio_thread.isRunning():
+            threads.append(audio_thread)
         return threads
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -337,6 +350,13 @@ class MainWindow(QMainWindow):
     def _on_new_missed_calls_changed(self, count: int) -> None:
         self._update_all_calls_tab_label(count)
 
+    def _update_voicemail_tab_label(self, count: int) -> None:
+        label = f"Anrufbeantworter ({count} neu)" if count else "Anrufbeantworter"
+        self._tabs.setTabText(1, label)
+
+    def _on_new_voicemail_count_changed(self, count: int) -> None:
+        self._update_voicemail_tab_label(count)
+
     def _on_call_monitor_connection_lost(self, message: str) -> None:
         if self._call_monitor_connection_lost_shown:
             return
@@ -359,7 +379,7 @@ class MainWindow(QMainWindow):
         self._search_edit.clear()
         self._search_timer.stop()
         self.reload_contacts()
-        self._tabs.setCurrentIndex(1)
+        self._tabs.setCurrentIndex(2)
         source_row = self._contact_model.index_of(contact_id)
         if source_row is not None:
             proxy_row = self._contact_proxy.mapFromSource(self._contact_model.index(source_row, 0)).row()
@@ -445,6 +465,7 @@ class MainWindow(QMainWindow):
         self.reload_contacts()
         self._all_calls_view.clear_ended_live_calls()
         self._all_calls_view.reload()
+        self._voicemail_view.reload()
 
     def _on_sync_failed(self, message: str) -> None:
         self._sync_button.setEnabled(True)

@@ -10,7 +10,13 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyMod
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QMenu, QTableView
 
-from fritz_callhistory.db.repository import CallRecord, CallWithContact, Contact, LocalPhonebookContact
+from fritz_callhistory.db.repository import (
+    CallRecord,
+    CallWithContact,
+    Contact,
+    LocalPhonebookContact,
+    VoicemailMessageRecord,
+)
 
 _MISSED_CALL_TYPE = 2
 
@@ -25,6 +31,7 @@ _CONTACT_COLUMNS = ("Name", "Nummer", "Letzter Kontakt", "Anrufe")
 _PHONEBOOK_CONTACT_COLUMNS = ("Name", "Nummern", "Notizen")
 _CALL_COLUMNS = ("Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät")
 _ALL_CALLS_COLUMNS = ("Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät")
+_VOICEMAIL_COLUMNS = ("Datum", "Anrufer", "Dauer")
 
 _CALL_TYPE_LABELS = {
     1: "Eingehend",
@@ -289,6 +296,55 @@ class AllCallsListModel(_SimpleTableModel):
         return None
 
 
+def voicemail_caller_display(message: VoicemailMessageRecord) -> str:
+    if message.raw_name:
+        return message.raw_name
+    if message.caller_number:
+        return message.caller_number
+    return "Anonym / unterdrückt"
+
+
+class VoicemailListModel(_SimpleTableModel):
+    """Anrufbeantworter-Nachrichtenliste ("Anrufbeantworter"-Tab).
+
+    Hebt neue (noch nicht gehoerte) Nachrichten optisch hervor, direkt anhand des
+    Box-eigenen is_new-Flags - anders als bei AllCallsListModel wird hier kein
+    lokal verfolgtes last_seen_at gebraucht, die Box ist fuer "neu/gehoert" allein
+    massgeblich (siehe VoicemailRepository.insert_or_update)."""
+
+    _columns = _VOICEMAIL_COLUMNS
+
+    def __init__(self, messages: list[VoicemailMessageRecord] | None = None) -> None:
+        super().__init__(messages)
+
+    def set_messages(self, messages: list[VoicemailMessageRecord]) -> None:
+        self._set_items(messages)
+
+    def message_at(self, row: int) -> VoicemailMessageRecord:
+        return self._item_at(row)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        message = self._items[index.row()]
+        if role == Qt.ItemDataRole.FontRole and message.is_new:
+            font = QFont()
+            font.setBold(True)
+            return font
+        if role == Qt.ItemDataRole.ForegroundRole and message.is_new:
+            return QColor(Qt.GlobalColor.red)
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        column = index.column()
+        if column == 0:
+            return _format_call_date(message.message_date)
+        if column == 1:
+            return voicemail_caller_display(message)
+        if column == 2:
+            return _format_duration(message.duration_seconds)
+        return None
+
+
 class DataclassSortProxy(QSortFilterProxyModel):
     """Sortiert nach typisierten Feldern der Quell-Dataclass statt der
     angezeigten Text-Repraesentation (verhindert z.B. lexikographische
@@ -417,6 +473,36 @@ def install_phonebook_call_context_menu(
                 submenu.addAction(n.number_raw).triggered.connect(
                     lambda checked=False, num=n.number_normalized: on_call(num)
                 )
+        menu.exec(table.viewport().mapToGlobal(pos))
+
+    table.customContextMenuRequested.connect(on_context_menu)
+
+
+def install_voicemail_context_menu(
+    table: QTableView,
+    proxy: QSortFilterProxyModel,
+    message_at: Callable[[int], VoicemailMessageRecord],
+    on_call: Callable[[str], None],
+    on_play: Callable[[VoicemailMessageRecord], None],
+    on_hide: Callable[[VoicemailMessageRecord], None],
+) -> None:
+    """Rechtsklick-Kontextmenü fuer Anrufbeantworter-Nachrichten: "Anrufen" (nur wenn
+    eine Nummer bekannt ist), "Abspielen", "Ausblenden" (lokales "Löschen" - siehe
+    VoicemailRepository.set_hidden, die Nachricht bleibt auf der Box unberührt)."""
+    table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def on_context_menu(pos) -> None:
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        message = message_at(proxy.mapToSource(index).row())
+        menu = QMenu(table)
+        if message.caller_number:
+            menu.addAction(f"Anrufen: {message.caller_number}").triggered.connect(
+                lambda: on_call(message.caller_number)
+            )
+        menu.addAction("Abspielen").triggered.connect(lambda: on_play(message))
+        menu.addAction("Ausblenden").triggered.connect(lambda: on_hide(message))
         menu.exec(table.viewport().mapToGlobal(pos))
 
     table.customContextMenuRequested.connect(on_context_menu)

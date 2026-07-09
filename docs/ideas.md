@@ -5,6 +5,15 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 
 ## Quick wins (reuse existing TR-064 plumbing)
 
+- **Real deletion of Anrufbeantworter messages** — the Anrufbeantworter tab
+  (shipped 2026-07-09) only ever hides a message locally (`is_hidden`); the
+  box itself exposes a real `DeleteMessage(NewIndex, NewMessageIndex)`
+  TR-064 action (confirmed against a real box, alongside the `MarkMessage`
+  action already used for the read-state sync) that was deliberately not
+  wired up — hiding was chosen as the safer default so a misclick can never
+  actually delete a message. Would need `FritzBoxClient.voicemail_delete()`
+  symmetric to the existing `voicemail_mark_read()`, plus swapping
+  "Ausblenden" for a real "Löschen" action (or offering both).
 - **Surface phonebook notes more prominently** — `notes` field already
   exists per local contact (`ContactEditDialog`). Also revisit the deferred
   backlog item from the missed-calls work: a per-contact "recent call
@@ -12,9 +21,6 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 
 ## Higher-effort, high-value
 
-- **Voicemail / Anrufbeantworter (TAM) integration** — TR-064 exposes the
-  box's answering-machine messages; list/play/delete in-app instead of
-  needing the box's own web UI. Mirrors what FRITZ!App Fon does.
 - **Call statistics dashboard** — busiest callers, calls/day trend, total
   talk time, missed-call rate over time. Data already in `calls` table;
   pure GUI addition (use the dataviz skill when building this).

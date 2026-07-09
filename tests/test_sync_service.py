@@ -5,7 +5,9 @@ from fritz_callhistory.db.repository import (
     ContactRepository,
     LocalPhonebookRepository,
     PhonebookRepository,
+    VoicemailRepository,
 )
+from fritz_callhistory.fritz.client import VoicemailMessage
 from fritz_callhistory.sync.service import SyncService, resolve_contact_names
 
 
@@ -35,9 +37,15 @@ def _make_call(
 
 
 class FakeClient:
-    def __init__(self, calls: list[Call] | None = None, phonebooks: dict | None = None) -> None:
+    def __init__(
+        self,
+        calls: list[Call] | None = None,
+        phonebooks: dict | None = None,
+        voicemail_messages: dict[int, list[VoicemailMessage]] | None = None,
+    ) -> None:
         self._calls = calls or []
         self._phonebooks = phonebooks or {}
+        self._voicemail_messages = voicemail_messages or {}
 
     def get_calls(self, *, days=None):
         return self._calls
@@ -48,14 +56,46 @@ class FakeClient:
     def phonebook_name_numbers(self, phonebook_id):
         return self._phonebooks[phonebook_id]
 
+    def voicemail_tam_indices(self):
+        return list(self._voicemail_messages.keys())
 
-def _service(connection, calls=None, phonebooks=None):
+    def voicemail_messages(self, tam_index):
+        return self._voicemail_messages[tam_index]
+
+
+def _service(connection, calls=None, phonebooks=None, voicemail_messages=None):
     return SyncService(
-        FakeClient(calls, phonebooks),
+        FakeClient(calls, phonebooks, voicemail_messages),
         ContactRepository(connection),
         CallRepository(connection),
         PhonebookRepository(connection),
         LocalPhonebookRepository(connection),
+        VoicemailRepository(connection),
+    )
+
+
+def _make_voicemail_message(
+    *,
+    tam_index: int = 0,
+    box_index: int = 0,
+    caller_number: str | None = "0171 2345678",
+    called_number: str | None = "06898123456",
+    date: str = "2026-06-01T10:00:00",
+    duration_seconds: int | None = 4,
+    name: str | None = None,
+    path: str = "/download.lua?path=/data/tam/rec/rec.0.000",
+    is_new: bool = True,
+) -> VoicemailMessage:
+    return VoicemailMessage(
+        tam_index=tam_index,
+        box_index=box_index,
+        caller_number=caller_number,
+        called_number=called_number,
+        date=date,
+        duration_seconds=duration_seconds,
+        name=name,
+        path=path,
+        is_new=is_new,
     )
 
 
@@ -235,3 +275,45 @@ def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection
     assert updated == 1
     contact = ContactRepository(connection).search("")[0]
     assert contact.display_name == "Lokaler Name"
+
+
+def test_sync_voicemail_inserts_new_messages(connection):
+    message = _make_voicemail_message()
+    service = _service(connection, voicemail_messages={0: [message]})
+
+    inserted = service.sync_voicemail()
+
+    assert inserted == 1
+    messages = VoicemailRepository(connection).list_visible()
+    assert len(messages) == 1
+    assert messages[0].box_path == message.path
+    assert messages[0].is_new is True
+
+
+def test_sync_voicemail_is_idempotent(connection):
+    message = _make_voicemail_message()
+    service = _service(connection, voicemail_messages={0: [message]})
+    service.sync_voicemail()
+
+    inserted = service.sync_voicemail()
+
+    assert inserted == 0
+    assert len(VoicemailRepository(connection).list_visible()) == 1
+
+
+def test_sync_voicemail_refreshes_is_new_without_touching_is_hidden(connection):
+    message = _make_voicemail_message(is_new=True)
+    service = _service(connection, voicemail_messages={0: [message]})
+    service.sync_voicemail()
+
+    repo = VoicemailRepository(connection)
+    repo.set_hidden(repo.list_visible()[0].id, True)
+
+    heard_message = _make_voicemail_message(is_new=False)
+    service_after_heard = _service(connection, voicemail_messages={0: [heard_message]})
+    service_after_heard.sync_voicemail()
+
+    all_messages = connection.execute("SELECT * FROM voicemail_messages").fetchall()
+    assert len(all_messages) == 1
+    assert bool(all_messages[0]["is_hidden"]) is True
+    assert bool(all_messages[0]["is_new"]) is False

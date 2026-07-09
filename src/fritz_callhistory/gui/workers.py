@@ -11,6 +11,7 @@ from fritz_callhistory.fritz.exceptions import FritzBoxError
 SyncFn = Callable[[], tuple[int, int]]
 ImportFromBoxFn = Callable[[], int]
 DialFn = Callable[[str], None]
+VoicemailAudioFn = Callable[[], bytes]
 
 
 class SyncWorker(QThread):
@@ -84,3 +85,28 @@ class DialWorker(QThread):
             self.dial_failed.emit(f"Unerwarteter Fehler: {exc}")
             return
         self.dial_succeeded.emit()
+
+
+class VoicemailAudioWorker(QThread):
+    """Holt die Audiodaten einer einzelnen Anrufbeantworter-Nachricht
+    (fritz/client.py's voicemail_audio()) in einem eigenen Thread - gleiche Form
+    wie DialWorker. *audio_fn* ist ein parameterloser Closure (der Pfad ist bereits
+    eingebrannt)."""
+
+    audio_ready = Signal(bytes)
+    audio_failed = Signal(str)
+
+    def __init__(self, audio_fn: VoicemailAudioFn, parent=None) -> None:
+        super().__init__(parent)
+        self._audio_fn = audio_fn
+
+    def run(self) -> None:
+        try:
+            data = self._audio_fn()
+        except FritzBoxError as exc:
+            self.audio_failed.emit(str(exc))
+            return
+        except Exception as exc:  # Thread darf nie stillschweigend sterben
+            self.audio_failed.emit(f"Unerwarteter Fehler: {exc}")
+            return
+        self.audio_ready.emit(data)

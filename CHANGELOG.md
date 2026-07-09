@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-09
+
+### Added
+
+- New "Anrufbeantworter" tab: lists the Fritz!Box's answering-machine messages (via the
+  `X_AVM-DE_TAM` TR-064 service), with in-app playback (right-click "Abspielen" or
+  double-click a row), "Anrufen" to call back, and "Ausblenden" to hide a message locally
+  (the message itself stays on the box; this is a local-only "delete" by design). New/unheard
+  messages are shown bold and red, mirroring the box's own read state; playing a message marks
+  it read on the box too, which shows up after the next sync.
+
 ## [0.3.0] - 2026-07-08
 
 ### Added

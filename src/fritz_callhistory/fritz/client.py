@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TypeVar
 
 import requests
@@ -74,6 +75,58 @@ class FritzPhonebookContact:
     name: str | None
     category: str | None
     numbers: list[FritzPhonebookNumber] = field(default_factory=list)
+
+
+@dataclass
+class VoicemailMessage:
+    tam_index: int
+    box_index: int  # <Index> - nicht stabil ueber Loeschungen hinweg, nur fuer Anzeige/Reihenfolge
+    caller_number: str | None
+    called_number: str | None
+    date: str  # ISO8601, umgewandelt aus der Box-Zeitstempelform "%d.%m.%y %H:%M"
+    duration_seconds: int | None
+    name: str | None
+    path: str  # relativer <Path>, z.B. "/download.lua?path=/data/tam/rec/rec.0.000" - Dedupe-Key
+    is_new: bool
+
+
+def _parse_duration_seconds(duration: str | None) -> int | None:
+    """Box liefert die Nachrichtendauer bereits als "M:SS"-String (verifiziert gegen
+    eine echte Box) - anders als bei regulaeren Anrufen ("H:MM", siehe fritzconnection's
+    timedelta_converter) und schliesst offenbar das feste Anruf-/Verbindungsgeraeusch am
+    Anfang/Ende der Aufnahme aus. Wird unveraendert uebernommen statt selbst aus der
+    Audiodatei berechnet - gleiches Vertrauensmodell wie bei Call.Duration."""
+    if not duration:
+        return None
+    minutes, seconds = duration.split(":", 1)
+    return int(minutes) * 60 + int(seconds)
+
+
+def _parse_message_date_iso(date: str) -> str:
+    """Box liefert "%d.%m.%y %H:%M" (gleiches Format wie fritzconnection.lib.fritzcall's
+    Call.Date) - fuer konsistente Speicherung/Sortierung in ISO8601 umgewandelt, wie
+    sync/service.py's _call_date_iso() es fuer reguläre Anrufe bereits tut."""
+    return datetime.strptime(date, "%d.%m.%y %H:%M").isoformat()
+
+
+def _parse_voicemail_messages(root: ET.Element, tam_index: int) -> list[VoicemailMessage]:
+    messages = []
+    for message_el in root.iter("Message"):
+        fields = {child.tag: (child.text or "").strip() for child in message_el}
+        messages.append(
+            VoicemailMessage(
+                tam_index=tam_index,
+                box_index=int(fields.get("Index", "0")),
+                caller_number=fields.get("Number") or None,
+                called_number=fields.get("Called") or None,
+                date=_parse_message_date_iso(fields.get("Date", "")),
+                duration_seconds=_parse_duration_seconds(fields.get("Duration")),
+                name=fields.get("Name") or None,
+                path=fields.get("Path", ""),
+                is_new=fields.get("New") == "1",
+            )
+        )
+    return messages
 
 
 def _parse_phonebook_contacts(root: ET.Element) -> list[FritzPhonebookContact]:
@@ -166,6 +219,101 @@ class FritzBoxClient:
     def phonebook_name_numbers(self, phonebook_id: int) -> list[tuple[str, list[str]]]:
         try:
             return _retry_network(self._phonebook.get_all_name_numbers, phonebook_id)
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+
+    def voicemail_tam_indices(self) -> list[int]:
+        """Ermittelt die aktivierten Anrufbeantworter-Slots (X_AVM-DE_TAM/GetList).
+
+        fritzconnection hat keine eigene Helper-Klasse fuer diesen Dienst (anders als
+        FritzCall/FritzPhonebook), daher direkter call_action(). GetList() braucht kein
+        Argument und liefert NewTAMList als eigenen, verschachtelten XML-String mit einem
+        <Item> je Box-Slot (die Box hat fest 5 Slots, Index 0-4)."""
+        try:
+            result = _retry_network(self._connection.call_action, "X_AVM-DE_TAM", "GetList")
+        except FritzAuthorizationError as exc:
+            raise FritzBoxPermissionError(
+                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
+                "Anrufliste und FRITZ!App Fon'"
+            ) from exc
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+        root = ET.fromstring(result["NewTAMList"])
+        return [
+            int(item.findtext("Index"))
+            for item in root.iter("Item")
+            if item.findtext("Enable") == "1"
+        ]
+
+    def voicemail_messages(self, tam_index: int) -> list[VoicemailMessage]:
+        """Nachrichtenliste eines Anrufbeantworter-Slots (X_AVM-DE_TAM/GetMessageList):
+        gleiches Muster wie phonebook_contacts_detailed() - Action liefert eine URL,
+        die per get_xml_root() abgerufen und selbst geparst wird (kein eingebauter
+        fritzconnection-Prozessor fuer diesen Dienst)."""
+        try:
+            result = _retry_network(
+                self._connection.call_action, "X_AVM-DE_TAM", "GetMessageList", NewIndex=tam_index
+            )
+            root = _retry_network(
+                get_xml_root,
+                result["NewURL"],
+                session=self._connection.session,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+            )
+        except FritzAuthorizationError as exc:
+            raise FritzBoxPermissionError(
+                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
+                "Anrufliste und FRITZ!App Fon'"
+            ) from exc
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+        return _parse_voicemail_messages(root, tam_index)
+
+    def voicemail_audio(self, path: str) -> bytes:
+        """Laedt die Audiodatei einer Nachricht (relativer *path* aus einer
+        VoicemailMessage, z.B. "/download.lua?path=/data/tam/rec/rec.0.000").
+
+        download.lua laeuft nur auf dem TR-064-Port (verifiziert: Port 80 liefert 404),
+        und verlangt dort eine gueltige Session-ID als Query-Parameter statt der
+        HTTP-Digest-Auth, die fuer SOAP-Aufrufe reicht. self._connection.http_interface
+        (fritzconnection's AHA-HTTP-Interface-Login) holt/erneuert diese Session-ID
+        selbst und haengt sie an - dessen call_url() ist zwar laut eigenem Docstring
+        auch fuer "undokumentierte Endpunkte" gedacht (weniger stabil als TR-064 SOAP),
+        aber die einzige offizielle Methode in fritzconnection, die den Login-Handshake
+        fuer einen selbst gewaehlten Pfad wie download.lua uebernimmt."""
+        query = path.split("?", 1)[1] if "?" in path else path
+        params = dict(pair.split("=", 1) for pair in query.split("&") if "=" in pair)
+        url = f"{self._connection.address}:{self._connection.port}/download.lua"
+        try:
+            response = _retry_network(self._connection.http_interface.call_url, url, params)
+        except FritzAuthorizationError as exc:
+            raise FritzBoxPermissionError(
+                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
+                "Anrufliste und FRITZ!App Fon'"
+            ) from exc
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+        return response.content
+
+    def voicemail_mark_read(self, tam_index: int, message_index: int) -> None:
+        """Markiert eine Nachricht auf der Box selbst als gelesen (X_AVM-DE_TAM/
+        MarkMessage) - verifiziert gegen eine echte Box, reversibel (NewMarkedAsRead
+        0/1). Wird beim Abspielen in der GUI aufgerufen, damit der "neu"-Zustand
+        konsistent mit der Box bleibt statt nur durch ein Handset aktualisierbar zu sein."""
+        try:
+            _retry_network(
+                self._connection.call_action,
+                "X_AVM-DE_TAM",
+                "MarkMessage",
+                NewIndex=tam_index,
+                NewMessageIndex=message_index,
+                NewMarkedAsRead=1,
+            )
+        except FritzAuthorizationError as exc:
+            raise FritzBoxPermissionError(
+                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
+                "Anrufliste und FRITZ!App Fon'"
+            ) from exc
         except _NETWORK_EXCEPTIONS as exc:
             raise FritzBoxConnectionError(str(exc)) from exc
 
