@@ -21,7 +21,7 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   `fritzconnection.lib.fritzcall.FritzCall.hangup()` (same class as the
   `.dial()` click-to-dial now uses, wraps `X_AVM-DE_DialHangup`) takes no
   target argument - it just ends whatever the box's Wählhilfe channel is
-  currentlydialing a
+  currently dialing a
   specific one of several numbers doing, so it'd be a `FritzBoxClient.hang_up()` method symmetric to
   `dial_number()`. Still needs a UI affordance, e.g. an "Auflegen" button
   shown only while `AllCallsView` is tracking a live (ringing/connected) call.
@@ -47,5 +47,35 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 - Backup/restore or "export DB + config" for moving to a new PC.
 - Keyboard shortcuts (e.g. `/` to focus search, `Ctrl+D` to dial selected
   contact).
-- A settings dialog instead of hand-editing the TOML config for sync
-  interval / phonebook IDs.
+- **Edit Fritz!Box connection details after first run** — the settings
+  dialog (Datei → Einstellungen…, shipped 2026-07-10) deliberately left
+  address/username/password out of scope; those still only get set once via
+  `CredentialsDialog`, which is only ever shown on first run (missing/invalid
+  stored credentials). Right now the only way to change the box address, the
+  Fritz!Box user, or rotate the password is to edit the TOML config /
+  keyring by hand or delete them so `CredentialsDialog` reappears. Folding
+  connection-details editing into the settings dialog (or reusing
+  `CredentialsDialog` from a menu entry) would close that gap — would also
+  need a "test connection" affordance, since a bad address/password here
+  isn't caught until the next sync.
+- **Apply settings changes without restarting** — the new settings dialog
+  saves `sync_interval_minutes`/`phonebook_ids`/`show_incoming_call_popup`
+  straight to the TOML config, but none of them take effect until the app is
+  restarted: the auto-sync `QTimer` interval and the phonebook IDs baked into
+  `sync_fn`'s closure (`app.py`) are both set up once at startup, with no
+  runtime-reconfiguration plumbing today. A real fix needs a setter on
+  `MainWindow` for the timer interval and a way to rebuild/replace the
+  `sync_fn`/`import_from_box_fn` closures when phonebook IDs change.
+- **Telefonbuch import/export** — `PhonebookTab`'s "Von Box importieren" is
+  one-way (box → local DB) and one-shot, not a general backup/exchange
+  format. No way exists to export the local Telefonbuch (e.g. vCard or CSV)
+  for backup or to move contacts into another address book, nor to import
+  from such a file (as opposed to importing straight from the box). Related
+  to, but more specific than, the "export DB + config" idea above.
+- **Phonebook picker has no offline fallback** — the settings dialog's
+  Telefonbücher picker needs a live box connection to fetch phonebook names
+  (`FritzBoxClient.phonebooks()`); if that fails or no credentials are
+  stored, the whole picker is disabled and `phonebook_ids` can't be changed
+  at all until connectivity is restored — even though the user might know
+  the numeric IDs already. A fallback manual-entry field (comma-separated
+  IDs, skipping the name lookup) would cover that case.

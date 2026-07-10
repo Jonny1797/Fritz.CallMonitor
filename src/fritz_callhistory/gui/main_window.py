@@ -7,13 +7,15 @@ import os
 import sqlite3
 
 from PySide6.QtCore import QThread, QTimer, Qt
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QStyle,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
 from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
@@ -36,8 +39,17 @@ from fritz_callhistory.gui.models import (
     install_tristate_sorting,
 )
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
+from fritz_callhistory.gui.settings_dialog import SettingsDialog
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn, VoicemailView
-from fritz_callhistory.gui.workers import DialFn, DialWorker, ImportFromBoxFn, SyncFn, SyncWorker
+from fritz_callhistory.gui.workers import (
+    DialFn,
+    DialWorker,
+    ImportFromBoxFn,
+    ListPhonebooksFn,
+    PhonebookListWorker,
+    SyncFn,
+    SyncWorker,
+)
 from fritz_callhistory.sync.normalize import normalize_number
 
 _SEARCH_DEBOUNCE_MS = 250
@@ -63,6 +75,8 @@ class MainWindow(QMainWindow):
         voicemail_audio_fn: AudioFetchFn | None = None,
         voicemail_mark_read_fn: VoicemailActionFn | None = None,
         voicemail_delete_fn: VoicemailActionFn | None = None,
+        config: Config | None = None,
+        list_phonebooks_fn: ListPhonebooksFn | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -72,6 +86,9 @@ class MainWindow(QMainWindow):
         self._sync_thread: SyncWorker | None = None
         self._dial_fn = dial_fn
         self._dial_thread: DialWorker | None = None
+        self._config = config or Config()
+        self._list_phonebooks_fn = list_phonebooks_fn
+        self._phonebook_list_thread: PhonebookListWorker | None = None
         self._close_requested = False
         self._shutdown_failsafe_timer: QTimer | None = None
 
@@ -194,6 +211,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._tabs)
         self.setCentralWidget(central)
         self.statusBar()
+
+        # Als self._xxx gehalten statt als lokale Variable: ohne eine
+        # bleibende Python-Referenz hat sich das QMenu/QAction-Objekt in der
+        # Praxis als vorzeitig von shiboken zerstört erwiesen (RuntimeError
+        # "Internal C++ object already deleted"), obwohl es über die Qt-
+        # Elternschaft (menuBar()) eigentlich am Leben gehalten werden sollte.
+        self._settings_action = QAction("Einstellungen…", self)
+        self._settings_action.triggered.connect(self._open_settings_dialog)
+        self._file_menu = self.menuBar().addMenu("Datei")
+        self._file_menu.addAction(self._settings_action)
 
         if auto_sync_interval_minutes and self._sync_fn is not None:
             self._auto_sync_timer = QTimer(self)
@@ -428,6 +455,31 @@ class MainWindow(QMainWindow):
         self._dial_thread.dial_succeeded.connect(lambda: self._on_dial_succeeded(number))
         self._dial_thread.dial_failed.connect(self._on_dial_failed)
         self._dial_thread.start()
+
+    def _open_settings_dialog(self) -> None:
+        dialog = SettingsDialog(self._config, parent=self)
+        if self._list_phonebooks_fn is None:
+            dialog.set_phonebooks_unavailable("Keine Zugangsdaten hinterlegt")
+        else:
+            # An MainWindow (self), nicht am Dialog gehängt: der Dialog ist nur
+            # so lange am Leben, wie exec() läuft, der Netzwerk-Fetch aber
+            # kann bis zum Timeout dauern - schliesst der Nutzer den Dialog
+            # vorher, würde ein am Dialog hängender QThread zerstört werden,
+            # während er noch läuft (SIGABRT). An MainWindow gehängt läuft er
+            # einfach im Hintergrund zu Ende; Qt trennt die Signal-Verbindung
+            # zum dann bereits zerstörten Dialog automatisch.
+            self._phonebook_list_thread = PhonebookListWorker(self._list_phonebooks_fn, parent=self)
+            self._phonebook_list_thread.finished_listing.connect(dialog.set_phonebooks)
+            self._phonebook_list_thread.listing_failed.connect(dialog.set_phonebooks_unavailable)
+            self._phonebook_list_thread.start()
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._config = dialog.save(self._config)
+            QMessageBox.information(
+                self,
+                "Einstellungen gespeichert",
+                "Die Änderungen werden erst nach einem Neustart der App wirksam.",
+            )
 
     def _on_dial_succeeded(self, number: str) -> None:
         self.statusBar().showMessage(f"Anruf ausgelöst: {number}", 5000)

@@ -234,6 +234,18 @@ class FritzBoxClient:
         except _NETWORK_EXCEPTIONS as exc:
             raise FritzBoxConnectionError(str(exc)) from exc
 
+    def phonebooks(self) -> list[tuple[int, str]]:
+        """Liefert (id, Anzeigename) für jedes Telefonbuch der Box."""
+        try:
+            return _retry_network(
+                lambda: [
+                    (pid, self._phonebook.phonebook_info(pid)["name"])
+                    for pid in self._phonebook.phonebook_ids
+                ]
+            )
+        except _NETWORK_EXCEPTIONS as exc:
+            raise FritzBoxConnectionError(str(exc)) from exc
+
     def phonebook_name_numbers(self, phonebook_id: int) -> list[tuple[str, list[str]]]:
         try:
             return _retry_network(self._phonebook.get_all_name_numbers, phonebook_id)

@@ -131,6 +131,26 @@ def test_phonebook_ids_translates_connection_error(mocker):
         client.phonebook_ids()
 
 
+def test_phonebooks_returns_id_name_pairs(mocker):
+    fake_phonebook = mocker.Mock()
+    type(fake_phonebook).phonebook_ids = mocker.PropertyMock(return_value=[0, 1])
+    fake_phonebook.phonebook_info.side_effect = lambda pid: {"name": f"Buch {pid}"}
+    client = _make_client(phonebook=fake_phonebook)
+
+    assert client.phonebooks() == [(0, "Buch 0"), (1, "Buch 1")]
+
+
+def test_phonebooks_translates_connection_error(mocker):
+    fake_phonebook = mocker.Mock()
+    type(fake_phonebook).phonebook_ids = mocker.PropertyMock(
+        side_effect=FritzConnectionException("down")
+    )
+    client = _make_client(phonebook=fake_phonebook)
+
+    with pytest.raises(FritzBoxConnectionError):
+        client.phonebooks()
+
+
 _PHONEBOOK_XML = """<?xml version="1.0" encoding="utf-8"?>
 <phonebooks>
   <phonebook name="Telefonbuch">

@@ -12,6 +12,7 @@ SyncFn = Callable[[], tuple[int, int]]
 ImportFromBoxFn = Callable[[], int]
 DialFn = Callable[[str], None]
 VoicemailAudioFn = Callable[[], bytes]
+ListPhonebooksFn = Callable[[], list[tuple[int, str]]]
 
 
 class SyncWorker(QThread):
@@ -110,6 +111,30 @@ class VoicemailActionWorker(QThread):
             self.action_failed.emit(f"Unerwarteter Fehler: {exc}")
             return
         self.action_succeeded.emit()
+
+
+class PhonebookListWorker(QThread):
+    """Holt die verfügbaren Telefonbücher (fritz/client.py's phonebooks()) in
+    einem eigenen Thread - gleiche Form wie SyncWorker. Wird von MainWindow
+    (nicht von SettingsDialog!) gehalten, siehe _open_settings_dialog()."""
+
+    finished_listing = Signal(list)  # list[tuple[int, str]]
+    listing_failed = Signal(str)
+
+    def __init__(self, list_fn: ListPhonebooksFn, parent=None) -> None:
+        super().__init__(parent)
+        self._list_fn = list_fn
+
+    def run(self) -> None:
+        try:
+            phonebooks = self._list_fn()
+        except FritzBoxError as exc:
+            self.listing_failed.emit(str(exc))
+            return
+        except Exception as exc:  # Thread darf nie stillschweigend sterben
+            self.listing_failed.emit(f"Unerwarteter Fehler: {exc}")
+            return
+        self.finished_listing.emit(phonebooks)
 
 
 class VoicemailAudioWorker(QThread):

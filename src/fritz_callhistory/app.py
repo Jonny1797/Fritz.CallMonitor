@@ -24,7 +24,7 @@ from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 from fritz_callhistory.gui.main_window import MainWindow
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn
-from fritz_callhistory.gui.workers import DialFn, ImportFromBoxFn, SyncFn
+from fritz_callhistory.gui.workers import DialFn, ImportFromBoxFn, ListPhonebooksFn, SyncFn
 from fritz_callhistory.paths import database_file
 from fritz_callhistory.sync.normalize import normalize_number
 from fritz_callhistory.sync.service import SyncService
@@ -159,6 +159,20 @@ def _build_dial_fn(cfg: config_module.Config) -> DialFn | None:
     return dial_fn
 
 
+def _build_list_phonebooks_fn(cfg: config_module.Config) -> ListPhonebooksFn | None:
+    """Baut die Funktion für den Telefonbuch-Picker im SettingsDialog
+    (PhonebookListWorker) - gleiches Verbindungsaufbau-Muster wie _build_dial_fn."""
+    password = credentials.get_password(cfg.username) if cfg.username else None
+    if not cfg.username or not password:
+        return None
+
+    def list_phonebooks_fn() -> list[tuple[int, str]]:
+        client = FritzBoxClient(cfg.address, cfg.username, password)
+        return client.phonebooks()
+
+    return list_phonebooks_fn
+
+
 def _resolve_box_index(client: FritzBoxClient, message: VoicemailMessageRecord) -> int | None:
     """box_index ist nicht stabil über Löschungen hinweg (siehe fritz/client.py's
     VoicemailMessage.box_index-Kommentar) und wird deshalb nicht in der DB
@@ -269,6 +283,8 @@ def main() -> int:
         voicemail_audio_fn=_build_voicemail_audio_fn(cfg),
         voicemail_mark_read_fn=_build_voicemail_mark_read_fn(cfg),
         voicemail_delete_fn=_build_voicemail_delete_fn(cfg),
+        config=cfg,
+        list_phonebooks_fn=_build_list_phonebooks_fn(cfg),
     )
     window.show()
 

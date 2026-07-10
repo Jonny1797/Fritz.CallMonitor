@@ -1,7 +1,8 @@
 import threading
 
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton
 
+from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
 from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
@@ -956,3 +957,72 @@ def test_single_click_on_all_calls_row_no_longer_navigates(qtbot, connection):
     window._all_calls_view._table.clicked.emit(window._all_calls_view._model.index(0, 2))
 
     assert window._tabs.currentIndex() == 0  # kein Tabwechsel durch Einfachklick
+
+
+def test_datei_menu_has_settings_action(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    # .menu() muss ausserhalb des Generators gebunden werden - sonst hat sich
+    # der zurückgegebene QMenu-Wrapper in der Praxis als vorzeitig von
+    # shiboken zerstört erwiesen (RuntimeError "Internal C++ object already
+    # deleted"), obwohl dieselbe Instanz über self._file_menu am Leben bleibt.
+    file_action = next(a for a in window.menuBar().actions() if a.text() == "Datei")
+    file_menu = file_action.menu()
+    assert any(action.text() == "Einstellungen…" for action in file_menu.actions())
+
+
+def test_open_settings_dialog_saves_config_and_shows_restart_notice(qtbot, connection, mocker):
+    mock_exec = mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Accepted,
+    )
+    new_config = Config(sync_interval_minutes=99)
+    mocker.patch("fritz_callhistory.gui.main_window.SettingsDialog.save", return_value=new_config)
+    mock_information = mocker.patch("fritz_callhistory.gui.main_window.QMessageBox.information")
+
+    window = MainWindow(connection, list_phonebooks_fn=None)
+    qtbot.addWidget(window)
+
+    window._open_settings_dialog()
+
+    mock_exec.assert_called_once()
+    mock_information.assert_called_once()
+    assert window._config is new_config
+
+
+def test_open_settings_dialog_without_list_phonebooks_fn_marks_unavailable(qtbot, connection, mocker):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    mock_set_unavailable = mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.set_phonebooks_unavailable"
+    )
+    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
+
+    window = MainWindow(connection, list_phonebooks_fn=None)
+    qtbot.addWidget(window)
+
+    window._open_settings_dialog()
+
+    mock_set_unavailable.assert_called_once()
+    mock_worker_cls.assert_not_called()
+
+
+def test_open_settings_dialog_starts_phonebook_list_worker_when_available(qtbot, connection, mocker):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
+    mock_worker = mock_worker_cls.return_value
+
+    list_phonebooks_fn = mocker.Mock(return_value=[(0, "Telefonbuch")])
+    window = MainWindow(connection, list_phonebooks_fn=list_phonebooks_fn)
+    qtbot.addWidget(window)
+
+    window._open_settings_dialog()
+
+    mock_worker_cls.assert_called_once_with(list_phonebooks_fn, parent=window)
+    mock_worker.start.assert_called_once()

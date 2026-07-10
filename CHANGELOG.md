@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-10
+
+### Added
+
+- Settings dialog (Datei → Einstellungen…) for the sync interval, which phonebooks to
+  include, and the incoming-call popup toggle — previously only editable by hand-editing
+  the TOML config file. Changes are saved immediately but require an app restart to take
+  effect, since the sync interval and phonebook selection are still wired up only once at
+  startup.
+
 ## [0.5.1] - 2026-07-09
 
 ### Changed
