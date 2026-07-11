@@ -28,7 +28,7 @@ def test_show_contact_lists_calls_newest_first(qtbot, connection):
 
     assert widget._call_model.rowCount() == 2
     assert "Max Mustermann" in widget._title_label.text()
-    assert "+491234567" in widget._subtitle_label.text()
+    assert "+49 1234567" in widget._subtitle_label.text()
 
 
 def test_clear_resets_widget(qtbot, connection):

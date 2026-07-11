@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their text: typing in one mirrors into the other, so switching the
   "Gruppieren" toggle no longer resets or duplicates what you were searching
   for.
+- Every place a phone number is shown as text (contact call history, Alle
+  Anrufe, Anrufbeantworter, Telefonbuch, the "Anrufen: …" context menu, the
+  incoming-call tray/popup, and dial status-bar messages) now uses the same
+  human-readable `+49 176 12345678`-style spacing instead of a mix of raw
+  and unformatted numbers. Dialing, the phonebook, and search still use the
+  unformatted number underneath - only the displayed text changed.
+
+### Fixed
+
+- Grouped mode's contact call history ("Nummer" column) showed the Fritz!Box's
+  raw national-format number (e.g. `0176123456`) instead of the `+49…`
+  formatting used everywhere else.
+- Searching Alle Anrufe or the grouped contact list by a number's national
+  form (e.g. `0176…`) found nothing, since numbers are stored in E.164
+  (`+49176…`); the search now also matches national (leading `0`) and
+  `00`-international queries against the stored number.
 - Tooltips on the "Datum" and "Dauer" column headers in the call tables (Alle
   Anrufe and the contact detail history), explaining that the Fritz!Box only
   reports call timestamps and durations with minute precision (no seconds).

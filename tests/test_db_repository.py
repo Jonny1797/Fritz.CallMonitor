@@ -28,6 +28,44 @@ def test_contact_search_matches_name_and_number(connection):
     assert contacts.search("does-not-exist") == []
 
 
+def test_contact_search_finds_mobile_number_by_national_leading_zero(connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49176123456")
+
+    assert [c.id for c in contacts.search("0176")] == [contact_id]
+    assert [c.id for c in contacts.search("0176123456")] == [contact_id]
+
+
+def test_contact_search_finds_landline_number_by_national_leading_zero(connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+4989123456")
+    contacts.upsert("+4930123456")
+
+    assert [c.id for c in contacts.search("089123456")] == [contact_id]
+
+
+def test_contact_search_finds_number_by_00_international_prefix(connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49176123456")
+
+    assert [c.id for c in contacts.search("0049176123456")] == [contact_id]
+
+
+def test_contact_search_strips_separators_from_national_query(connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49176123456")
+
+    assert [c.id for c in contacts.search("0176 123456")] == [contact_id]
+
+
+def test_contact_search_by_name_with_space_still_matches_display_name(connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+
+    assert [c.id for c in contacts.search("Max Muster")] == [contact_id]
+
+
 def test_find_by_number_returns_matching_contact(connection):
     contacts = ContactRepository(connection)
     contact_id = contacts.upsert("+491234567")
@@ -300,6 +338,19 @@ def test_all_calls_search_combined_with_date_range(connection):
 
     assert [r.call_date for r in results] == ["2026-06-05T10:00:00"]
     assert results[0].contact_display_name == "Max Mustermann"
+
+
+def test_all_calls_search_finds_number_by_national_leading_zero(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+49176123456")
+    contact_b = contacts.upsert("+492222222")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    results = calls.all_calls(search="0176")
+
+    assert [r.contact_primary_number for r in results] == ["+49176123456"]
 
 
 def test_all_calls_search_empty_string_returns_all(connection):

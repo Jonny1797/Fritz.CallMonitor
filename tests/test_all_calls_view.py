@@ -67,7 +67,7 @@ def test_name_number_column_falls_back_to_number_without_display_name(qtbot, con
     qtbot.addWidget(view)
 
     index = view._model.index(0, 2)
-    assert view._model.data(index) == "+491234567"
+    assert view._model.data(index) == "+49 1234567"
 
 
 def test_name_number_column_shows_anonymous_label(qtbot, connection):

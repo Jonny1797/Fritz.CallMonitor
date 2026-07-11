@@ -268,7 +268,7 @@ def test_phonebook_contact_list_model_columns(qtbot):
     model = PhonebookContactListModel([_local_phonebook_contact()])
 
     assert model.data(model.index(0, 0)) == "Max Mustermann"
-    assert model.data(model.index(0, 1)) == "+491234567 (mobile), 030 123 (home)"
+    assert model.data(model.index(0, 1)) == "+49 1234567 (mobile), +49 30 123 (home)"
     assert model.data(model.index(0, 2)) == "VIP"
 
 
@@ -532,7 +532,7 @@ def test_install_phonebook_call_context_menu_multiple_no_default_builds_submenu_
     assert menu.actions == []
     assert len(menu.submenus) == 1
     submenu = menu.submenus[0]
-    assert [a.text for a in submenu.actions] == ["+491234567", "+499876543"]
+    assert [a.text for a in submenu.actions] == ["+49 1234567", "+49 9876 543"]
     on_call.assert_not_called()
 
     submenu.actions[1].triggered.callback()
@@ -573,9 +573,9 @@ def test_install_phonebook_call_context_menu_multiple_with_default_shows_standar
     table.customContextMenuRequested.emit(rect.center())
 
     menu = created[0]
-    assert [a.text for a in menu.actions] == ["Standardnummer anrufen: +499876543"]
+    assert [a.text for a in menu.actions] == ["Standardnummer anrufen: +49 9876 543"]
     assert len(menu.submenus) == 1
-    assert [a.text for a in menu.submenus[0].actions] == ["+491234567", "+499876543"]
+    assert [a.text for a in menu.submenus[0].actions] == ["+49 1234567", "+49 9876 543"]
     # exec() (bereits von on_context_menu selbst aufgerufen) löst die einzige
     # Top-Level-Action automatisch aus, siehe _FakeMenu.exec().
     on_call.assert_called_once_with("+499876543")
@@ -640,7 +640,7 @@ def test_voicemail_caller_column_prefers_name_over_number(qtbot):
 def test_voicemail_caller_column_falls_back_to_number_without_name(qtbot):
     model = VoicemailListModel([_voicemail_message(raw_name=None, caller_number="+491712345678")])
 
-    assert model.data(model.index(0, 1)) == "+491712345678"
+    assert model.data(model.index(0, 1)) == "+49 171 2345678"
 
 
 def test_voicemail_caller_column_shows_placeholder_when_anonymous(qtbot):

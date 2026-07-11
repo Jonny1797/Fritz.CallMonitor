@@ -36,3 +36,17 @@ def _fallback(raw: str) -> str:
     (z.B. interne Durchwahlen, Kurzwahlen, Notrufnummern)."""
     digits = "".join(ch for ch in raw if ch.isdigit() or ch == "+")
     return digits or ANONYMOUS_NUMBER
+
+
+def format_number_display(number: str | None, region: str = "DE") -> str | None:
+    """Menschenlesbar formatierte Darstellung einer Rufnummer (libphonenumber-
+    Ländermetadaten, z.B. "+49 176 12345678") - NUR fürs Anzeigen. Niemals für
+    Wahlvorgänge, DB-Vergleiche/Suche oder Sortierschlüssel verwenden, dafür
+    weiterhin die unformatierte/normalisierte Nummer."""
+    if not number or number == ANONYMOUS_NUMBER:
+        return number
+    try:
+        parsed = phonenumbers.parse(number, region)
+    except phonenumbers.NumberParseException:
+        return number
+    return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL)

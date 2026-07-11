@@ -17,7 +17,7 @@ from fritz_callhistory.gui.models import (
     install_tristate_sorting,
     port_device_display,
 )
-from fritz_callhistory.sync.normalize import ANONYMOUS_NUMBER
+from fritz_callhistory.sync.normalize import ANONYMOUS_NUMBER, format_number_display
 
 _NUMBER_COLUMN = 2
 
@@ -96,7 +96,9 @@ class ContactDetailWidget(QWidget):
     def show_contact(self, contact: Contact) -> None:
         name = contact_display_label(contact.is_anonymous, contact.display_name)
         self._title_label.setText(name)
-        self._subtitle_label.setText(f"{contact.primary_number}  ·  {contact.call_count} Anrufe")
+        self._subtitle_label.setText(
+            f"{format_number_display(contact.primary_number)}  ·  {contact.call_count} Anrufe"
+        )
         self._call_model.set_calls(self._calls_repo.for_contact(contact.id))
 
     def _on_call_table_double_clicked(self, index: QModelIndex) -> None:

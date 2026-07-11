@@ -6,9 +6,29 @@ mit voller Kontrolle über die Such-Queries.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
+
+_NUMBER_SEARCH_SEPARATORS = str.maketrans("", "", " -()/")
+_NUMBER_SEARCH_PATTERN = re.compile(r"\+?[0-9]+")
+
+
+def _number_search_patterns(query: str) -> list[str]:
+    """Zusätzliche LIKE-Muster, damit z.B. "0176" auch in E.164-normalisierten
+    Nummern wie "+49176123456" gefunden wird - die DB speichert stets E.164,
+    aber ein Suchfeld bekommt naheliegenderweise oft die Nummer in nationaler
+    (oder international mit führenden Nullen statt "+") Schreibweise."""
+    patterns = [f"%{query}%"]
+    cleaned = query.translate(_NUMBER_SEARCH_SEPARATORS)
+    if not _NUMBER_SEARCH_PATTERN.fullmatch(cleaned or ""):
+        return patterns
+    if cleaned.startswith("00") and len(cleaned) > 4:
+        patterns.append(f"%+{cleaned[2:]}%")
+    elif cleaned.startswith("0") and len(cleaned) > 3:
+        patterns.append(f"%+49{cleaned[1:]}%")
+    return patterns
 
 
 @dataclass
@@ -105,10 +125,14 @@ class ContactRepository:
         return rows[0] if rows else None
 
     def search(self, query: str = "") -> list[Contact]:
-        pattern = f"%{query}%"
+        name_pattern = f"%{query}%"
+        number_patterns = _number_search_patterns(query)
+        where = "(c.display_name LIKE ? OR {})".format(
+            " OR ".join(["c.primary_number LIKE ?"] * len(number_patterns))
+        )
         return self._query(
-            "c.display_name LIKE ? OR c.primary_number LIKE ?",
-            (pattern, pattern),
+            where,
+            (name_pattern, *number_patterns),
             order_by="ORDER BY last_call_date DESC",
         )
 
@@ -210,9 +234,14 @@ class CallRepository:
         if search:
             # Geklammert, da sonst ein unparenthesiertes OR aus den anderen
             # (per AND verknüpften) Bedingungen ausbrechen würde.
-            conditions.append("(contacts.display_name LIKE ? OR contacts.primary_number LIKE ?)")
-            pattern = f"%{search}%"
-            params.extend([pattern, pattern])
+            number_patterns = _number_search_patterns(search)
+            conditions.append(
+                "(contacts.display_name LIKE ? OR {})".format(
+                    " OR ".join(["contacts.primary_number LIKE ?"] * len(number_patterns))
+                )
+            )
+            params.append(f"%{search}%")
+            params.extend(number_patterns)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         # Explizite Spaltenliste mit Aliassen statt calls.*/contacts.*: beide

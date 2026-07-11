@@ -258,7 +258,7 @@ def test_on_ring_shows_number_for_unknown_contact(qtbot, connection, mocker):
     window._on_ring("0", "030 1234567", "069987654")
 
     args = show_message.call_args.args
-    assert args[1] == "+49301234567"
+    assert args[1] == "+49 30 1234567"
 
 
 def test_on_ring_shows_anonymous_for_suppressed_number(qtbot, connection, mocker):
@@ -485,7 +485,7 @@ def test_dial_number_shows_success_message_and_calls_dial_fn(qtbot, connection):
 
     qtbot.waitUntil(lambda: "ausgelöst" in window.statusBar().currentMessage(), timeout=2000)
     assert dialed == ["+491234567"]
-    assert "+491234567" in window.statusBar().currentMessage()
+    assert "+49 1234567" in window.statusBar().currentMessage()
 
 
 def test_phonebook_tab_call_requested_is_wired_to_dial_number(qtbot, connection):

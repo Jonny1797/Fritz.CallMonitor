@@ -17,6 +17,7 @@ from fritz_callhistory.db.repository import (
     LocalPhonebookContact,
     VoicemailMessageRecord,
 )
+from fritz_callhistory.sync.normalize import format_number_display
 
 _MISSED_CALL_TYPE = 2
 
@@ -205,7 +206,9 @@ class PhonebookContactListModel(_SimpleTableModel):
         if column == 1:
             if not contact.numbers:
                 return "-"
-            return ", ".join(f"{n.number_raw} ({n.number_type})" for n in contact.numbers)
+            return ", ".join(
+                f"{format_number_display(n.number_raw)} ({n.number_type})" for n in contact.numbers
+            )
         if column == 2:
             return contact.notes or "-"
         return None
@@ -236,7 +239,7 @@ class CallListModel(_SimpleTableModel):
         if column == 1:
             return _call_type_display(call.call_type)
         if column == 2:
-            return call_number(call)
+            return format_number_display(call_number(call))
         if column == 3:
             return _format_duration(call.duration_seconds)
         if column == 4:
@@ -305,7 +308,9 @@ class AllCallsListModel(_SimpleTableModel):
             return _call_type_display(call.call_type)
         if column == 2:
             return contact_display_label(
-                call.contact_is_anonymous, call.contact_display_name, call.contact_primary_number
+                call.contact_is_anonymous,
+                call.contact_display_name,
+                format_number_display(call.contact_primary_number),
             )
         if column == 3:
             return _format_duration(call.duration_seconds)
@@ -318,7 +323,7 @@ def voicemail_caller_display(message: VoicemailMessageRecord) -> str:
     if message.raw_name:
         return message.raw_name
     if message.caller_number:
-        return message.caller_number
+        return format_number_display(message.caller_number)
     return "Anonym / unterdrückt"
 
 
@@ -459,7 +464,9 @@ def install_call_context_menu(
         if not number:
             return
         menu = QMenu(table)
-        menu.addAction(f"Anrufen: {number}").triggered.connect(lambda: on_call(number))
+        menu.addAction(f"Anrufen: {format_number_display(number)}").triggered.connect(
+            lambda: on_call(number)
+        )
         menu.exec(table.viewport().mapToGlobal(pos))
 
     table.customContextMenuRequested.connect(on_context_menu)
@@ -491,20 +498,20 @@ def install_phonebook_call_context_menu(
         menu = QMenu(table)
         if len(numbers) == 1:
             number = numbers[0]
-            menu.addAction(f"Anrufen: {number.number_raw}").triggered.connect(
+            menu.addAction(f"Anrufen: {format_number_display(number.number_raw)}").triggered.connect(
                 lambda: on_call(number.number_normalized)
             )
         else:
             default = next((n for n in numbers if n.is_default), None)
             if default is not None:
                 menu.addAction(
-                    f"Standardnummer anrufen: {default.number_raw}"
+                    f"Standardnummer anrufen: {format_number_display(default.number_raw)}"
                 ).triggered.connect(lambda: on_call(default.number_normalized))
                 submenu = menu.addMenu("Nummer auswählen")
             else:
                 submenu = menu.addMenu("Anrufen")
             for n in numbers:
-                submenu.addAction(n.number_raw).triggered.connect(
+                submenu.addAction(format_number_display(n.number_raw)).triggered.connect(
                     lambda checked=False, num=n.number_normalized: on_call(num)
                 )
         menu.exec(table.viewport().mapToGlobal(pos))

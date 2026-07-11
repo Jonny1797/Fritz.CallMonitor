@@ -37,7 +37,7 @@ from fritz_callhistory.gui.workers import (
     SyncFn,
     SyncWorker,
 )
-from fritz_callhistory.sync.normalize import normalize_number
+from fritz_callhistory.sync.normalize import format_number_display, normalize_number
 
 # Letzte Absicherung für closeEvent(): SyncWorker/ImportFromBoxWorker haben
 # in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
@@ -268,7 +268,11 @@ class MainWindow(QMainWindow):
             message = "Unbekannte / unterdrückte Nummer"
         else:
             contact = self._contacts_repo.find_by_number(normalized)
-            message = contact.display_name if (contact and contact.display_name) else normalized
+            message = (
+                contact.display_name
+                if (contact and contact.display_name)
+                else format_number_display(normalized)
+            )
             contact_id = contact.id if contact else None
             local_contact = self._local_phonebook_repo.find_by_number(normalized)
             notes = local_contact.notes if local_contact else None
@@ -277,7 +281,11 @@ class MainWindow(QMainWindow):
         )
         if self._show_incoming_call_popup:
             self._show_incoming_call_window(
-                connection_id, message, "" if is_anonymous else normalized, notes, contact_id
+                connection_id,
+                message,
+                "" if is_anonymous else format_number_display(normalized),
+                notes,
+                contact_id,
             )
 
     def _show_incoming_call_window(
@@ -356,7 +364,7 @@ class MainWindow(QMainWindow):
         if self._dial_thread is not None and self._dial_thread.isRunning():
             self.statusBar().showMessage("Es läuft bereits ein Anruf-Versuch …", 5000)
             return
-        self.statusBar().showMessage(f"Rufe {number} an …")
+        self.statusBar().showMessage(f"Rufe {format_number_display(number)} an …")
 
         self._dial_thread = DialWorker(lambda: self._dial_fn(number), parent=self)
         self._dial_thread.dial_succeeded.connect(lambda: self._on_dial_succeeded(number))
@@ -389,7 +397,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_dial_succeeded(self, number: str) -> None:
-        self.statusBar().showMessage(f"Anruf ausgelöst: {number}", 5000)
+        self.statusBar().showMessage(f"Anruf ausgelöst: {format_number_display(number)}", 5000)
 
     def _on_dial_failed(self, message: str) -> None:
         self.statusBar().showMessage(f"Anruf fehlgeschlagen: {message}", 8000)
