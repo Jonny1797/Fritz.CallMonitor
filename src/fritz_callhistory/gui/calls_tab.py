@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import date, datetime
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QStackedWidget, QStyle, QVBoxLayout, QWidget
 
 from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.contacts_view import GroupedContactsView
@@ -38,15 +38,35 @@ class CallsTab(QWidget):
         )
         self.contacts_view = GroupedContactsView(connection)
 
+        # Bewusst NICHT setCheckable(True): der native "checked"-Look bleibt
+        # dauerhaft aktiv (sunken/hervorgehoben), nicht nur während des
+        # Klicks selbst - das wirkt wie permanent gedrückt. Ein
+        # QSS-Override dagegen bringt Checked/Unchecked zwar auf dieselbe
+        # Boxgröße, macht dafür aber BEIDE Zustände dauerhaft flach/umrandet
+        # statt des nativen, erhabenen Buttons wie bei den Nachbarbuttons
+        # (Heute/Alle/...) - wirkt dann wieder wie permanent gedrückt, nur
+        # in beiden Zuständen statt nur im aktiven. Deshalb stattdessen ein
+        # gewöhnlicher (nicht anschaltbarer) Button, dessen "gedrückt"-Optik
+        # rein transient beim tatsächlichen Klick erscheint; der
+        # Gruppierungs-Status selbst wird in self._grouped gehalten und nur
+        # über den Labeltext sichtbar gemacht (siehe _set_grouped).
         self._group_toggle = QPushButton("Gruppieren")
-        self._group_toggle.setCheckable(True)
-        self._group_toggle.toggled.connect(self._on_group_toggled)
+        self._group_toggle.clicked.connect(self._toggle_grouped)
+        self._grouped = False
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self.all_calls_view)
         self._stack.addWidget(self.contacts_view)
 
+        # Anders als AllCallsView/GroupedContactsView (eigene Widgets mit
+        # eigenem QVBoxLayout(self), die dadurch eine zweite, gestapelte
+        # Standardmarge zum Fensterrand beitragen) ist toggle_row nur ein
+        # verschachteltes QHBoxLayout ohne eigene Marge - ohne diese
+        # Angleichung wirkt der Button dadurch weniger eingerückt als die
+        # Such-/Filterzeile eine Ebene darunter.
         toggle_row = QHBoxLayout()
+        left_margin = self.style().pixelMetric(QStyle.PixelMetric.PM_LayoutLeftMargin)
+        toggle_row.setContentsMargins(left_margin, 0, 0, 0)
         toggle_row.addWidget(self._group_toggle)
         toggle_row.addStretch()
 
@@ -65,13 +85,18 @@ class CallsTab(QWidget):
     def new_missed_calls_count(self) -> int:
         return self.all_calls_view.new_missed_calls_count
 
-    def _on_group_toggled(self, checked: bool) -> None:
-        self._stack.setCurrentIndex(_GROUPED_PAGE if checked else _FLAT_PAGE)
-        if checked:
+    def _toggle_grouped(self) -> None:
+        self._set_grouped(not self._grouped)
+
+    def _set_grouped(self, grouped: bool) -> None:
+        self._grouped = grouped
+        self._group_toggle.setText("Gruppierung aufheben" if grouped else "Gruppieren")
+        self._stack.setCurrentIndex(_GROUPED_PAGE if grouped else _FLAT_PAGE)
+        if grouped:
             self.contacts_view.reload_contacts()
 
     def show_contact(self, contact_id: int) -> None:
-        self._group_toggle.setChecked(True)
+        self._set_grouped(True)
         self.contacts_view.show_contact(contact_id)
 
     def reload_contacts(self) -> None:

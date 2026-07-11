@@ -33,7 +33,7 @@ from fritz_callhistory.gui.models import (
 )
 
 _SEARCH_DEBOUNCE_MS = 250
-_CONTACT_PHONEBOOK_COLUMNS = (0, 1)  # Name, Nummer
+_CONTACT_NAME_COLUMN = 0
 
 
 class GroupedContactsView(QWidget):
@@ -57,9 +57,8 @@ class GroupedContactsView(QWidget):
             row_getter=self._contact_model.contact_at,
             key_fns={
                 0: lambda c: (c.display_name or "").lower(),
-                1: lambda c: c.primary_number,
-                2: lambda c: c.last_call_date,
-                3: lambda c: c.call_count,
+                1: lambda c: c.last_call_date,
+                2: lambda c: c.call_count,
             },
         )
         self._contact_proxy.setSourceModel(self._contact_model)
@@ -98,8 +97,8 @@ class GroupedContactsView(QWidget):
         splitter = QSplitter()
         splitter.addWidget(self._table)
         splitter.addWidget(self._detail)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._search_edit)
@@ -130,7 +129,7 @@ class GroupedContactsView(QWidget):
             self._table.selectRow(proxy_row)
 
     def _on_contact_table_double_clicked(self, index) -> None:
-        if index.column() not in _CONTACT_PHONEBOOK_COLUMNS:
+        if index.column() != _CONTACT_NAME_COLUMN:
             return
         source_row = self._contact_proxy.mapToSource(index).row()
         contact = self._contact_model.contact_at(source_row)

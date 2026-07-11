@@ -190,7 +190,7 @@ def test_contact_list_model_letzter_kontakt_uses_human_readable_date(qtbot):
     )
     model = ContactListModel([contact])
 
-    assert model.data(model.index(0, 2)) == "03.07.2026, 14:22"
+    assert model.data(model.index(0, 1)) == "03.07.2026, 14:22"
 
 
 def test_contact_list_model_letzter_kontakt_falls_back_to_dash(qtbot):
@@ -204,7 +204,7 @@ def test_contact_list_model_letzter_kontakt_falls_back_to_dash(qtbot):
     )
     model = ContactListModel([contact])
 
-    assert model.data(model.index(0, 2)) == "-"
+    assert model.data(model.index(0, 1)) == "-"
 
 
 @pytest.mark.parametrize(

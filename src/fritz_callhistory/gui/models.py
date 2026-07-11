@@ -27,7 +27,7 @@ _MISSED_CALL_TYPE = 2
 LIVE_RINGING_CALL_TYPE = -1
 LIVE_CONNECTED_CALL_TYPE = -2
 
-_CONTACT_COLUMNS = ("Name", "Nummer", "Letzter Kontakt", "Anrufe")
+_CONTACT_COLUMNS = ("Name", "Letzter Kontakt", "Anrufe")
 _PHONEBOOK_CONTACT_COLUMNS = ("Name", "Nummern", "Notizen")
 _CALL_COLUMNS = ("Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät")
 _ALL_CALLS_COLUMNS = ("Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät")
@@ -175,10 +175,8 @@ class ContactListModel(_SimpleTableModel):
         if column == 0:
             return contact_display_label(contact.is_anonymous, contact.display_name)
         if column == 1:
-            return contact.primary_number
-        if column == 2:
             return _format_call_date(contact.last_call_date) if contact.last_call_date else "-"
-        if column == 3:
+        if column == 2:
             return str(contact.call_count)
         return None
 

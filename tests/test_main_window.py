@@ -9,25 +9,25 @@ from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
 from fritz_callhistory.gui.main_window import MainWindow
 
 
-def test_sync_button_disabled_without_sync_fn(qtbot, connection):
+def test_sync_action_disabled_without_sync_fn(qtbot, connection):
     window = MainWindow(connection)
     qtbot.addWidget(window)
 
-    assert not window._sync_button.isEnabled()
+    assert not window._sync_action.isEnabled()
 
 
-def test_sync_button_updates_status_bar_and_reloads_on_success(qtbot, connection):
+def test_sync_action_updates_status_bar_and_reloads_on_success(qtbot, connection):
     window = MainWindow(connection, sync_fn=lambda: (2, 1))
     qtbot.addWidget(window)
-    assert window._sync_button.isEnabled()
+    assert window._sync_action.isEnabled()
 
-    window._sync_button.click()
-    assert not window._sync_button.isEnabled()
+    window._sync_action.trigger()
+    assert not window._sync_action.isEnabled()
 
     qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
 
     assert "2 neue Anrufe" in window.statusBar().currentMessage()
-    assert window._sync_button.isEnabled()
+    assert window._sync_action.isEnabled()
 
 
 def test_sync_runs_automatically_on_startup(qtbot, connection):
@@ -46,24 +46,24 @@ def test_sync_finished_clears_ended_live_calls(qtbot, connection):
     window._calls_tab.on_live_disconnected("1")
     assert window._calls_tab.all_calls_view._model.rowCount() == 1
 
-    window._sync_button.click()
+    window._sync_action.trigger()
     qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
 
     assert window._calls_tab.all_calls_view._model.rowCount() == 0
 
 
-def test_sync_button_shows_error_on_failure(qtbot, connection):
+def test_sync_action_shows_error_on_failure(qtbot, connection):
     def failing_sync():
         raise FritzBoxConnectionError("Box nicht erreichbar")
 
     window = MainWindow(connection, sync_fn=failing_sync)
     qtbot.addWidget(window)
 
-    window._sync_button.click()
+    window._sync_action.trigger()
     qtbot.waitUntil(lambda: "fehlgeschlagen" in window.statusBar().currentMessage(), timeout=3000)
 
     assert "Box nicht erreichbar" in window.statusBar().currentMessage()
-    assert window._sync_button.isEnabled()
+    assert window._sync_action.isEnabled()
 
 
 def test_close_while_sync_running_defers_until_sync_finishes(qtbot, connection):
@@ -584,7 +584,9 @@ def test_datei_menu_has_settings_action(qtbot, connection):
     # deleted"), obwohl dieselbe Instanz über self._file_menu am Leben bleibt.
     file_action = next(a for a in window.menuBar().actions() if a.text() == "Datei")
     file_menu = file_action.menu()
-    assert any(action.text() == "Einstellungen…" for action in file_menu.actions())
+    action_texts = [action.text() for action in file_menu.actions()]
+    assert "Einstellungen…" in action_texts
+    assert "Jetzt synchronisieren" in action_texts
 
 
 def test_telefonbuch_menu_has_import_export_actions(qtbot, connection):

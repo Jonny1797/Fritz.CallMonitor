@@ -21,7 +21,7 @@ def test_starts_ungrouped_showing_all_calls_view(qtbot, connection):
     qtbot.addWidget(tab)
 
     assert tab._stack.currentWidget() is tab.all_calls_view
-    assert not tab._group_toggle.isChecked()
+    assert not tab._grouped
 
 
 def test_toggling_gruppieren_switches_to_contacts_view_and_reloads(qtbot, connection):
@@ -30,20 +30,22 @@ def test_toggling_gruppieren_switches_to_contacts_view_and_reloads(qtbot, connec
     ContactRepository(connection).upsert("+491234567")
     assert tab.contacts_view._contact_model.rowCount() == 0
 
-    tab._group_toggle.setChecked(True)
+    tab._set_grouped(True)
 
     assert tab._stack.currentWidget() is tab.contacts_view
     assert tab.contacts_view._contact_model.rowCount() == 1
+    assert tab._group_toggle.text() == "Gruppierung aufheben"
 
 
 def test_untoggling_gruppieren_shows_all_calls_view_again(qtbot, connection):
     tab = CallsTab(connection)
     qtbot.addWidget(tab)
 
-    tab._group_toggle.setChecked(True)
-    tab._group_toggle.setChecked(False)
+    tab._set_grouped(True)
+    tab._set_grouped(False)
 
     assert tab._stack.currentWidget() is tab.all_calls_view
+    assert tab._group_toggle.text() == "Gruppieren"
 
 
 def test_selecting_from_all_calls_switches_to_grouped_mode_and_selects_contact(qtbot, connection):
@@ -58,7 +60,7 @@ def test_selecting_from_all_calls_switches_to_grouped_mode_and_selects_contact(q
 
     tab.all_calls_view.contact_selected.emit(id_a)
 
-    assert tab._group_toggle.isChecked()
+    assert tab._grouped
     assert "Bertha" in tab.contacts_view._detail._title_label.text()
 
 
@@ -74,7 +76,7 @@ def test_double_clicking_all_calls_row_switches_to_grouped_mode(qtbot, connectio
 
     tab.all_calls_view._table.doubleClicked.emit(tab.all_calls_view._model.index(0, 2))
 
-    assert tab._group_toggle.isChecked()
+    assert tab._grouped
     assert "Max Mustermann" in tab.contacts_view._detail._title_label.text()
 
 
@@ -89,7 +91,7 @@ def test_single_click_on_all_calls_row_does_not_switch_mode(qtbot, connection):
 
     tab.all_calls_view._table.clicked.emit(tab.all_calls_view._model.index(0, 2))
 
-    assert not tab._group_toggle.isChecked()
+    assert not tab._grouped
 
 
 def test_show_contact_switches_to_grouped_mode(qtbot, connection):
@@ -102,7 +104,7 @@ def test_show_contact_switches_to_grouped_mode(qtbot, connection):
 
     tab.show_contact(contact_id)
 
-    assert tab._group_toggle.isChecked()
+    assert tab._grouped
     assert "Max Mustermann" in tab.contacts_view._detail._title_label.text()
 
 

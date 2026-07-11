@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved the Telefonbuch tab's "Importieren …", "Exportieren …" and "Von Box
   importieren …" buttons into a new "Telefonbuch" menu in the menu bar,
   decluttering the tab's button row (now just Neu/Bearbeiten/Löschen).
+- Moved "Jetzt synchronisieren" from a standalone button into the "Datei"
+  menu (shortcut: F5).
+- "Gruppieren" toggle in Alle Anrufe: now lines up with the content below it,
+  no longer looks stuck in a pressed state, and its label switches to
+  "Gruppierung aufheben" while active.
+- Grouped view: the left contact table is narrower (1/3 instead of 2/3 of
+  the available width) and no longer shows a redundant "Nummer" column,
+  since the number is already shown in the right-hand call history once a
+  contact is selected.
 
 ## [0.7.0] - 2026-07-11
 

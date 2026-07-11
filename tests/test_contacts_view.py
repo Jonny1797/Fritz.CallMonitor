@@ -166,19 +166,6 @@ def test_search_reset_clears_detail_view(qtbot, connection):
     assert view._detail._title_label.text() == "Wählen Sie einen Kontakt aus, um mehr Details zu sehen."
 
 
-def test_double_clicking_contact_number_column_emits_number_double_clicked(qtbot, connection):
-    contacts = ContactRepository(connection)
-    contacts.upsert("+491234567")
-
-    view = GroupedContactsView(connection)
-    qtbot.addWidget(view)
-
-    with qtbot.waitSignal(view.number_double_clicked, timeout=1000) as blocker:
-        view._on_contact_table_double_clicked(view._contact_model.index(0, 1))
-
-    assert blocker.args == ["+491234567"]
-
-
 def test_double_clicking_contact_name_column_emits_number_double_clicked(qtbot, connection):
     contacts = ContactRepository(connection)
     contacts.upsert("+491234567")
@@ -212,8 +199,8 @@ def test_double_clicking_contact_other_columns_does_nothing(qtbot, connection):
     received = []
     view.number_double_clicked.connect(received.append)
 
+    view._on_contact_table_double_clicked(view._contact_model.index(0, 1))
     view._on_contact_table_double_clicked(view._contact_model.index(0, 2))
-    view._on_contact_table_double_clicked(view._contact_model.index(0, 3))
 
     assert received == []
 

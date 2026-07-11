@@ -1,5 +1,5 @@
 """Hauptfenster: Kontaktliste (Name/Nummer/letzter Kontakt/Anzahl Anrufe),
-Suche, Detailansicht und Sync-Button (im Hintergrund-Thread)."""
+Suche, Detailansicht und Sync-Aktion im Menü (im Hintergrund-Thread)."""
 
 from __future__ import annotations
 
@@ -7,14 +7,12 @@ import os
 import sqlite3
 
 from PySide6.QtCore import QThread, QTimer, Qt
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
-    QHBoxLayout,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QStyle,
     QSystemTrayIcon,
     QTabWidget,
@@ -84,10 +82,6 @@ class MainWindow(QMainWindow):
         self._show_incoming_call_popup = show_incoming_call_popup
         self._incoming_call_popups: dict[str, IncomingCallPopup] = {}
 
-        self._sync_button = QPushButton("Jetzt synchronisieren")
-        self._sync_button.clicked.connect(self._trigger_sync)
-        self._sync_button.setEnabled(self._sync_fn is not None)
-
         self._calls_tab = CallsTab(connection)
         self._calls_tab.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
         self._calls_tab.live_call_ended.connect(self._trigger_sync)
@@ -121,13 +115,8 @@ class MainWindow(QMainWindow):
         self._update_all_calls_tab_label(self._calls_tab.new_missed_calls_count)
         self._update_voicemail_tab_label(self._voicemail_view.new_voicemail_count)
 
-        top_row = QHBoxLayout()
-        top_row.addStretch()
-        top_row.addWidget(self._sync_button)
-
         central = QWidget()
         layout = QVBoxLayout(central)
-        layout.addLayout(top_row)
         layout.addWidget(self._tabs)
         self.setCentralWidget(central)
         self.statusBar()
@@ -137,9 +126,16 @@ class MainWindow(QMainWindow):
         # Praxis als vorzeitig von shiboken zerstört erwiesen (RuntimeError
         # "Internal C++ object already deleted"), obwohl es über die Qt-
         # Elternschaft (menuBar()) eigentlich am Leben gehalten werden sollte.
+        self._sync_action = QAction("Jetzt synchronisieren", self)
+        self._sync_action.setShortcut(QKeySequence("F5"))
+        self._sync_action.triggered.connect(self._trigger_sync)
+        self._sync_action.setEnabled(self._sync_fn is not None)
+
         self._settings_action = QAction("Einstellungen…", self)
         self._settings_action.triggered.connect(self._open_settings_dialog)
         self._file_menu = self.menuBar().addMenu("Datei")
+        self._file_menu.addAction(self._sync_action)
+        self._file_menu.addSeparator()
         self._file_menu.addAction(self._settings_action)
 
         self._phonebook_import_action = QAction("Importieren …", self)
@@ -413,7 +409,7 @@ class MainWindow(QMainWindow):
             or (self._sync_thread is not None and self._sync_thread.isRunning())
         ):
             return
-        self._sync_button.setEnabled(False)
+        self._sync_action.setEnabled(False)
         self.statusBar().showMessage("Synchronisiere mit der Fritz!Box …")
 
         self._sync_thread = SyncWorker(self._sync_fn, parent=self)
@@ -422,7 +418,7 @@ class MainWindow(QMainWindow):
         self._sync_thread.start()
 
     def _on_sync_finished(self, inserted: int, updated: int) -> None:
-        self._sync_button.setEnabled(True)
+        self._sync_action.setEnabled(True)
         self.statusBar().showMessage(
             f"Sync abgeschlossen: {inserted} neue Anrufe, {updated} Kontakte aktualisiert", 5000
         )
@@ -432,5 +428,5 @@ class MainWindow(QMainWindow):
         self._voicemail_view.reload()
 
     def _on_sync_failed(self, message: str) -> None:
-        self._sync_button.setEnabled(True)
+        self._sync_action.setEnabled(True)
         self.statusBar().showMessage(f"Sync fehlgeschlagen: {message}", 8000)
