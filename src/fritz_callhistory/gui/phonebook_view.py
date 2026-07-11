@@ -63,6 +63,7 @@ _WRITERS = {".xml": write_xml, ".csv": write_csv, ".vcf": write_vcard}
 class PhonebookTab(QWidget):
     contacts_changed = Signal()
     call_requested = Signal(str)
+    import_from_box_availability_changed = Signal(bool)
 
     def __init__(
         self,
@@ -88,25 +89,15 @@ class PhonebookTab(QWidget):
         self._add_button = QPushButton("Neu")
         self._edit_button = QPushButton("Bearbeiten")
         self._delete_button = QPushButton("Löschen")
-        self._import_button = QPushButton("Importieren …")
-        self._export_button = QPushButton("Exportieren …")
-        self._import_from_box_button = QPushButton("Von Box importieren …")
         self._add_button.clicked.connect(self._on_add_clicked)
         self._edit_button.clicked.connect(self._on_edit_clicked)
         self._delete_button.clicked.connect(self._on_delete_clicked)
-        self._import_button.clicked.connect(self._on_import_clicked)
-        self._export_button.clicked.connect(self._on_export_clicked)
-        self._import_from_box_button.clicked.connect(self._on_import_from_box_clicked)
-        self._import_from_box_button.setEnabled(self._import_from_box_fn is not None)
 
         button_row = QHBoxLayout()
         button_row.addWidget(self._add_button)
         button_row.addWidget(self._edit_button)
         button_row.addWidget(self._delete_button)
         button_row.addStretch()
-        button_row.addWidget(self._import_button)
-        button_row.addWidget(self._export_button)
-        button_row.addWidget(self._import_from_box_button)
 
         self._model = PhonebookContactListModel()
         self._proxy = DataclassSortProxy(
@@ -142,6 +133,10 @@ class PhonebookTab(QWidget):
     @property
     def import_thread(self) -> ImportFromBoxWorker | None:
         return self._import_thread
+
+    @property
+    def can_import_from_box(self) -> bool:
+        return self._import_from_box_fn is not None
 
     def _reload(self) -> None:
         self._model.set_contacts(self._repo.list_all(self._search_edit.text()))
@@ -215,7 +210,7 @@ class PhonebookTab(QWidget):
         self._repo.delete(contact_id)
         self._reload()
 
-    def _on_import_clicked(self) -> None:
+    def import_from_file(self) -> None:
         path_str, _selected_filter = QFileDialog.getOpenFileName(
             self, "Telefonbuch importieren", "", _IMPORT_FILTER
         )
@@ -242,7 +237,7 @@ class PhonebookTab(QWidget):
         QMessageBox.information(self, "Import abgeschlossen", message)
         self._after_local_change()
 
-    def _on_export_clicked(self) -> None:
+    def export_to_file(self) -> None:
         path_str, selected_filter = QFileDialog.getSaveFileName(
             self, "Telefonbuch exportieren", "", _EXPORT_FILTER
         )
@@ -269,7 +264,7 @@ class PhonebookTab(QWidget):
         writer(path, contacts)
         QMessageBox.information(self, "Export abgeschlossen", f"{len(contacts)} Kontakt(e) exportiert.")
 
-    def _on_import_from_box_clicked(self) -> None:
+    def import_from_box(self) -> None:
         if self._import_from_box_fn is None or (
             self._import_thread is not None and self._import_thread.isRunning()
         ):
@@ -286,19 +281,19 @@ class PhonebookTab(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
 
-        self._import_from_box_button.setEnabled(False)
+        self.import_from_box_availability_changed.emit(False)
         self._import_thread = ImportFromBoxWorker(self._import_from_box_fn, parent=self)
         self._import_thread.finished_import.connect(self._on_import_from_box_finished)
         self._import_thread.import_failed.connect(self._on_import_from_box_failed)
         self._import_thread.start()
 
     def _on_import_from_box_finished(self, imported: int) -> None:
-        self._import_from_box_button.setEnabled(self._import_from_box_fn is not None)
+        self.import_from_box_availability_changed.emit(self.can_import_from_box)
         QMessageBox.information(
             self, "Import abgeschlossen", f"{imported} Kontakt(e) von der Box importiert/aktualisiert."
         )
         self._after_local_change()
 
     def _on_import_from_box_failed(self, message: str) -> None:
-        self._import_from_box_button.setEnabled(self._import_from_box_fn is not None)
+        self.import_from_box_availability_changed.emit(self.can_import_from_box)
         QMessageBox.critical(self, "Import fehlgeschlagen", message)

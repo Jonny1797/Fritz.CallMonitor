@@ -31,16 +31,16 @@ def test_phonebook_tab_search_filters_by_name(qtbot, connection):
     assert tab._model.contact_at(0).display_name == "Max Mustermann"
 
 
-def test_import_from_box_button_disabled_without_fn(qtbot, connection):
+def test_import_from_box_disabled_without_fn(qtbot, connection):
     tab = PhonebookTab(connection, import_from_box_fn=None)
     qtbot.addWidget(tab)
-    assert tab._import_from_box_button.isEnabled() is False
+    assert tab.can_import_from_box is False
 
 
-def test_import_from_box_button_enabled_with_fn(qtbot, connection):
+def test_import_from_box_enabled_with_fn(qtbot, connection):
     tab = PhonebookTab(connection, import_from_box_fn=lambda: 0)
     qtbot.addWidget(tab)
-    assert tab._import_from_box_button.isEnabled() is True
+    assert tab.can_import_from_box is True
 
 
 def test_add_contact_via_dialog_persists_and_reloads(qtbot, connection, mocker):

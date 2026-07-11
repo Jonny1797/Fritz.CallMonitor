@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Anrufe and the contact detail history), explaining that the Fritz!Box only
   reports call timestamps and durations with minute precision (no seconds).
 
+### Changed
+
+- Moved the Telefonbuch tab's "Importieren …", "Exportieren …" and "Von Box
+  importieren …" buttons into a new "Telefonbuch" menu in the menu bar,
+  decluttering the tab's button row (now just Neu/Bearbeiten/Löschen).
+
 ## [0.7.0] - 2026-07-11
 
 ### Changed

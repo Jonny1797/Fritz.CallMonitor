@@ -142,6 +142,23 @@ class MainWindow(QMainWindow):
         self._file_menu = self.menuBar().addMenu("Datei")
         self._file_menu.addAction(self._settings_action)
 
+        self._phonebook_import_action = QAction("Importieren …", self)
+        self._phonebook_import_action.triggered.connect(self._phonebook_tab.import_from_file)
+        self._phonebook_export_action = QAction("Exportieren …", self)
+        self._phonebook_export_action.triggered.connect(self._phonebook_tab.export_to_file)
+        self._phonebook_import_from_box_action = QAction("Von Box importieren …", self)
+        self._phonebook_import_from_box_action.triggered.connect(self._phonebook_tab.import_from_box)
+        self._phonebook_import_from_box_action.setEnabled(self._phonebook_tab.can_import_from_box)
+        self._phonebook_tab.import_from_box_availability_changed.connect(
+            self._phonebook_import_from_box_action.setEnabled
+        )
+
+        self._phonebook_menu = self.menuBar().addMenu("Telefonbuch")
+        self._phonebook_menu.addAction(self._phonebook_import_action)
+        self._phonebook_menu.addAction(self._phonebook_export_action)
+        self._phonebook_menu.addSeparator()
+        self._phonebook_menu.addAction(self._phonebook_import_from_box_action)
+
         if auto_sync_interval_minutes and self._sync_fn is not None:
             self._auto_sync_timer = QTimer(self)
             self._auto_sync_timer.setInterval(auto_sync_interval_minutes * 60 * 1000)

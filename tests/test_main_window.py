@@ -166,9 +166,9 @@ def test_close_before_startup_sync_fires_prevents_new_sync_thread(qtbot, connect
 
 def test_close_while_box_import_running_defers_until_import_finishes(qtbot, connection, mocker):
     # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
-    # but for ImportFromBoxWorker (the "Von Box importieren" button) - it is the
-    # same single-blocking-network-call-with-no-cancellation-point pattern, just
-    # user-triggered instead of started automatically on startup.
+    # but for ImportFromBoxWorker (the "Von Box importieren" menu entry) - it is
+    # the same single-blocking-network-call-with-no-cancellation-point pattern,
+    # just user-triggered instead of started automatically on startup.
     release_import = threading.Event()
 
     def slow_import():
@@ -184,7 +184,7 @@ def test_close_while_box_import_running_defers_until_import_finishes(qtbot, conn
     window = MainWindow(connection, import_from_box_fn=slow_import)
     qtbot.addWidget(window)
     window.show()
-    window._phonebook_tab._on_import_from_box_clicked()
+    window._phonebook_tab.import_from_box()
     qtbot.waitUntil(
         lambda: window._phonebook_tab.import_thread is not None
         and window._phonebook_tab.import_thread.isRunning(),
@@ -585,6 +585,30 @@ def test_datei_menu_has_settings_action(qtbot, connection):
     file_action = next(a for a in window.menuBar().actions() if a.text() == "Datei")
     file_menu = file_action.menu()
     assert any(action.text() == "Einstellungen…" for action in file_menu.actions())
+
+
+def test_telefonbuch_menu_has_import_export_actions(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    phonebook_action = next(
+        a for a in window.menuBar().actions() if a.text() == "Telefonbuch"
+    )
+    phonebook_menu = phonebook_action.menu()
+    action_texts = [action.text() for action in phonebook_menu.actions()]
+    assert "Importieren …" in action_texts
+    assert "Exportieren …" in action_texts
+    assert "Von Box importieren …" in action_texts
+
+
+def test_telefonbuch_menu_import_from_box_action_reflects_availability(qtbot, connection):
+    window = MainWindow(connection, import_from_box_fn=None)
+    qtbot.addWidget(window)
+    assert window._phonebook_import_from_box_action.isEnabled() is False
+
+    window2 = MainWindow(connection, import_from_box_fn=lambda: 0)
+    qtbot.addWidget(window2)
+    assert window2._phonebook_import_from_box_action.isEnabled() is True
 
 
 def test_open_settings_dialog_saves_config_and_shows_restart_notice(qtbot, connection, mocker):
