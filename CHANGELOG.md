@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Forgejo and GitHub Actions release workflows: pushing a version tag now
+  builds a Windows `.exe` and a Linux executable via PyInstaller and
+  publishes them as a release on each remote, using
+  `scripts/changelog_section.sh` to pull that version's changelog section
+  as the release notes.
+
 ## [0.8.0] - 2026-07-11
 
 ### Added

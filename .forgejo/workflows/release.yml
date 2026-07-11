@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+jobs:
+  release:
+    # Adjust to whatever label your forgejo-runner exposes (see its
+    # config.yaml labels: list) if this doesn't match your instance.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog section for this version
+        run: |
+          scripts/changelog_section.sh "${{ github.ref_name }}" > /tmp/release_notes.md
+          cat /tmp/release_notes.md
+
+      - name: Create Forgejo release
+        env:
+          # Requires Settings > Actions > General > "Read and write" access
+          # for the repository's default token. If your instance doesn't
+          # allow that, replace with a repo secret holding a personal
+          # access token that has repository write scope.
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -n \
+            --arg tag "${{ github.ref_name }}" \
+            --arg name "${{ github.ref_name }}" \
+            --rawfile body /tmp/release_notes.md \
+            '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false}' \
+            > /tmp/release_payload.json
+
+          http_status=$(curl -s --show-error -o /tmp/release_response.json -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/release_payload.json \
+            "${{ github.api_url }}/repos/${{ github.repository }}/releases")
+
+          cat /tmp/release_response.json
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "Release creation failed with HTTP $http_status" >&2
+            exit 1
+          fi

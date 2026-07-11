@@ -43,7 +43,7 @@ exe = EXE(  # noqa: F821
     a.binaries,
     a.datas,
     [],
-    name="fritz-callhistory",
+    name="fritz-callhistory.exe",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
