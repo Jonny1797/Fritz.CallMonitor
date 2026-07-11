@@ -7,15 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-11
+
 ### Added
 
 - Search box (by name or number) in Alle Anrufe's ungrouped mode, matching
   the search already available in grouped mode. Combines with the active
   date/"neu verpasst" filter and also narrows live (ringing/connected) calls,
   without affecting the global unread-missed-calls badge.
+- Tooltips on the "Datum" and "Dauer" column headers in the call tables (Alle
+  Anrufe and the contact detail history), explaining that the Fritz!Box only
+  reports call timestamps and durations with minute precision (no seconds).
 
 ### Changed
 
+- Moved the Telefonbuch tab's "Importieren …", "Exportieren …" and "Von Box
+  importieren …" buttons into a new "Telefonbuch" menu in the menu bar,
+  decluttering the tab's button row (now just Neu/Bearbeiten/Löschen).
+- Moved "Jetzt synchronisieren" from a standalone button into the "Datei"
+  menu (shortcut: F5).
+- "Gruppieren" toggle in Alle Anrufe: now lines up with the content below it,
+  no longer looks stuck in a pressed state, and its label switches to
+  "Gruppierung aufheben" while active.
+- Grouped view: the left contact table is narrower (1/3 instead of 2/3 of
+  the available width) and no longer shows a redundant "Nummer" column,
+  since the number is already shown in the right-hand call history once a
+  contact is selected.
 - The search boxes in Alle Anrufe's grouped and ungrouped modes now share
   their text: typing in one mirrors into the other, so switching the
   "Gruppieren" toggle no longer resets or duplicates what you were searching
@@ -36,24 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   form (e.g. `0176…`) found nothing, since numbers are stored in E.164
   (`+49176…`); the search now also matches national (leading `0`) and
   `00`-international queries against the stored number.
-- Tooltips on the "Datum" and "Dauer" column headers in the call tables (Alle
-  Anrufe and the contact detail history), explaining that the Fritz!Box only
-  reports call timestamps and durations with minute precision (no seconds).
-
-### Changed
-
-- Moved the Telefonbuch tab's "Importieren …", "Exportieren …" and "Von Box
-  importieren …" buttons into a new "Telefonbuch" menu in the menu bar,
-  decluttering the tab's button row (now just Neu/Bearbeiten/Löschen).
-- Moved "Jetzt synchronisieren" from a standalone button into the "Datei"
-  menu (shortcut: F5).
-- "Gruppieren" toggle in Alle Anrufe: now lines up with the content below it,
-  no longer looks stuck in a pressed state, and its label switches to
-  "Gruppierung aufheben" while active.
-- Grouped view: the left contact table is narrower (1/3 instead of 2/3 of
-  the available width) and no longer shows a redundant "Nummer" column,
-  since the number is already shown in the right-hand call history once a
-  contact is selected.
 
 ## [0.7.0] - 2026-07-11
 
