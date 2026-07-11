@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-11
+
+### Changed
+
+- Merged the "Kontakte" tab into "Alle Anrufe": a "Gruppieren" toggle now switches
+  the same tab between the flat, chronological call list and the previous
+  Kontakte view (search, per-contact detail panel with call history). Kontakte
+  never held any data of its own — every row came from the calls table, grouped
+  by number — so the merge drops no functionality and takes the app from four
+  tabs to three (Alle Anrufe, Anrufbeantworter, Telefonbuch).
+
 ## [0.6.0] - 2026-07-10
 
 ### Added

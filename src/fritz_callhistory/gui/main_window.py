@@ -12,32 +12,21 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QHBoxLayout,
-    QHeaderView,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QSplitter,
     QStyle,
     QSystemTrayIcon,
     QTabWidget,
-    QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
-from fritz_callhistory.gui.all_calls_view import AllCallsView
+from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
-from fritz_callhistory.gui.contact_detail import ContactDetailWidget
 from fritz_callhistory.gui.incoming_call_popup import IncomingCallPopup
-from fritz_callhistory.gui.models import (
-    ContactListModel,
-    DataclassSortProxy,
-    install_call_context_menu,
-    install_tristate_sorting,
-)
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from fritz_callhistory.gui.settings_dialog import SettingsDialog
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn, VoicemailView
@@ -52,8 +41,6 @@ from fritz_callhistory.gui.workers import (
 )
 from fritz_callhistory.sync.normalize import normalize_number
 
-_SEARCH_DEBOUNCE_MS = 250
-_CONTACT_PHONEBOOK_COLUMNS = (0, 1)  # Name, Nummer
 # Letzte Absicherung für closeEvent(): SyncWorker/ImportFromBoxWorker haben
 # in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
 # hängenden DNS-Lookup ab (socket.getaddrinfo() kennt kein Timeout). Damit
@@ -94,84 +81,17 @@ class MainWindow(QMainWindow):
 
         self._contacts_repo = ContactRepository(connection)
         self._local_phonebook_repo = LocalPhonebookRepository(connection)
-        self._contact_model = ContactListModel()
         self._show_incoming_call_popup = show_incoming_call_popup
         self._incoming_call_popups: dict[str, IncomingCallPopup] = {}
-
-        self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("Suche nach Name oder Nummer …")
-        self._search_timer = QTimer(self)
-        self._search_timer.setSingleShot(True)
-        self._search_timer.setInterval(_SEARCH_DEBOUNCE_MS)
-        self._search_timer.timeout.connect(self.reload_contacts)
-        self._search_edit.textChanged.connect(lambda _: self._search_timer.start())
 
         self._sync_button = QPushButton("Jetzt synchronisieren")
         self._sync_button.clicked.connect(self._trigger_sync)
         self._sync_button.setEnabled(self._sync_fn is not None)
 
-        self._contact_proxy = DataclassSortProxy(
-            row_getter=self._contact_model.contact_at,
-            key_fns={
-                0: lambda c: (c.display_name or "").lower(),
-                1: lambda c: c.primary_number,
-                2: lambda c: c.last_call_date,
-                3: lambda c: c.call_count,
-            },
-        )
-        self._contact_proxy.setSourceModel(self._contact_model)
-
-        self._table = QTableView()
-        self._table.setModel(self._contact_proxy)
-        self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
-        self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
-        self._table.doubleClicked.connect(self._on_contact_table_double_clicked)
-        install_tristate_sorting(self._table, self._contact_proxy)
-        install_call_context_menu(
-            self._table, self._contact_proxy, self._contact_number_for_row, self._dial_number
-        )
-
-        self._detail = ContactDetailWidget(connection)
-        self._contact_model.modelReset.connect(self._detail.clear)
-        self._detail.call_requested.connect(self._dial_number)
-
-        # Titel/Untertitel des ausgewählten Kontakts laufen über die gesamte
-        # Breite OBERHALB des Splitters, statt (wie früher) nur über der
-        # rechten Anrufliste zu stehen - sonst wäre die linke Kontaktliste um
-        # genau diese Kopfzeilenhöhe kürzer als die rechte Tabelle (der
-        # Splitter gibt beiden Kindern dieselbe Gesamthöhe, aber nur die
-        # rechte Seite hätte intern eine Kopfzeile). So haben beide Splitter-
-        # Kinder von Anfang an nur eine Tabelle als Inhalt und werden dadurch
-        # automatisch gleich hoch.
-        detail_header_row = QHBoxLayout()
-        detail_header_row.addWidget(self._detail.title_label)
-        detail_header_row.addWidget(self._detail.subtitle_label)
-        detail_header_row.addStretch()
-
-        splitter = QSplitter()
-        splitter.addWidget(self._table)
-        splitter.addWidget(self._detail)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
-
-        contacts_tab = QWidget()
-        contacts_layout = QVBoxLayout(contacts_tab)
-        contacts_layout.addWidget(self._search_edit)
-        contacts_layout.addLayout(detail_header_row)
-        # stretch=1: ohne das teilt Qt den übrigen vertikalen Platz zwischen
-        # der Kopfzeile (QLabels sind per Default "Preferred", also wachstums-
-        # fähig, nicht nur der Splitter) etwa hälftig auf - der Splitter soll
-        # aber den gesamten Platz bekommen, die Kopfzeile nur ihre Zeilenhöhe.
-        contacts_layout.addWidget(splitter, 1)
-
-        self._all_calls_view = AllCallsView(connection)
-        self._all_calls_view.contact_selected.connect(self._on_all_calls_contact_selected)
-        self._all_calls_view.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
-        self._all_calls_view.live_call_ended.connect(self._trigger_sync)
-        self._all_calls_view.call_requested.connect(self._dial_number)
+        self._calls_tab = CallsTab(connection)
+        self._calls_tab.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
+        self._calls_tab.live_call_ended.connect(self._trigger_sync)
+        self._calls_tab.call_requested.connect(self._dial_number)
 
         self._voicemail_view = VoicemailView(
             connection,
@@ -185,20 +105,20 @@ class MainWindow(QMainWindow):
         )
 
         self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
-        self._phonebook_tab.contacts_changed.connect(self.reload_contacts)
+        self._phonebook_tab.contacts_changed.connect(self._calls_tab.reload_contacts)
         self._phonebook_tab.call_requested.connect(self._dial_number)
-        self._detail.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
+        self._calls_tab.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
 
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._all_calls_view, "Alle Anrufe")
+        self._tabs.addTab(self._calls_tab, "Alle Anrufe")
         self._tabs.addTab(self._voicemail_view, "Anrufbeantworter")
-        self._tabs.addTab(contacts_tab, "Kontakte")
         self._tabs.addTab(self._phonebook_tab, "Telefonbuch")
-        # AllCallsView.__init__ hat _reload() bereits vor der obigen Signal-
-        # Verbindung ausgeführt - die erste new_missed_calls_changed-Emission
-        # kam daher ohne Empfänger an. Deshalb hier einmalig den bereits
-        # berechneten, gecachten Wert direkt abfragen statt nur aufs Signal zu vertrauen.
-        self._update_all_calls_tab_label(self._all_calls_view.new_missed_calls_count)
+        # AllCallsView.__init__ (innerhalb CallsTab) hat _reload() bereits vor
+        # der obigen Signal-Verbindung ausgeführt - die erste
+        # new_missed_calls_changed-Emission kam daher ohne Empfänger an.
+        # Deshalb hier einmalig den bereits berechneten, gecachten Wert direkt
+        # abfragen statt nur aufs Signal zu vertrauen.
+        self._update_all_calls_tab_label(self._calls_tab.new_missed_calls_count)
         self._update_voicemail_tab_label(self._voicemail_view.new_voicemail_count)
 
         top_row = QHBoxLayout()
@@ -244,16 +164,14 @@ class MainWindow(QMainWindow):
         if fritzbox_address:
             self._call_monitor = CallMonitorThread(fritzbox_address, parent=self)
             self._call_monitor.ring.connect(self._on_ring)
-            self._call_monitor.ring.connect(self._all_calls_view.on_live_ring)
-            self._call_monitor.connected.connect(self._all_calls_view.on_live_connected)
-            self._call_monitor.disconnected.connect(self._all_calls_view.on_live_disconnected)
+            self._call_monitor.ring.connect(self._calls_tab.on_live_ring)
+            self._call_monitor.connected.connect(self._calls_tab.on_live_connected)
+            self._call_monitor.disconnected.connect(self._calls_tab.on_live_disconnected)
             self._call_monitor.connected.connect(self._close_incoming_call_popup)
             self._call_monitor.disconnected.connect(self._close_incoming_call_popup)
             self._call_monitor.connection_lost.connect(self._on_call_monitor_connection_lost)
-            self._call_monitor.connection_lost.connect(self._all_calls_view.clear_live_calls)
+            self._call_monitor.connection_lost.connect(self._calls_tab.clear_live_calls)
             self._call_monitor.start()
-
-        self.reload_contacts()
 
     def _busy_worker_threads(self) -> list[QThread]:
         """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker/
@@ -404,36 +322,12 @@ class MainWindow(QMainWindow):
             10000,
         )
 
-    def reload_contacts(self) -> None:
-        self._contact_model.set_contacts(self._contacts_repo.search(self._search_edit.text()))
-
     def _on_all_calls_contact_selected(self, contact_id: int) -> None:
-        # search_timer.stop() ist nötig: search_edit.clear() löst über
-        # textChanged sonst den 250ms-Debounce-Timer aus, der 250ms später
-        # einen zweiten, überflüssigen reload_contacts() feuern würde -
-        # dessen modelReset räumt über die bestehende Verbindung die gerade
-        # frisch angezeigte Detailansicht wieder leer.
-        self._search_edit.clear()
-        self._search_timer.stop()
-        self.reload_contacts()
-        self._tabs.setCurrentIndex(2)
-        source_row = self._contact_model.index_of(contact_id)
-        if source_row is not None:
-            proxy_row = self._contact_proxy.mapFromSource(self._contact_model.index(source_row, 0)).row()
-            self._table.selectRow(proxy_row)
-
-    def _on_contact_table_double_clicked(self, index) -> None:
-        if index.column() not in _CONTACT_PHONEBOOK_COLUMNS:
-            return
-        source_row = self._contact_proxy.mapToSource(index).row()
-        contact = self._contact_model.contact_at(source_row)
-        if contact.is_anonymous:
-            return
-        self._phonebook_tab.add_or_edit_number(contact.primary_number)
-
-    def _contact_number_for_row(self, row: int) -> str | None:
-        contact = self._contact_model.contact_at(row)
-        return None if contact.is_anonymous else contact.primary_number
+        # Kann von jedem Tab aus ausgelöst werden (z.B. dem Popup bei einem
+        # eingehenden Anruf) - deshalb hier explizit zurück auf "Alle Anrufe"
+        # wechseln, statt vorauszusetzen, dass es schon aktiv ist.
+        self._tabs.setCurrentIndex(0)
+        self._calls_tab.show_contact(contact_id)
 
     def _dial_number(self, number: str) -> None:
         # _close_requested-Check aus demselben Grund wie in _trigger_sync():
@@ -487,15 +381,6 @@ class MainWindow(QMainWindow):
     def _on_dial_failed(self, message: str) -> None:
         self.statusBar().showMessage(f"Anruf fehlgeschlagen: {message}", 8000)
 
-    def _on_selection_changed(self, selected, deselected) -> None:
-        indexes = selected.indexes()
-        if not indexes:
-            self._detail.clear()
-            return
-        source_row = self._contact_proxy.mapToSource(indexes[0]).row()
-        contact = self._contact_model.contact_at(source_row)
-        self._detail.show_contact(contact)
-
     def _trigger_sync(self) -> None:
         # _close_requested-Check ist nötig, weil der Start-Sync per
         # singleShot(0, ...) erst in einem späteren Event-Loop-Durchlauf
@@ -524,9 +409,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Sync abgeschlossen: {inserted} neue Anrufe, {updated} Kontakte aktualisiert", 5000
         )
-        self.reload_contacts()
-        self._all_calls_view.clear_ended_live_calls()
-        self._all_calls_view.reload()
+        self._calls_tab.reload_contacts()
+        self._calls_tab.clear_ended_live_calls()
+        self._calls_tab.reload()
         self._voicemail_view.reload()
 
     def _on_sync_failed(self, message: str) -> None:
