@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Search box (by name or number) in Alle Anrufe's ungrouped mode, matching
+  the search already available in grouped mode. Combines with the active
+  date/"neu verpasst" filter and also narrows live (ringing/connected) calls,
+  without affecting the global unread-missed-calls badge.
 - Tooltips on the "Datum" and "Dauer" column headers in the call tables (Alle
   Anrufe and the contact detail history), explaining that the Fritz!Box only
   reports call timestamps and durations with minute precision (no seconds).

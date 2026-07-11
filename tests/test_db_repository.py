@@ -255,6 +255,62 @@ def test_all_calls_call_types_none_or_empty_returns_all(connection):
     assert len(calls.all_calls(call_types=[])) == 2
 
 
+def test_all_calls_filters_by_search_display_name(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Max Mustermann")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Erika Musterfrau")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    results = calls.all_calls(search="Mustermann")
+
+    assert [r.contact_display_name for r in results] == ["Max Mustermann"]
+
+
+def test_all_calls_filters_by_search_number_fragment(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contact_b = contacts.upsert("+492222222")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    results = calls.all_calls(search="1111111")
+
+    assert [r.contact_primary_number for r in results] == ["+491111111"]
+
+
+def test_all_calls_search_combined_with_date_range(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Max Mustermann")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Erika Musterfrau")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-05-01T10:00:00")  # ausserhalb Datum
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-05T10:00:00")  # passt
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-05T10:00:00")  # passt Datum, nicht Suche
+
+    results = calls.all_calls(
+        date_from="2026-06-01T00:00:00", date_to="2026-06-10T00:00:00", search="Mustermann"
+    )
+
+    assert [r.call_date for r in results] == ["2026-06-05T10:00:00"]
+    assert results[0].contact_display_name == "Max Mustermann"
+
+
+def test_all_calls_search_empty_string_returns_all(connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    assert len(calls.all_calls(search="")) == 1
+
+
 def test_all_calls_breaks_ties_on_same_call_date_by_box_call_id(connection):
     # Zwei Anrufe in derselben Minute (call_date hat nur Minutengenauigkeit,
     # siehe Migration 002) - box_call_id muss die tatsächliche Reihenfolge

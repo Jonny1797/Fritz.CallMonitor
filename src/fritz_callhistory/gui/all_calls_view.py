@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QTableView,
     QVBoxLayout,
@@ -36,6 +37,7 @@ from fritz_callhistory.gui.models import (
     DataclassSortProxy,
     call_number,
     install_call_context_menu,
+    install_debounced_search,
     install_tristate_sorting,
     port_device_display,
 )
@@ -82,6 +84,10 @@ class AllCallsView(QWidget):
         self._new_missed_count = 0
         self._last_seen_at = self._load_or_init_last_seen_at()
         self._live_calls: dict[str, _LiveCall] = {}
+
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("Suche nach Name oder Nummer …")
+        self._search_timer = install_debounced_search(self._search_edit, self._reload)
 
         today = QDate(self._today_provider())
         self._from_edit = QDateEdit(today)
@@ -155,6 +161,7 @@ class AllCallsView(QWidget):
         )
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self._search_edit)
         layout.addLayout(filter_row)
         layout.addLayout(action_row)
         layout.addWidget(self._table)
@@ -222,31 +229,49 @@ class AllCallsView(QWidget):
         self._reload()
 
     def _reload(self) -> None:
+        search = self._search_edit.text()
         if self._new_missed_only:
             calls = self._calls_repo.all_calls(
-                date_from=self._last_seen_at, call_types=[_MISSED_CALL_TYPE]
+                date_from=self._last_seen_at, call_types=[_MISSED_CALL_TYPE], search=search
             )
         elif self._filter_enabled:
             date_from = self._from_edit.date().toPython().isoformat() + _ISO_DAY_START
             date_to = self._to_edit.date().toPython().isoformat() + _ISO_DAY_END
-            calls = self._calls_repo.all_calls(date_from=date_from, date_to=date_to)
+            calls = self._calls_repo.all_calls(date_from=date_from, date_to=date_to, search=search)
         else:
-            calls = self._calls_repo.all_calls()
+            calls = self._calls_repo.all_calls(search=search)
 
         if not self._new_missed_only:
             # Live-Anrufe (klingelt/verbunden) immer oben zeigen, ausser im
             # "Neu verpasst"-Preset - der ist semantisch nur für bereits
             # abgeschlossene, verpasste Anrufe gedacht.
-            calls = self._live_calls_as_call_with_contact() + calls
+            calls = self._live_calls_as_call_with_contact(search) + calls
 
         self._model.set_calls(calls)
         self._model.set_last_seen_at(self._last_seen_at)
-        self._refresh_new_missed_count(precomputed=calls if self._new_missed_only else None)
+        # precomputed nur ohne aktive Suche verwenden: die globale "neu
+        # verpasst"-Badge (new_missed_calls_changed) und der "als gesehen
+        # markieren"-Button sollen sich nicht mit der Trefferzahl der Suche
+        # verändern, sondern nur die tatsächliche Anzahl ungesehener Anrufe
+        # widerspiegeln - _refresh_new_missed_count() rechnet sonst ohnehin
+        # separat (ungefiltert) nach.
+        self._refresh_new_missed_count(
+            precomputed=calls if (self._new_missed_only and not search) else None
+        )
 
-    def _live_calls_as_call_with_contact(self) -> list[CallWithContact]:
+    def _live_calls_as_call_with_contact(self, search: str = "") -> list[CallWithContact]:
+        query = search.lower()
         result = []
         for live in sorted(self._live_calls.values(), key=lambda c: c.started_at, reverse=True):
             contact = self._contacts_repo.get(live.contact_id)
+            display_name = contact.display_name if contact else None
+            primary_number = contact.primary_number if contact else live.caller_number
+            if (
+                query
+                and query not in (display_name or "").lower()
+                and query not in (primary_number or "").lower()
+            ):
+                continue
             result.append(
                 CallWithContact(
                     id=_LIVE_CALL_SENTINEL_ID,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
@@ -263,10 +288,8 @@ class AllCallsView(QWidget):
                     call_date=live.started_at,
                     duration_seconds=None,
                     raw_name=None,
-                    contact_display_name=contact.display_name if contact else None,
-                    contact_primary_number=(
-                        contact.primary_number if contact else live.caller_number
-                    ),
+                    contact_display_name=display_name,
+                    contact_primary_number=primary_number,
                     contact_is_anonymous=contact.is_anonymous if contact else False,
                 )
             )

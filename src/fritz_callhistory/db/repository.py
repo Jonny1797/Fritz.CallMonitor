@@ -191,9 +191,10 @@ class CallRepository:
         date_from: str | None = None,
         date_to: str | None = None,
         call_types: list[int] | None = None,
+        search: str = "",
     ) -> list[CallWithContact]:
         """Alle Anrufe über alle Kontakte hinweg, chronologisch, optional per
-        ISO8601-Zeitstempel (inklusiv) und/oder call_type eingegrenzt."""
+        ISO8601-Zeitstempel (inklusiv), call_type und/oder Name/Nummer eingegrenzt."""
         conditions = []
         params: list = []
         if date_from is not None:
@@ -206,6 +207,12 @@ class CallRepository:
             placeholders = ",".join("?" * len(call_types))
             conditions.append(f"calls.call_type IN ({placeholders})")
             params.extend(call_types)
+        if search:
+            # Geklammert, da sonst ein unparenthesiertes OR aus den anderen
+            # (per AND verknüpften) Bedingungen ausbrechen würde.
+            conditions.append("(contacts.display_name LIKE ? OR contacts.primary_number LIKE ?)")
+            pattern = f"%{search}%"
+            params.extend([pattern, pattern])
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         # Explizite Spaltenliste mit Aliassen statt calls.*/contacts.*: beide

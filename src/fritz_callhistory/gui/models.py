@@ -6,9 +6,9 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QMenu, QTableView
+from PySide6.QtWidgets import QLineEdit, QMenu, QTableView
 
 from fritz_callhistory.db.repository import (
     CallRecord,
@@ -421,6 +421,22 @@ def install_tristate_sorting(table: QTableView, proxy: QSortFilterProxyModel) ->
             proxy.sort(state["column"], state["order"])
 
     header.sectionClicked.connect(on_section_clicked)
+
+
+def install_debounced_search(
+    line_edit: QLineEdit,
+    callback: Callable[[], None],
+    interval_ms: int = 250,
+) -> QTimer:
+    """Verzögert callback() um interval_ms nach der letzten Texteingabe in
+    line_edit (verhindert einen DB-Query pro Tastenanschlag). Gibt den Timer
+    zurück, damit Tests ihn direkt triggern können (timer.timeout.emit())."""
+    timer = QTimer(line_edit)
+    timer.setSingleShot(True)
+    timer.setInterval(interval_ms)
+    timer.timeout.connect(callback)
+    line_edit.textChanged.connect(lambda _: timer.start())
+    return timer
 
 
 def install_call_context_menu(

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -29,10 +29,10 @@ from fritz_callhistory.gui.models import (
     ContactListModel,
     DataclassSortProxy,
     install_call_context_menu,
+    install_debounced_search,
     install_tristate_sorting,
 )
 
-_SEARCH_DEBOUNCE_MS = 250
 _CONTACT_NAME_COLUMN = 0
 
 
@@ -47,11 +47,7 @@ class GroupedContactsView(QWidget):
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Suche nach Name oder Nummer …")
-        self._search_timer = QTimer(self)
-        self._search_timer.setSingleShot(True)
-        self._search_timer.setInterval(_SEARCH_DEBOUNCE_MS)
-        self._search_timer.timeout.connect(self.reload_contacts)
-        self._search_edit.textChanged.connect(lambda _: self._search_timer.start())
+        self._search_timer = install_debounced_search(self._search_edit, self.reload_contacts)
 
         self._contact_proxy = DataclassSortProxy(
             row_getter=self._contact_model.contact_at,

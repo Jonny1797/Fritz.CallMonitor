@@ -511,3 +511,149 @@ def test_number_for_row_returns_none_for_live_call(qtbot, connection):
     view.on_live_ring("1", "030 1234567", "069987654")
 
     assert view._number_for_row(0) is None
+
+
+def test_search_filters_by_display_name(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Max Mustermann")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Erika Musterfrau")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    assert view._model.rowCount() == 2
+
+    view._search_edit.setText("Mustermann")
+    qtbot.wait(400)
+
+    assert view._model.rowCount() == 1
+    assert view._model.call_at(0).contact_display_name == "Max Mustermann"
+
+
+def test_search_filters_by_number_fragment(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contact_b = contacts.upsert("+492222222")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+
+    view._search_edit.setText("2222222")
+    qtbot.wait(400)
+
+    assert view._model.rowCount() == 1
+    assert view._model.call_at(0).contact_primary_number == "+492222222"
+
+
+def test_clearing_search_shows_all_calls_again(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contact_b = contacts.upsert("+492222222")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-02T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+
+    view._search_edit.setText("1111111")
+    qtbot.wait(400)
+    assert view._model.rowCount() == 1
+
+    view._search_edit.setText("")
+    qtbot.wait(400)
+    assert view._model.rowCount() == 2
+
+
+def test_search_combines_with_active_date_preset(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Max Mustermann")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Erika Musterfrau")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-15T10:00:00")  # heute, passt
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-15T11:00:00")  # heute, kein Treffer
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-01T10:00:00")  # Treffer, nicht heute
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    view._today_button.click()
+    assert view._model.rowCount() == 2
+
+    view._search_edit.setText("Mustermann")
+    qtbot.wait(400)
+
+    assert view._model.rowCount() == 1
+    assert view._model.call_at(0).call_date == "2026-06-15T10:00:00"
+
+
+def test_search_combines_with_new_missed_preset(qtbot, connection):
+    SyncStateRepository(connection).set(_LAST_SEEN_KEY, "2026-06-10T00:00:00")
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Max Mustermann")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Erika Musterfrau")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-14T10:00:00", call_type=2)
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-14T11:00:00", call_type=2)
+
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view._new_missed_button.click()
+    assert view._model.rowCount() == 2
+
+    view._search_edit.setText("Mustermann")
+    qtbot.wait(400)
+
+    assert view._model.rowCount() == 1
+    assert view._model.call_at(0).contact_display_name == "Max Mustermann"
+
+
+def test_search_does_not_change_new_missed_count(qtbot, connection):
+    SyncStateRepository(connection).set(_LAST_SEEN_KEY, "2026-06-10T00:00:00")
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_a = contacts.upsert("+491111111")
+    contacts.set_display_name(contact_a, "Max Mustermann")
+    contact_b = contacts.upsert("+492222222")
+    contacts.set_display_name(contact_b, "Erika Musterfrau")
+    _insert_call(calls, contact_id=contact_a, call_date="2026-06-14T10:00:00", call_type=2)
+    _insert_call(calls, contact_id=contact_b, call_date="2026-06-14T11:00:00", call_type=2)
+
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    assert view.new_missed_calls_count == 2
+
+    view._search_edit.setText("Mustermann")
+    qtbot.wait(400)
+
+    assert view.new_missed_calls_count == 2
+    assert view._mark_seen_button.isEnabled()
+
+
+def test_search_filters_live_call_by_contact_name(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49301234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "030 1234567", "069987654")
+    assert view._model.rowCount() == 1
+
+    view._search_edit.setText("kein-treffer")
+    qtbot.wait(400)
+    assert view._model.rowCount() == 0
+
+    view._search_edit.setText("Mustermann")
+    qtbot.wait(400)
+    assert view._model.rowCount() == 1
