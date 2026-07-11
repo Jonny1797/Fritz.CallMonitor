@@ -66,6 +66,7 @@ class AllCallsView(QWidget):
     new_missed_calls_changed = Signal(int)
     live_call_ended = Signal()
     call_requested = Signal(str)
+    search_changed = Signal(str)
 
     def __init__(
         self,
@@ -88,6 +89,7 @@ class AllCallsView(QWidget):
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Suche nach Name oder Nummer …")
         self._search_timer = install_debounced_search(self._search_edit, self._reload)
+        self._search_edit.textChanged.connect(self.search_changed.emit)
 
         today = QDate(self._today_provider())
         self._from_edit = QDateEdit(today)
@@ -227,6 +229,20 @@ class AllCallsView(QWidget):
     def reload(self) -> None:
         """Lädt die Liste unter Beibehaltung des aktuellen Filters neu (z.B. nach einem Sync)."""
         self._reload()
+
+    def set_search_text(self, text: str) -> None:
+        """Übernimmt Suchtext von der jeweils anderen Ansicht (siehe CallsTab),
+        ohne search_changed erneut auszulösen - sonst würde jede Ansicht die
+        andere endlos zurück-propagieren. Kein sofortiges _reload(): solange
+        diese Ansicht nicht sichtbar ist, holt CallsTab._set_grouped() das beim
+        Umschalten nach, statt bei jedem Tastenanschlag der anderen Ansicht
+        eine ungenutzte Query zu feuern."""
+        if self._search_edit.text() == text:
+            return
+        self._search_edit.blockSignals(True)
+        self._search_edit.setText(text)
+        self._search_edit.blockSignals(False)
+        self._search_timer.stop()
 
     def _reload(self) -> None:
         search = self._search_edit.text()

@@ -39,6 +39,7 @@ _CONTACT_NAME_COLUMN = 0
 class GroupedContactsView(QWidget):
     call_requested = Signal(str)
     number_double_clicked = Signal(str)
+    search_changed = Signal(str)
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         super().__init__()
@@ -48,6 +49,7 @@ class GroupedContactsView(QWidget):
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Suche nach Name oder Nummer …")
         self._search_timer = install_debounced_search(self._search_edit, self.reload_contacts)
+        self._search_edit.textChanged.connect(self.search_changed.emit)
 
         self._contact_proxy = DataclassSortProxy(
             row_getter=self._contact_model.contact_at,
@@ -109,6 +111,20 @@ class GroupedContactsView(QWidget):
 
     def reload_contacts(self) -> None:
         self._contact_model.set_contacts(self._contacts_repo.search(self._search_edit.text()))
+
+    def set_search_text(self, text: str) -> None:
+        """Übernimmt Suchtext von der jeweils anderen Ansicht (siehe CallsTab),
+        ohne search_changed erneut auszulösen - sonst würde jede Ansicht die
+        andere endlos zurück-propagieren. Kein sofortiges reload_contacts():
+        solange diese Ansicht nicht sichtbar ist, holt CallsTab._set_grouped()
+        das beim Umschalten nach, statt bei jedem Tastenanschlag der anderen
+        Ansicht eine ungenutzte Query zu feuern."""
+        if self._search_edit.text() == text:
+            return
+        self._search_edit.blockSignals(True)
+        self._search_edit.setText(text)
+        self._search_edit.blockSignals(False)
+        self._search_timer.stop()
 
     def show_contact(self, contact_id: int) -> None:
         # search_timer.stop() ist nötig: search_edit.clear() löst über

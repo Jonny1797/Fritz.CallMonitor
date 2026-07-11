@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the search already available in grouped mode. Combines with the active
   date/"neu verpasst" filter and also narrows live (ringing/connected) calls,
   without affecting the global unread-missed-calls badge.
+
+### Changed
+
+- The search boxes in Alle Anrufe's grouped and ungrouped modes now share
+  their text: typing in one mirrors into the other, so switching the
+  "Gruppieren" toggle no longer resets or duplicates what you were searching
+  for.
 - Tooltips on the "Datum" and "Dauer" column headers in the call tables (Alle
   Anrufe and the contact detail history), explaining that the Fritz!Box only
   reports call timestamps and durations with minute precision (no seconds).

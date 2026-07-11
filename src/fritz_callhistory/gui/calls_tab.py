@@ -80,6 +80,12 @@ class CallsTab(QWidget):
         self.all_calls_view.live_call_ended.connect(self.live_call_ended.emit)
         self.contacts_view.call_requested.connect(self.call_requested.emit)
         self.contacts_view.number_double_clicked.connect(self.number_double_clicked.emit)
+        # Beide Ansichten teilen sich einen Suchbegriff, obwohl sie eigene
+        # QLineEdits haben (siehe deren "eigenständig testbar"-Docstrings) -
+        # set_search_text() blockt die eigenen Signale beim Gegenstück, daher
+        # keine Endlosschleife zwischen den beiden connect()-Aufrufen hier.
+        self.all_calls_view.search_changed.connect(self.contacts_view.set_search_text)
+        self.contacts_view.search_changed.connect(self.all_calls_view.set_search_text)
 
     @property
     def new_missed_calls_count(self) -> int:
@@ -92,8 +98,14 @@ class CallsTab(QWidget):
         self._grouped = grouped
         self._group_toggle.setText("Gruppierung aufheben" if grouped else "Gruppieren")
         self._stack.setCurrentIndex(_GROUPED_PAGE if grouped else _FLAT_PAGE)
+        # Reload holt einen Suchtext nach, der eintraf, während diese Ansicht
+        # verborgen war (set_search_text() selbst reloadet nicht, um bei
+        # jedem Tastenanschlag in der jeweils anderen, sichtbaren Ansicht
+        # keine ungenutzte Query auf der verborgenen zu feuern).
         if grouped:
             self.contacts_view.reload_contacts()
+        else:
+            self.all_calls_view.reload()
 
     def show_contact(self, contact_id: int) -> None:
         self._set_grouped(True)

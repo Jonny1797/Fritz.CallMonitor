@@ -129,3 +129,86 @@ def test_number_double_clicked_forwarded_from_contacts_view(qtbot, connection):
     tab.contacts_view.number_double_clicked.emit("+491234567")
 
     assert received == ["+491234567"]
+
+
+def test_typing_search_in_all_calls_view_mirrors_to_contacts_view(qtbot, connection):
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+
+    tab.all_calls_view._search_edit.setText("Bertha")
+
+    assert tab.contacts_view._search_edit.text() == "Bertha"
+
+
+def test_typing_search_in_contacts_view_mirrors_to_all_calls_view(qtbot, connection):
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+
+    tab.contacts_view._search_edit.setText("+4922")
+
+    assert tab.all_calls_view._search_edit.text() == "+4922"
+
+
+def test_mirrored_search_is_applied_when_switching_to_grouped_view(qtbot, connection):
+    contacts = ContactRepository(connection)
+    id_a = contacts.upsert("+491111111")
+    contacts.set_display_name(id_a, "Bertha")
+    contacts.upsert("+492222222")
+
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+
+    tab.all_calls_view._search_edit.setText("Bertha")
+    tab._set_grouped(True)
+
+    assert tab.contacts_view._contact_model.rowCount() == 1
+    assert tab.contacts_view._contact_model.contact_at(0).id == id_a
+
+
+def test_mirrored_search_is_applied_when_switching_to_flat_view(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+    other_id = contacts.upsert("+499999999")
+    _insert_call(CallRepository(connection), contact_id=contact_id)
+    _insert_call(CallRepository(connection), contact_id=other_id)
+
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+    tab._set_grouped(True)
+
+    tab.contacts_view._search_edit.setText("Max")
+    tab._set_grouped(False)
+
+    assert tab.all_calls_view._model.rowCount() == 1
+
+
+def test_double_clicking_all_calls_row_clears_mirrored_search_in_both_views(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    contacts.set_display_name(contact_id, "Max Mustermann")
+    _insert_call(CallRepository(connection), contact_id=contact_id)
+
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+    tab.all_calls_view.reload()
+    tab.all_calls_view._search_edit.setText("Max")
+
+    tab.all_calls_view._table.doubleClicked.emit(tab.all_calls_view._model.index(0, 2))
+
+    assert tab.contacts_view._search_edit.text() == ""
+    assert tab.all_calls_view._search_edit.text() == ""
+
+
+def test_search_does_not_bounce_back_and_forth_between_views(qtbot, connection):
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+    all_calls_changes = []
+    contacts_changes = []
+    tab.all_calls_view.search_changed.connect(all_calls_changes.append)
+    tab.contacts_view.search_changed.connect(contacts_changes.append)
+
+    tab.all_calls_view._search_edit.setText("Bertha")
+
+    assert all_calls_changes == ["Bertha"]
+    assert contacts_changes == []
