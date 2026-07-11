@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tooltips on the "Datum" and "Dauer" column headers in the call tables (Alle
+  Anrufe and the contact detail history), explaining that the Fritz!Box only
+  reports call timestamps and durations with minute precision (no seconds).
+
 ## [0.7.0] - 2026-07-11
 
 ### Changed

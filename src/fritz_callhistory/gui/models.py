@@ -33,6 +33,15 @@ _CALL_COLUMNS = ("Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät")
 _ALL_CALLS_COLUMNS = ("Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät")
 _VOICEMAIL_COLUMNS = ("Datum", "Anrufer", "Dauer")
 
+# Nur für reguläre Anrufe (CallListModel/AllCallsListModel) - die Box liefert deren
+# Datum/Dauer ohnehin nur mit Minutengenauigkeit (siehe _format_call_date und
+# fritz/client.py's _parse_duration_seconds-Docstring). Bewusst nicht für
+# VoicemailListModel: dessen "Dauer"-Spalte hat echte Sekundengenauigkeit.
+_MINUTE_PRECISION_TOOLTIPS = {
+    "Datum": "Zeitstempel der Fritz!Box haben nur Minutengenauigkeit (keine Sekunden)",
+    "Dauer": "Die Fritz!Box liefert die Gesprächsdauer nur in ganzen Minuten (keine Sekunden)",
+}
+
 _CALL_TYPE_LABELS = {
     1: "Eingehend",
     2: "Verpasst",
@@ -106,6 +115,11 @@ class _SimpleTableModel(QAbstractTableModel):
     anzeigen. Subklassen implementieren nur noch data()."""
 
     _columns: tuple[str, ...] = ()
+    # Optional Spaltenname -> Tooltip-Text, von Subklassen gezielt gesetzt (nicht
+    # alle Modelle mit einer gleichnamigen Spalte teilen dieselbe Einschraenkung -
+    # z.B. hat VoicemailListModel ebenfalls eine "Dauer"-Spalte, aber dort liefert
+    # die Box echte Sekundengenauigkeit, siehe fritz/client.py's _parse_duration_seconds).
+    _header_tooltips: dict[str, str] = {}
 
     def __init__(self, items: list | None = None) -> None:
         super().__init__()
@@ -126,9 +140,13 @@ class _SimpleTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._columns)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
+        if orientation != Qt.Orientation.Horizontal:
             return None
-        return self._columns[section]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return self._columns[section]
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return self._header_tooltips.get(self._columns[section])
+        return None
 
 
 class ContactListModel(_SimpleTableModel):
@@ -199,6 +217,7 @@ class CallListModel(_SimpleTableModel):
     """Chronologische Anrufliste für einen einzelnen Kontakt (Detailansicht)."""
 
     _columns = _CALL_COLUMNS
+    _header_tooltips = _MINUTE_PRECISION_TOOLTIPS
 
     def __init__(self, calls: list[CallRecord] | None = None) -> None:
         super().__init__(calls)
@@ -235,6 +254,7 @@ class AllCallsListModel(_SimpleTableModel):
     """
 
     _columns = _ALL_CALLS_COLUMNS
+    _header_tooltips = _MINUTE_PRECISION_TOOLTIPS
 
     def __init__(
         self,
