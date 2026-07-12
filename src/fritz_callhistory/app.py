@@ -348,6 +348,11 @@ def _handle_sigint(*_args) -> None:
 
 def main() -> int:
     app = QApplication(sys.argv)
+    # Muss unabhängig vom Minimize-to-Tray-Setting explizit False sein: sonst
+    # könnte Qt beim Verstecken des einzigen Top-Level-Fensters implizit
+    # beenden, was closeEvent()'s eigene Minimize-vs-Quit-Entscheidung
+    # untergraben würde (siehe MainWindow.closeEvent()).
+    app.setQuitOnLastWindowClosed(False)
     connection = connect(database_file())
     cfg = config_module.load()
     test_credentials_fn = _build_test_credentials_fn()

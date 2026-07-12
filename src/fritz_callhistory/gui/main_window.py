@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QStyle,
     QSystemTrayIcon,
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self._phonebook_list_thread: PhonebookListWorker | None = None
         self._phonebook_import_list_thread: PhonebookListWorker | None = None
         self._close_requested = False
+        self._quit_requested = False
         self._shutdown_failsafe_timer: QTimer | None = None
         self._update_credentials_fn = update_credentials_fn
         self._test_credentials_fn = test_credentials_fn
@@ -187,6 +189,22 @@ class MainWindow(QMainWindow):
             self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon), self
         )
         self._tray_icon.setToolTip("Fritz!Box Anrufhistorie")
+
+        self._tray_menu = QMenu(self)
+        self._tray_show_action = QAction("Anzeigen", self)
+        self._tray_show_action.triggered.connect(self._restore_from_tray)
+        self._tray_menu.addAction(self._tray_show_action)
+        self._tray_menu.addSeparator()
+        self._tray_quit_action = QAction("Beenden", self)
+        self._tray_quit_action.triggered.connect(self._request_quit)
+        self._tray_menu.addAction(self._tray_quit_action)
+        self._tray_icon.setContextMenu(self._tray_menu)
+
+        # Trigger deckt Links-/Doppelklick ab, ist aber auf manchen Linux-
+        # Desktops (v.a. StatusNotifierItem/Wayland) für Linksklick nicht
+        # zuverlässig - "Anzeigen" im Kontextmenü ist deshalb der eigentlich
+        # verlässliche Weg, hier nur ein Komfort-Zusatz.
+        self._tray_icon.activated.connect(self._on_tray_icon_activated)
         self._tray_icon.show()
 
         self._call_monitor: CallMonitorThread | None = None
@@ -226,6 +244,11 @@ class MainWindow(QMainWindow):
         return threads
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._config.minimize_to_tray_on_close and not self._quit_requested:
+            event.ignore()
+            self.hide()
+            return
+
         if not self._close_requested:
             self._close_requested = True
             if self._call_monitor is not None:
@@ -276,6 +299,27 @@ class MainWindow(QMainWindow):
         # läuft dann entweder gar nicht mehr oder trifft auf eine leere Liste.
         if self._busy_worker_threads():
             os._exit(1)
+
+    def _on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._restore_from_tray()
+
+    def _restore_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _request_quit(self) -> None:
+        """Einziger Weg, die App wirklich zu beenden, wenn Minimize-to-Tray aktiv
+        ist - setzt das sticky Flag, damit closeEvent() nicht wieder nur
+        minimiert, und stösst dann denselben close()-Ablauf an wie ein
+        normaler Fensterschluss bei deaktiviertem Minimize-to-Tray (inkl.
+        Busy-Thread-Drain/Failsafe)."""
+        self._quit_requested = True
+        self.close()
 
     def _on_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
         normalized, is_anonymous = normalize_number(caller_number)

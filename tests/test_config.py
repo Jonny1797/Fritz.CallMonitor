@@ -13,12 +13,17 @@ def test_save_and_load_roundtrip(tmp_path):
         username="admin",
         sync_interval_minutes=15,
         phonebook_ids=[0, 1],
+        minimize_to_tray_on_close=True,
     )
 
     save(original, path)
     loaded = load(path)
 
     assert loaded == original
+
+
+def test_minimize_to_tray_on_close_defaults_to_false():
+    assert Config().minimize_to_tray_on_close is False
 
 
 def test_empty_phonebook_ids_means_all_phonebooks():

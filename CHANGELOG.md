@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-12
+
 ### Added
 
 - Settings dialog: the "Telefonbücher" picker now explains what it's used
@@ -15,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name-based checkbox list needs a live connection to populate). "Alle
   Telefonbücher einbeziehen" also stays selectable in that case, since it
   doesn't require knowing the box's phonebook names.
+- New setting: closing the main window can now minimize it to the system tray instead of quitting,
+  so the call monitor keeps running in the background. When enabled, right-clicking the tray icon
+  offers "Anzeigen" (restore) and "Beenden" (quit); clicking the icon also restores the window.
 
 ### Changed
 

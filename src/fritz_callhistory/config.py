@@ -22,6 +22,7 @@ class Config:
     sync_interval_minutes: int = 30
     phonebook_ids: list[int] = field(default_factory=list)
     show_incoming_call_popup: bool = True
+    minimize_to_tray_on_close: bool = False
 
     def resolved_phonebook_ids(self) -> list[int] | None:
         """None bedeutet für den SyncService "alle Telefonbücher der Box"."""

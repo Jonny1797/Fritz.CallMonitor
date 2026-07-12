@@ -5,13 +5,30 @@ from fritz_callhistory.gui.settings_dialog import SettingsDialog
 
 
 def test_prefills_from_config(qtbot):
-    config = Config(sync_interval_minutes=45, show_incoming_call_popup=False, phonebook_ids=[0])
+    config = Config(
+        sync_interval_minutes=45,
+        show_incoming_call_popup=False,
+        phonebook_ids=[0],
+        minimize_to_tray_on_close=True,
+    )
     dialog = SettingsDialog(config)
     qtbot.addWidget(dialog)
 
     assert dialog._interval_spin.value() == 45
     assert dialog._popup_checkbox.isChecked() is False
     assert dialog._all_phonebooks_checkbox.isChecked() is False
+    assert dialog._minimize_to_tray_checkbox.isChecked() is True
+
+
+def test_save_includes_minimize_to_tray_setting(qtbot, mocker):
+    mocker.patch("fritz_callhistory.gui.settings_dialog.config_module.save")
+    dialog = SettingsDialog(Config(minimize_to_tray_on_close=False, phonebook_ids=[1, 2]))
+    qtbot.addWidget(dialog)
+    dialog._minimize_to_tray_checkbox.setChecked(True)
+
+    updated = dialog.save(Config(phonebook_ids=[1, 2]))
+
+    assert updated.minimize_to_tray_on_close is True
 
 
 def test_all_phonebooks_checked_when_config_phonebook_ids_empty(qtbot):

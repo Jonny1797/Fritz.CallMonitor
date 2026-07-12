@@ -1,6 +1,6 @@
 import threading
 
-from PySide6.QtWidgets import QApplication, QDialog, QPushButton
+from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QSystemTrayIcon
 
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
@@ -324,6 +324,116 @@ def test_close_without_busy_workers_quits_application_explicitly(qtbot, connecti
     assert window.close() is True
 
     quit_spy.assert_called_once()
+
+
+def test_close_minimizes_to_tray_when_setting_enabled(qtbot, connection, mocker):
+    mock_thread_cls = mocker.patch("fritz_callhistory.gui.main_window.CallMonitorThread")
+    mock_thread = mock_thread_cls.return_value
+
+    window = MainWindow(
+        connection,
+        fritzbox_address="192.168.178.1",
+        config=Config(minimize_to_tray_on_close=True),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    quit_spy = mocker.patch.object(QApplication.instance(), "quit")
+
+    closed = window.close()
+
+    assert closed is False  # close event was ignored, not accepted
+    assert not window.isVisible()
+    quit_spy.assert_not_called()
+    mock_thread.stop.assert_not_called()  # call monitor must keep running while minimized
+
+
+def test_close_quits_when_minimize_setting_disabled(qtbot, connection, mocker):
+    window = MainWindow(connection, config=Config(minimize_to_tray_on_close=False))
+    qtbot.addWidget(window)
+    window.show()
+
+    quit_spy = mocker.patch.object(QApplication.instance(), "quit")
+
+    assert window.close() is True
+    quit_spy.assert_called_once()
+
+
+def test_tray_quit_action_quits_even_when_minimize_to_tray_enabled(qtbot, connection, mocker):
+    window = MainWindow(connection, config=Config(minimize_to_tray_on_close=True))
+    qtbot.addWidget(window)
+    window.show()
+
+    quit_spy = mocker.patch.object(QApplication.instance(), "quit")
+
+    window._tray_quit_action.trigger()
+
+    assert not window.isVisible()
+    quit_spy.assert_called_once()
+
+
+def test_tray_quit_action_defers_while_worker_busy_then_quits(qtbot, connection, mocker):
+    release_sync = threading.Event()
+
+    def slow_sync():
+        release_sync.wait(5)
+        return (0, 0)
+
+    window = MainWindow(
+        connection, sync_fn=slow_sync, config=Config(minimize_to_tray_on_close=True)
+    )
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(
+        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
+    )
+
+    quit_spy = mocker.patch.object(QApplication.instance(), "quit")
+
+    window._tray_quit_action.trigger()
+
+    assert not window.isVisible()
+    assert window._sync_thread.isRunning()  # deferred, not force-closed
+    quit_spy.assert_not_called()
+
+    release_sync.set()
+    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
+    qtbot.wait(50)  # let the queued finished-signal-triggered close() run
+
+    quit_spy.assert_called_once()
+
+
+def test_tray_icon_has_context_menu_with_show_and_quit_actions(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    menu = window._tray_icon.contextMenu()
+    action_texts = [action.text() for action in menu.actions()]
+
+    assert "Anzeigen" in action_texts
+    assert "Beenden" in action_texts
+
+
+def test_tray_icon_activated_trigger_restores_window(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window.show()
+    window.hide()
+
+    window._on_tray_icon_activated(QSystemTrayIcon.ActivationReason.Trigger)
+
+    assert window.isVisible() is True
+
+
+def test_tray_show_action_restores_window(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window.show()
+    window.hide()
+
+    window._tray_show_action.trigger()
+
+    assert window.isVisible() is True
 
 
 def test_no_call_monitor_started_without_address(qtbot, connection):

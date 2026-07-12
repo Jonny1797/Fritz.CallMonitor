@@ -53,6 +53,11 @@ class SettingsDialog(QDialog):
         self._popup_checkbox = QCheckBox("Bei eingehenden Anrufen benachrichtigen")
         self._popup_checkbox.setChecked(config.show_incoming_call_popup)
 
+        self._minimize_to_tray_checkbox = QCheckBox(
+            "Beim Schliessen in den Infobereich (Tray) minimieren, statt die App zu beenden"
+        )
+        self._minimize_to_tray_checkbox.setChecked(config.minimize_to_tray_on_close)
+
         self._phonebook_explanation_label = QLabel(
             "Legt fest, welche Telefonbücher der Box für die Namensauflösung "
             "(Hintergrund-Abgleich) verwendet werden. 'Von Box importieren…' im "
@@ -87,6 +92,7 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
         form.addRow("Sync-Intervall", self._interval_spin)
         form.addRow(self._popup_checkbox)
+        form.addRow(self._minimize_to_tray_checkbox)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -176,6 +182,7 @@ class SettingsDialog(QDialog):
             base,
             sync_interval_minutes=self._interval_spin.value(),
             show_incoming_call_popup=self._popup_checkbox.isChecked(),
+            minimize_to_tray_on_close=self._minimize_to_tray_checkbox.isChecked(),
             phonebook_ids=phonebook_ids,
         )
         config_module.save(new_config)
