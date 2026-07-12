@@ -47,17 +47,6 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 - Backup/restore or "export DB + config" for moving to a new PC.
 - Keyboard shortcuts (e.g. `/` to focus search, `Ctrl+D` to dial selected
   contact).
-- **Edit Fritz!Box connection details after first run** — the settings
-  dialog (Datei → Einstellungen…, shipped 2026-07-10) deliberately left
-  address/username/password out of scope; those still only get set once via
-  `CredentialsDialog`, which is only ever shown on first run (missing/invalid
-  stored credentials). Right now the only way to change the box address, the
-  Fritz!Box user, or rotate the password is to edit the TOML config /
-  keyring by hand or delete them so `CredentialsDialog` reappears. Folding
-  connection-details editing into the settings dialog (or reusing
-  `CredentialsDialog` from a menu entry) would close that gap — would also
-  need a "test connection" affordance, since a bad address/password here
-  isn't caught until the next sync.
 - **Apply settings changes without restarting** — the new settings dialog
   saves `sync_interval_minutes`/`phonebook_ids`/`show_incoming_call_popup`
   straight to the TOML config, but none of them take effect until the app is
