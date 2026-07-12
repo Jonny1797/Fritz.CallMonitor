@@ -28,6 +28,7 @@ from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 from fritz_callhistory.gui.incoming_call_popup import IncomingCallPopup
+from fritz_callhistory.gui.phonebook_picker_dialog import PhonebookPickerDialog
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from fritz_callhistory.gui.settings_dialog import SettingsDialog
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn, VoicemailView
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         self._config = config or Config()
         self._list_phonebooks_fn = list_phonebooks_fn
         self._phonebook_list_thread: PhonebookListWorker | None = None
+        self._phonebook_import_list_thread: PhonebookListWorker | None = None
         self._close_requested = False
         self._shutdown_failsafe_timer: QTimer | None = None
         self._update_credentials_fn = update_credentials_fn
@@ -156,7 +158,9 @@ class MainWindow(QMainWindow):
         self._phonebook_export_action = QAction("Exportieren …", self)
         self._phonebook_export_action.triggered.connect(self._phonebook_tab.export_to_file)
         self._phonebook_import_from_box_action = QAction("Von Box importieren …", self)
-        self._phonebook_import_from_box_action.triggered.connect(self._phonebook_tab.import_from_box)
+        self._phonebook_import_from_box_action.triggered.connect(
+            self._open_phonebook_import_dialog
+        )
         self._phonebook_import_from_box_action.setEnabled(self._phonebook_tab.can_import_from_box)
         self._phonebook_tab.import_from_box_availability_changed.connect(
             self._phonebook_import_from_box_action.setEnabled
@@ -408,6 +412,27 @@ class MainWindow(QMainWindow):
                 "Einstellungen gespeichert",
                 "Die Änderungen werden erst nach einem Neustart der App wirksam.",
             )
+
+    def _open_phonebook_import_dialog(self) -> None:
+        dialog = PhonebookPickerDialog(parent=self)
+        if self._list_phonebooks_fn is None:
+            dialog.set_phonebooks_unavailable("Keine Zugangsdaten hinterlegt")
+        else:
+            # Eigenes Thread-Attribut statt self._phonebook_list_thread (siehe
+            # _open_settings_dialog) - beide Dialoge können unabhängig
+            # voneinander geöffnet werden, ohne sich den laufenden Fetch
+            # gegenseitig wegzunehmen.
+            self._phonebook_import_list_thread = PhonebookListWorker(
+                self._list_phonebooks_fn, parent=self
+            )
+            self._phonebook_import_list_thread.finished_listing.connect(dialog.set_phonebooks)
+            self._phonebook_import_list_thread.listing_failed.connect(
+                dialog.set_phonebooks_unavailable
+            )
+            self._phonebook_import_list_thread.start()
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._phonebook_tab.import_from_box(dialog.selected_phonebook_ids())
 
     def _on_dial_succeeded(self, number: str) -> None:
         self.statusBar().showMessage(f"Anruf ausgelöst: {format_number_display(number)}", 5000)

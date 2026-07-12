@@ -55,7 +55,8 @@ class SettingsDialog(QDialog):
 
         self._phonebook_explanation_label = QLabel(
             "Legt fest, welche Telefonbücher der Box für die Namensauflösung "
-            "(Hintergrund-Abgleich) und für 'Von Box importieren…' verwendet werden."
+            "(Hintergrund-Abgleich) verwendet werden. 'Von Box importieren…' im "
+            "Telefonbuch-Menü fragt bei jedem Import separat nach."
         )
         self._phonebook_explanation_label.setWordWrap(True)
 

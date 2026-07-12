@@ -264,25 +264,19 @@ class PhonebookTab(QWidget):
         writer(path, contacts)
         QMessageBox.information(self, "Export abgeschlossen", f"{len(contacts)} Kontakt(e) exportiert.")
 
-    def import_from_box(self) -> None:
+    def import_from_box(self, phonebook_ids: list[int]) -> None:
+        """*phonebook_ids* kommt aus MainWindow._open_phonebook_import_dialog()'s
+        PhonebookPickerDialog - die Auswahl dort dient bereits als Bestätigung,
+        daher kein zusätzlicher QMessageBox.question() mehr hier."""
         if self._import_from_box_fn is None or (
             self._import_thread is not None and self._import_thread.isRunning()
         ):
             return
-        answer = QMessageBox.question(
-            self,
-            "Von Box importieren",
-            "Kontakte aus dem Fritz!Box-Telefonbuch werden importiert bzw. mit bereits "
-            "importierten Kontakten abgeglichen (per eindeutiger Box-Id). Rein lokal "
-            "angelegte Kontakte werden nur dann automatisch verknüpft, wenn ihre "
-            "Rufnummern exakt mit einem Box-Eintrag übereinstimmen - andernfalls können "
-            "Duplikate entstehen. Fortfahren?",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
 
         self.import_from_box_availability_changed.emit(False)
-        self._import_thread = ImportFromBoxWorker(self._import_from_box_fn, parent=self)
+        self._import_thread = ImportFromBoxWorker(
+            self._import_from_box_fn, phonebook_ids, parent=self
+        )
         self._import_thread.finished_import.connect(self._on_import_from_box_finished)
         self._import_thread.import_failed.connect(self._on_import_from_box_failed)
         self._import_thread.start()

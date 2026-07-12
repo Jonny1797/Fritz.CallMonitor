@@ -1,12 +1,13 @@
 import threading
 
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxConnectionError
 from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
 from fritz_callhistory.gui.main_window import MainWindow
+from fritz_callhistory.gui.phonebook_view import PhonebookTab
 
 
 def test_sync_action_disabled_without_sync_fn(qtbot, connection):
@@ -277,20 +278,16 @@ def test_close_while_box_import_running_defers_until_import_finishes(qtbot, conn
     # just user-triggered instead of started automatically on startup.
     release_import = threading.Event()
 
-    def slow_import():
+    def slow_import(phonebook_ids):
         release_import.wait(5)
         return 0
 
-    mocker.patch(
-        "fritz_callhistory.gui.phonebook_view.QMessageBox.question",
-        return_value=QMessageBox.StandardButton.Yes,
-    )
     mocker.patch("fritz_callhistory.gui.phonebook_view.QMessageBox.information")
 
     window = MainWindow(connection, import_from_box_fn=slow_import)
     qtbot.addWidget(window)
     window.show()
-    window._phonebook_tab.import_from_box()
+    window._phonebook_tab.import_from_box([0])
     qtbot.waitUntil(
         lambda: window._phonebook_tab.import_thread is not None
         and window._phonebook_tab.import_thread.isRunning(),
@@ -714,7 +711,7 @@ def test_telefonbuch_menu_import_from_box_action_reflects_availability(qtbot, co
     qtbot.addWidget(window)
     assert window._phonebook_import_from_box_action.isEnabled() is False
 
-    window2 = MainWindow(connection, import_from_box_fn=lambda: 0)
+    window2 = MainWindow(connection, import_from_box_fn=lambda phonebook_ids: 0)
     qtbot.addWidget(window2)
     assert window2._phonebook_import_from_box_action.isEnabled() is True
 
@@ -773,3 +770,65 @@ def test_open_settings_dialog_starts_phonebook_list_worker_when_available(qtbot,
 
     mock_worker_cls.assert_called_once_with(list_phonebooks_fn, parent=window)
     mock_worker.start.assert_called_once()
+
+
+def test_open_phonebook_import_dialog_without_list_phonebooks_fn_marks_unavailable(
+    qtbot, connection, mocker
+):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    mock_set_unavailable = mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.set_phonebooks_unavailable"
+    )
+    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
+
+    window = MainWindow(connection, list_phonebooks_fn=None)
+    qtbot.addWidget(window)
+
+    window._open_phonebook_import_dialog()
+
+    mock_set_unavailable.assert_called_once()
+    mock_worker_cls.assert_not_called()
+
+
+def test_open_phonebook_import_dialog_starts_phonebook_list_worker_when_available(
+    qtbot, connection, mocker
+):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
+    mock_worker = mock_worker_cls.return_value
+
+    list_phonebooks_fn = mocker.Mock(return_value=[(0, "Telefonbuch")])
+    window = MainWindow(connection, list_phonebooks_fn=list_phonebooks_fn)
+    qtbot.addWidget(window)
+
+    window._open_phonebook_import_dialog()
+
+    mock_worker_cls.assert_called_once_with(list_phonebooks_fn, parent=window)
+    mock_worker.start.assert_called_once()
+
+
+def test_open_phonebook_import_dialog_calls_import_from_box_with_selected_ids_on_accept(
+    qtbot, connection, mocker
+):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
+        return_value=QDialog.DialogCode.Accepted,
+    )
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.selected_phonebook_ids",
+        return_value=[0, 2],
+    )
+    mock_import_from_box = mocker.patch.object(PhonebookTab, "import_from_box")
+
+    window = MainWindow(connection, list_phonebooks_fn=None)
+    qtbot.addWidget(window)
+
+    window._open_phonebook_import_dialog()
+
+    mock_import_from_box.assert_called_once_with([0, 2])

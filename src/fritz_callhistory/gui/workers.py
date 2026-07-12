@@ -13,7 +13,7 @@ from fritz_callhistory.fritz.exceptions import (
 )
 
 SyncFn = Callable[[], tuple[int, int]]
-ImportFromBoxFn = Callable[[], int]
+ImportFromBoxFn = Callable[[list[int]], int]
 DialFn = Callable[[str], None]
 VoicemailAudioFn = Callable[[], bytes]
 ListPhonebooksFn = Callable[[], list[tuple[int, str]]]
@@ -58,13 +58,14 @@ class ImportFromBoxWorker(QThread):
     finished_import = Signal(int)  # Anzahl importierter/aktualisierter Kontakte
     import_failed = Signal(str)
 
-    def __init__(self, import_fn: ImportFromBoxFn, parent=None) -> None:
+    def __init__(self, import_fn: ImportFromBoxFn, phonebook_ids: list[int], parent=None) -> None:
         super().__init__(parent)
         self._import_fn = import_fn
+        self._phonebook_ids = phonebook_ids
 
     def run(self) -> None:
         try:
-            imported = self._import_fn()
+            imported = self._import_fn(self._phonebook_ids)
         except FritzBoxError as exc:
             self.import_failed.emit(str(exc))
             return

@@ -108,16 +108,15 @@ def _build_import_from_box_fn(
 
     ref = credentials_ref or _CredentialsRef(cfg)
 
-    def import_from_box_fn() -> int:
+    def import_from_box_fn(phonebook_ids: list[int]) -> int:
         current = ref.cfg
         current_password = credentials.get_password(current.username)
         worker_connection = connect(database_file())
         try:
             client = FritzBoxClient(current.address, current.username, current_password)
             local_repo = LocalPhonebookRepository(worker_connection)
-            ids = current.resolved_phonebook_ids() or client.phonebook_ids()
             imported = 0
-            for phonebook_id in ids:
+            for phonebook_id in phonebook_ids:
                 for box_contact in client.phonebook_contacts_detailed(phonebook_id):
                     if not box_contact.name:
                         continue

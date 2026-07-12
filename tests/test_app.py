@@ -121,7 +121,6 @@ def test_build_import_from_box_fn_runs_in_real_worker_thread_and_creates_contact
     mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
 
     fake_client = mocker.Mock()
-    fake_client.phonebook_ids.return_value = [0]
     fake_client.phonebook_contacts_detailed.return_value = [
         FritzPhonebookContact(
             uniqueid="7",
@@ -136,7 +135,7 @@ def test_build_import_from_box_fn_runs_in_real_worker_thread_and_creates_contact
     import_fn = _build_import_from_box_fn(cfg)
     assert import_fn is not None
 
-    worker = ImportFromBoxWorker(import_fn)
+    worker = ImportFromBoxWorker(import_fn, [0])
     failures = []
     worker.import_failed.connect(failures.append)
 
@@ -181,7 +180,6 @@ def test_build_import_from_box_fn_preserves_default_number_across_reimport(
     connection.close()
 
     fake_client = mocker.Mock()
-    fake_client.phonebook_ids.return_value = [0]
     fake_client.phonebook_contacts_detailed.return_value = [
         FritzPhonebookContact(
             uniqueid="7",
@@ -199,7 +197,7 @@ def test_build_import_from_box_fn_preserves_default_number_across_reimport(
     import_fn = _build_import_from_box_fn(cfg)
     assert import_fn is not None
 
-    worker = ImportFromBoxWorker(import_fn)
+    worker = ImportFromBoxWorker(import_fn, [0])
     failures = []
     worker.import_failed.connect(failures.append)
 
@@ -215,6 +213,34 @@ def test_build_import_from_box_fn_preserves_default_number_across_reimport(
         "+491712345678": False,
         "+49301234567": True,
     }
+
+
+def test_build_import_from_box_fn_only_queries_selected_phonebook_ids(qtbot, tmp_path, mocker):
+    # Regression guard for the "picker chooses ids at import time" split: the
+    # closure must use exactly the ids ImportFromBoxWorker passes it, not fall
+    # back to every phonebook the box has (that fallback was removed together
+    # with the config-driven "Von Box importieren" selection).
+    db_path = tmp_path / "callhistory.sqlite3"
+    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+
+    fake_client = mocker.Mock()
+    fake_client.phonebook_contacts_detailed.return_value = []
+    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    import_fn = _build_import_from_box_fn(cfg)
+    assert import_fn is not None
+
+    worker = ImportFromBoxWorker(import_fn, [2])
+    failures = []
+    worker.import_failed.connect(failures.append)
+
+    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True):
+        worker.start()
+
+    assert failures == []
+    fake_client.phonebook_contacts_detailed.assert_called_once_with(2)
 
 
 def test_build_import_from_box_fn_returns_none_without_stored_password(mocker):

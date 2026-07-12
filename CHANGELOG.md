@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Telefonbücher einbeziehen" also stays selectable in that case, since it
   doesn't require knowing the box's phonebook names.
 
+### Changed
+
+- "Von Box importieren…" now asks which of the box's phonebooks to import
+  from each time it's run, via a small live-fetched picker dialog, instead
+  of reusing the Einstellungen phonebook selection. That setting now only
+  controls background name resolution.
+
 ## [0.11.0] - 2026-07-12
 
 ### Added

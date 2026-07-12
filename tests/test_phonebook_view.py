@@ -38,7 +38,7 @@ def test_import_from_box_disabled_without_fn(qtbot, connection):
 
 
 def test_import_from_box_enabled_with_fn(qtbot, connection):
-    tab = PhonebookTab(connection, import_from_box_fn=lambda: 0)
+    tab = PhonebookTab(connection, import_from_box_fn=lambda phonebook_ids: 0)
     qtbot.addWidget(tab)
     assert tab.can_import_from_box is True
 

@@ -62,7 +62,7 @@ def test_sync_worker_emits_failed_signal_on_unexpected_error(qtbot):
 
 
 def test_import_from_box_worker_emits_finished_signal_with_result(qtbot):
-    worker = ImportFromBoxWorker(lambda: 5)
+    worker = ImportFromBoxWorker(lambda phonebook_ids: 5, [0])
 
     with qtbot.waitSignal(worker.finished_import, timeout=2000) as blocker:
         worker.start()
@@ -70,11 +70,26 @@ def test_import_from_box_worker_emits_finished_signal_with_result(qtbot):
     assert blocker.args == [5]
 
 
+def test_import_from_box_worker_passes_phonebook_ids_to_import_fn(qtbot):
+    captured = {}
+
+    def import_fn(phonebook_ids):
+        captured["ids"] = phonebook_ids
+        return 0
+
+    worker = ImportFromBoxWorker(import_fn, [0, 2])
+
+    with qtbot.waitSignal(worker.finished_import, timeout=2000):
+        worker.start()
+
+    assert captured["ids"] == [0, 2]
+
+
 def test_import_from_box_worker_emits_failed_signal_on_fritzbox_error(qtbot):
-    def import_fn():
+    def import_fn(phonebook_ids):
         raise FritzBoxConnectionError("Box nicht erreichbar")
 
-    worker = ImportFromBoxWorker(import_fn)
+    worker = ImportFromBoxWorker(import_fn, [0])
 
     with qtbot.waitSignal(worker.import_failed, timeout=2000) as blocker:
         worker.start()
@@ -83,10 +98,10 @@ def test_import_from_box_worker_emits_failed_signal_on_fritzbox_error(qtbot):
 
 
 def test_import_from_box_worker_emits_failed_signal_on_unexpected_error(qtbot):
-    def import_fn():
+    def import_fn(phonebook_ids):
         raise ValueError("boom")
 
-    worker = ImportFromBoxWorker(import_fn)
+    worker = ImportFromBoxWorker(import_fn, [0])
 
     with qtbot.waitSignal(worker.import_failed, timeout=2000) as blocker:
         worker.start()

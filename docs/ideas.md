@@ -55,3 +55,17 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   runtime-reconfiguration plumbing today. A real fix needs a setter on
   `MainWindow` for the timer interval and a way to rebuild/replace the
   `sync_fn`/`import_from_box_fn` closures when phonebook IDs change.
+- **`PhonebookListWorker` threads aren't covered by the shutdown-safety
+  wait** — `MainWindow._busy_worker_threads()` (the list `closeEvent()`
+  waits on before actually quitting, to avoid the SIGABRT-on-destroying-a-
+  running-QThread failure mode documented there) enumerates
+  `SyncWorker`/`ImportFromBoxWorker`/`DialWorker`/`VoicemailAudioWorker`/
+  `VoicemailActionWorker`, but not the `PhonebookListWorker` threads started
+  by `_open_settings_dialog()` (`self._phonebook_list_thread`) or
+  `_open_phonebook_import_dialog()` (`self._phonebook_import_list_thread`).
+  Both are deliberately parented to `MainWindow` rather than their dialog so
+  a slow fetch survives the dialog being closed - but that means quitting
+  the app while either fetch is still in flight isn't guarded the same way.
+  Low real-world risk (a single TR-064 list call, and it has to race the
+  user closing the app in that exact window), but a real fix would add both
+  attributes to `_busy_worker_threads()`.
