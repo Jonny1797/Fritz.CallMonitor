@@ -1,5 +1,10 @@
-from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
+from fritz_callhistory.fritz.exceptions import (
+    FritzBoxAuthError,
+    FritzBoxConnectionError,
+    FritzBoxPermissionError,
+)
 from fritz_callhistory.gui.workers import (
+    CredentialsTestWorker,
     DialWorker,
     ImportFromBoxWorker,
     SyncWorker,
@@ -27,6 +32,21 @@ def test_sync_worker_emits_failed_signal_on_fritzbox_error(qtbot):
         worker.start()
 
     assert blocker.args == ["Box nicht erreichbar"]
+
+
+def test_sync_worker_emits_auth_failed_signal_on_auth_error(qtbot):
+    def sync_fn():
+        raise FritzBoxAuthError("401 Unauthorized")
+
+    worker = SyncWorker(sync_fn)
+    generic_failures = []
+    worker.sync_failed.connect(generic_failures.append)
+
+    with qtbot.waitSignal(worker.auth_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == ["401 Unauthorized"]
+    assert generic_failures == []  # nicht auch noch das generische Signal
 
 
 def test_sync_worker_emits_failed_signal_on_unexpected_error(qtbot):
@@ -136,6 +156,65 @@ def test_voicemail_audio_worker_emits_failed_signal_on_unexpected_error(qtbot):
     worker = VoicemailAudioWorker(audio_fn)
 
     with qtbot.waitSignal(worker.audio_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert "boom" in blocker.args[0]
+
+
+def test_credentials_test_worker_emits_succeeded_signal(qtbot):
+    worker = CredentialsTestWorker(lambda: None)
+
+    with qtbot.waitSignal(worker.test_succeeded, timeout=2000):
+        worker.start()
+
+
+def test_credentials_test_worker_emits_auth_failed_signal_on_auth_error(qtbot):
+    def test_fn():
+        raise FritzBoxAuthError("401 Unauthorized")
+
+    worker = CredentialsTestWorker(test_fn)
+    other_signals = []
+    worker.connection_failed.connect(other_signals.append)
+    worker.permission_denied.connect(other_signals.append)
+
+    with qtbot.waitSignal(worker.auth_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == ["401 Unauthorized"]
+    assert other_signals == []
+
+
+def test_credentials_test_worker_emits_permission_denied_signal_on_permission_error(qtbot):
+    def test_fn():
+        raise FritzBoxPermissionError("fehlendes Recht")
+
+    worker = CredentialsTestWorker(test_fn)
+
+    with qtbot.waitSignal(worker.permission_denied, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == ["fehlendes Recht"]
+
+
+def test_credentials_test_worker_emits_connection_failed_signal_on_connection_error(qtbot):
+    def test_fn():
+        raise FritzBoxConnectionError("Box nicht erreichbar")
+
+    worker = CredentialsTestWorker(test_fn)
+
+    with qtbot.waitSignal(worker.connection_failed, timeout=2000) as blocker:
+        worker.start()
+
+    assert blocker.args == ["Box nicht erreichbar"]
+
+
+def test_credentials_test_worker_emits_connection_failed_signal_on_unexpected_error(qtbot):
+    def test_fn():
+        raise ValueError("boom")
+
+    worker = CredentialsTestWorker(test_fn)
+
+    with qtbot.waitSignal(worker.connection_failed, timeout=2000) as blocker:
         worker.start()
 
     assert "boom" in blocker.args[0]

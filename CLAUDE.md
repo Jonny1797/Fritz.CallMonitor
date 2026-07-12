@@ -11,7 +11,9 @@ A PySide6 desktop app that connects to an AVM Fritz!Box (TR-064) and shows a sea
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/2.0.0/). Whenever a notable
 feature or fix is implemented, add an entry under `[Unreleased]` (in the right `Added`/`Changed`/
 `Fixed`/etc. section). When cutting a new release, rename `[Unreleased]` to the new version + date
-and open a fresh `[Unreleased]` section above it.
+and open a fresh `[Unreleased]` section above it. Entries are always written in English, even
+though in-app strings and code comments are German — UI label names quoted inside an entry (e.g.
+"Telefonbuch", "Alle Anrufe") stay as the literal German string shown in the app.
 
 ## Commands
 

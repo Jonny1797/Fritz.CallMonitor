@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Callable
 
 from PySide6.QtCore import QThread, QTimer, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
@@ -20,10 +21,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
 from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
+from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 from fritz_callhistory.gui.incoming_call_popup import IncomingCallPopup
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from fritz_callhistory.gui.settings_dialog import SettingsDialog
@@ -36,6 +39,7 @@ from fritz_callhistory.gui.workers import (
     PhonebookListWorker,
     SyncFn,
     SyncWorker,
+    TestCredentialsFn,
 )
 from fritz_callhistory.sync.normalize import format_number_display, normalize_number
 
@@ -62,6 +66,8 @@ class MainWindow(QMainWindow):
         voicemail_delete_fn: VoicemailActionFn | None = None,
         config: Config | None = None,
         list_phonebooks_fn: ListPhonebooksFn | None = None,
+        update_credentials_fn: Callable[[Config], None] | None = None,
+        test_credentials_fn: TestCredentialsFn | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
@@ -76,6 +82,10 @@ class MainWindow(QMainWindow):
         self._phonebook_list_thread: PhonebookListWorker | None = None
         self._close_requested = False
         self._shutdown_failsafe_timer: QTimer | None = None
+        self._update_credentials_fn = update_credentials_fn
+        self._test_credentials_fn = test_credentials_fn
+        self._sync_auth_declined = False
+        self._last_sync_user_initiated = False
 
         self._contacts_repo = ContactRepository(connection)
         self._local_phonebook_repo = LocalPhonebookRepository(connection)
@@ -128,15 +138,18 @@ class MainWindow(QMainWindow):
         # Elternschaft (menuBar()) eigentlich am Leben gehalten werden sollte.
         self._sync_action = QAction("Jetzt synchronisieren", self)
         self._sync_action.setShortcut(QKeySequence("F5"))
-        self._sync_action.triggered.connect(self._trigger_sync)
+        self._sync_action.triggered.connect(lambda: self._trigger_sync(user_initiated=True))
         self._sync_action.setEnabled(self._sync_fn is not None)
 
         self._settings_action = QAction("Einstellungen…", self)
         self._settings_action.triggered.connect(self._open_settings_dialog)
+        self._credentials_action = QAction("Zugangsdaten ändern…", self)
+        self._credentials_action.triggered.connect(self._open_credentials_dialog)
         self._file_menu = self.menuBar().addMenu("Datei")
         self._file_menu.addAction(self._sync_action)
         self._file_menu.addSeparator()
         self._file_menu.addAction(self._settings_action)
+        self._file_menu.addAction(self._credentials_action)
 
         self._phonebook_import_action = QAction("Importieren …", self)
         self._phonebook_import_action.triggered.connect(self._phonebook_tab.import_from_file)
@@ -402,7 +415,7 @@ class MainWindow(QMainWindow):
     def _on_dial_failed(self, message: str) -> None:
         self.statusBar().showMessage(f"Anruf fehlgeschlagen: {message}", 8000)
 
-    def _trigger_sync(self) -> None:
+    def _trigger_sync(self, user_initiated: bool = False) -> None:
         # _close_requested-Check ist nötig, weil der Start-Sync per
         # singleShot(0, ...) erst in einem späteren Event-Loop-Durchlauf
         # feuert - schliesst der Nutzer das Fenster, bevor dieser Zero-Delay-
@@ -419,14 +432,17 @@ class MainWindow(QMainWindow):
             return
         self._sync_action.setEnabled(False)
         self.statusBar().showMessage("Synchronisiere mit der Fritz!Box …")
+        self._last_sync_user_initiated = user_initiated
 
         self._sync_thread = SyncWorker(self._sync_fn, parent=self)
         self._sync_thread.finished_sync.connect(self._on_sync_finished)
         self._sync_thread.sync_failed.connect(self._on_sync_failed)
+        self._sync_thread.auth_failed.connect(self._on_sync_auth_failed)
         self._sync_thread.start()
 
     def _on_sync_finished(self, inserted: int, updated: int) -> None:
         self._sync_action.setEnabled(True)
+        self._sync_auth_declined = False
         self.statusBar().showMessage(
             f"Sync abgeschlossen: {inserted} neue Anrufe, {updated} Kontakte aktualisiert", 5000
         )
@@ -438,3 +454,48 @@ class MainWindow(QMainWindow):
     def _on_sync_failed(self, message: str) -> None:
         self._sync_action.setEnabled(True)
         self.statusBar().showMessage(f"Sync fehlgeschlagen: {message}", 8000)
+
+    def _on_sync_auth_failed(self, message: str) -> None:
+        # Nur bei einem manuell ausgelösten Sync (F5) oder wenn der Nutzer den
+        # Dialog beim letzten automatischen Fehlschlag noch nicht abgelehnt
+        # hat, wird der Dialog erneut gezeigt - sonst würde der Auto-Sync-Timer
+        # (alle sync_interval_minutes) den Dialog endlos erneut aufpoppen,
+        # solange die Zugangsdaten falsch bleiben.
+        self._sync_action.setEnabled(True)
+        if not self._last_sync_user_initiated and self._sync_auth_declined:
+            self.statusBar().showMessage(
+                f"Sync fehlgeschlagen: Zugangsdaten prüfen ({message})", 8000
+            )
+            return
+
+        QMessageBox.warning(
+            self,
+            "Anmeldung fehlgeschlagen",
+            "Benutzername oder Passwort für die Fritz!Box sind falsch. "
+            "Bitte Zugangsdaten prüfen.",
+        )
+        dialog = CredentialsDialog(
+            config_module.load(), test_connection_fn=self._test_credentials_fn, parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_config = dialog.save(config_module.load())
+            self._config = new_config
+            if self._update_credentials_fn is not None:
+                self._update_credentials_fn(new_config)
+            self._sync_auth_declined = False
+            self._trigger_sync(user_initiated=True)
+        else:
+            self._sync_auth_declined = True
+            self.statusBar().showMessage("Sync fehlgeschlagen: Zugangsdaten nicht geändert", 8000)
+
+    def _open_credentials_dialog(self) -> None:
+        dialog = CredentialsDialog(
+            config_module.load(), test_connection_fn=self._test_credentials_fn, parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_config = dialog.save(config_module.load())
+            self._config = new_config
+            if self._update_credentials_fn is not None:
+                self._update_credentials_fn(new_config)
+            self._sync_auth_declined = False
+            self.statusBar().showMessage("Zugangsdaten gespeichert.", 5000)

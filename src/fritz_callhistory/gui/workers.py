@@ -6,13 +6,18 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QThread, Signal
 
-from fritz_callhistory.fritz.exceptions import FritzBoxError
+from fritz_callhistory.fritz.exceptions import (
+    FritzBoxAuthError,
+    FritzBoxError,
+    FritzBoxPermissionError,
+)
 
 SyncFn = Callable[[], tuple[int, int]]
 ImportFromBoxFn = Callable[[], int]
 DialFn = Callable[[str], None]
 VoicemailAudioFn = Callable[[], bytes]
 ListPhonebooksFn = Callable[[], list[tuple[int, str]]]
+TestCredentialsFn = Callable[[str, str, str], None]
 
 
 class SyncWorker(QThread):
@@ -22,6 +27,9 @@ class SyncWorker(QThread):
 
     finished_sync = Signal(int, int)  # (neue Anrufe, aktualisierte Kontakte)
     sync_failed = Signal(str)
+    auth_failed = Signal(str)  # Login fehlgeschlagen - separat, damit MainWindow gezielt zur
+    # erneuten Eingabe der Zugangsdaten auffordern kann, statt nur eine Statusleisten-Meldung
+    # zu zeigen (siehe MainWindow._on_sync_auth_failed).
 
     def __init__(self, sync_fn: SyncFn, parent=None) -> None:
         super().__init__(parent)
@@ -30,6 +38,9 @@ class SyncWorker(QThread):
     def run(self) -> None:
         try:
             inserted, updated = self._sync_fn()
+        except FritzBoxAuthError as exc:
+            self.auth_failed.emit(str(exc))
+            return
         except FritzBoxError as exc:
             self.sync_failed.emit(str(exc))
             return
@@ -160,3 +171,42 @@ class VoicemailAudioWorker(QThread):
             self.audio_failed.emit(f"Unerwarteter Fehler: {exc}")
             return
         self.audio_ready.emit(data)
+
+
+class CredentialsTestWorker(QThread):
+    """Verifiziert Adresse/Benutzername/Passwort per echtem, authentifiziertem
+    Aufruf in einem eigenen Thread, damit CredentialsDialog beim OK-Klick nicht
+    ungeprüft schliesst (siehe app.py's _build_test_credentials_fn - nur die
+    FritzConnection-Konstruktion reicht nicht, die schlägt bei falschem Passwort
+    nicht zuverlässig fehl)."""
+
+    test_succeeded = Signal()
+    auth_failed = Signal(str)
+    # Auf einer echten Box nicht zuverlässig von einem falschen Passwort zu
+    # unterscheiden - AVM liefert für "falsches Passwort" wie für "richtiges
+    # Passwort, aber fehlendes Anrufliste-Recht" denselben Fehlertyp
+    # (FritzAuthorizationError -> FritzBoxPermissionError). Empfänger sollten
+    # dieses Signal daher wie auth_failed behandeln, nicht als Erfolg werten.
+    permission_denied = Signal(str)
+    connection_failed = Signal(str)
+
+    def __init__(self, test_fn: Callable[[], None], parent=None) -> None:
+        super().__init__(parent)
+        self._test_fn = test_fn
+
+    def run(self) -> None:
+        try:
+            self._test_fn()
+        except FritzBoxAuthError as exc:
+            self.auth_failed.emit(str(exc))
+            return
+        except FritzBoxPermissionError as exc:
+            self.permission_denied.emit(str(exc))
+            return
+        except FritzBoxError as exc:
+            self.connection_failed.emit(str(exc))
+            return
+        except Exception as exc:  # Thread darf nie stillschweigend sterben
+            self.connection_failed.emit(f"Unerwarteter Fehler: {exc}")
+            return
+        self.test_succeeded.emit()

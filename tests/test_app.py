@@ -1,9 +1,12 @@
 from fritz_callhistory.app import (
+    _build_dial_fn,
     _build_import_from_box_fn,
     _build_sync_fn,
+    _build_test_credentials_fn,
     _build_voicemail_audio_fn,
     _build_voicemail_delete_fn,
     _build_voicemail_mark_read_fn,
+    _CredentialsRef,
     _handle_sigint,
 )
 from fritz_callhistory.config import Config
@@ -44,6 +47,70 @@ def test_build_sync_fn_runs_in_real_worker_thread_without_connection_errors(qtbo
 
     assert failures == []
     assert blocker.args == [0, 0]
+
+
+def test_build_sync_fn_reads_updated_credentials_ref_on_retry(qtbot, tmp_path, mocker):
+    """Nach einer im laufenden Betrieb korrigierten CredentialsDialog-Eingabe
+    (MainWindow._on_sync_auth_failed) muss der bereits gebaute sync_fn-Closure
+    beim nächsten Aufruf die neue Adresse/den neuen Benutzernamen verwenden,
+    ohne neu gebaut zu werden - siehe _CredentialsRef."""
+    db_path = tmp_path / "callhistory.sqlite3"
+    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+
+    fake_client = mocker.Mock()
+    fake_client.get_calls.return_value = []
+    fake_client.phonebook_ids.return_value = []
+    fake_client.voicemail_tam_indices.return_value = []
+    fake_client_cls = mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    ref = _CredentialsRef(cfg)
+    sync_fn = _build_sync_fn(cfg, ref)
+    assert sync_fn is not None
+
+    worker = SyncWorker(sync_fn)
+    with qtbot.waitSignal(worker.finished_sync, timeout=3000, raising=True):
+        worker.start()
+    fake_client_cls.assert_called_with("192.168.178.1", "admin", "secret")
+
+    ref.cfg = Config(address="192.168.178.2", username="admin2")
+    worker2 = SyncWorker(sync_fn)
+    with qtbot.waitSignal(worker2.finished_sync, timeout=3000, raising=True):
+        worker2.start()
+    fake_client_cls.assert_called_with("192.168.178.2", "admin2", "secret")
+
+
+def test_build_test_credentials_fn_verifies_login_via_get_calls(mocker):
+    """Reines FritzBoxClient(...)-Konstruieren reicht nicht, um ein falsches Passwort
+    zu erkennen (fritzconnection prüft den Login erst beim ersten authentifizierten
+    Aufruf) - _build_test_credentials_fn muss deshalb zusätzlich get_calls() rufen."""
+    fake_client = mocker.Mock()
+    fake_client_cls = mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    test_fn = _build_test_credentials_fn()
+    test_fn("192.168.178.1", "admin", "secret")
+
+    fake_client_cls.assert_called_once_with("192.168.178.1", "admin", "secret")
+    fake_client.get_calls.assert_called_once_with(num=1)
+
+
+def test_build_dial_fn_reads_updated_credentials_ref_on_next_call(mocker):
+    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
+    fake_client = mocker.Mock()
+    fake_client_cls = mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
+
+    cfg = Config(address="192.168.178.1", username="admin")
+    ref = _CredentialsRef(cfg)
+    dial_fn = _build_dial_fn(cfg, ref)
+    assert dial_fn is not None
+
+    dial_fn("+491234567")
+    fake_client_cls.assert_called_with("192.168.178.1", "admin", "secret")
+
+    ref.cfg = Config(address="192.168.178.2", username="admin2")
+    dial_fn("+491234567")
+    fake_client_cls.assert_called_with("192.168.178.2", "admin2", "secret")
 
 
 def test_build_import_from_box_fn_runs_in_real_worker_thread_and_creates_contact(

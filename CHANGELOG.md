@@ -7,22 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Fritz!Box credentials: if a sync fails due to wrong credentials
+  (username/password), the credentials dialog is shown again and the sync
+  is automatically retried after saving — no more app restart needed. A
+  new "Zugangsdaten ändern…" menu item also allows changing credentials
+  manually at any time.
+- Credentials dialog: "Passwort anzeigen" checkbox to verify the typed
+  password in plain text.
+
+### Fixed
+
+- Credentials dialog: OK used to close the dialog immediately without
+  actually verifying the entered credentials against the box — a wrong
+  address/username/password went unnoticed until the next sync failed.
+  OK now verifies the connection via a real, authenticated call (in the
+  background; the dialog stays open and locked meanwhile); on failure the
+  dialog stays open with an error message instead of closing.
+
 ## [0.10.0] - 2026-07-12
 
 ### Added
 
-- Telefonbuch-Import: CSV-Dateien aus gängigen Adressbuch-Exportformaten
-  (ein Kontakt pro Zeile, Semikolon-getrennt, Spalten wie "Last Name",
-  "First Name", "Company", "Home"/"Mobile"/"Business"/"Fax" etc.) werden
-  jetzt zusätzlich zum bisherigen eigenen Export-Format erkannt und
-  importiert.
+- Phonebook import: CSV files from common address-book export formats
+  (one contact per line, semicolon-separated, columns like "Last Name",
+  "First Name", "Company", "Home"/"Mobile"/"Business"/"Fax" etc.) are now
+  recognized and imported in addition to the app's own export format.
 
 ### Fixed
 
-- Telefonbuch-Import (CSV/vCard): Dateien mit cp1252/ISO-8859-1-Kodierung
-  (z.B. Exporte aus jAnrufmonitor oder älteren Windows-Adressbüchern)
-  führten zu einem Absturz (`UnicodeDecodeError`) statt einer Fehlermeldung;
-  werden jetzt automatisch per Fallback korrekt gelesen.
+- Phonebook import (CSV/vCard): files with cp1252/ISO-8859-1 encoding
+  (e.g. exports from jAnrufmonitor or older Windows address books) caused
+  a crash (`UnicodeDecodeError`) instead of an error message; these are
+  now read correctly via an automatic fallback.
 
 ## [0.9.0] - 2026-07-11
 

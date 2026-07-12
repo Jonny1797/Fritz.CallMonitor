@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton
 
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
-from fritz_callhistory.fritz.exceptions import FritzBoxConnectionError
+from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxConnectionError
 from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
 from fritz_callhistory.gui.main_window import MainWindow
 
@@ -64,6 +64,112 @@ def test_sync_action_shows_error_on_failure(qtbot, connection):
 
     assert "Box nicht erreichbar" in window.statusBar().currentMessage()
     assert window._sync_action.isEnabled()
+
+
+def test_sync_action_auth_failure_manual_reprompts_and_retries(qtbot, connection, mocker):
+    call_count = {"n": 0}
+
+    def flaky_sync():
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise FritzBoxAuthError("401 Unauthorized")
+        return (1, 0)
+
+    # Der Start-Sync (QTimer.singleShot(0, ...)) würde sonst mit dem manuellen
+    # Trigger um denselben sync_fn-Aufruf konkurrieren, sobald der Event-Loop
+    # während qtbot.waitUntil() läuft - hier deaktiviert, damit call_count
+    # deterministisch nur den manuellen Trigger + dessen Retry zählt.
+    mocker.patch("fritz_callhistory.gui.main_window.QTimer.singleShot")
+    mocker.patch("fritz_callhistory.gui.main_window.config_module.load", return_value=Config())
+    mock_warning = mocker.patch("fritz_callhistory.gui.main_window.QMessageBox.warning")
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.CredentialsDialog.exec",
+        return_value=QDialog.DialogCode.Accepted,
+    )
+    new_config = Config(username="admin2")
+    mocker.patch("fritz_callhistory.gui.main_window.CredentialsDialog.save", return_value=new_config)
+    updated_configs = []
+
+    window = MainWindow(connection, sync_fn=flaky_sync, update_credentials_fn=updated_configs.append)
+    qtbot.addWidget(window)
+
+    window._sync_action.trigger()
+
+    qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
+
+    mock_warning.assert_called_once()
+    assert updated_configs == [new_config]
+    assert window._config is new_config
+    assert window._sync_auth_declined is False
+    assert call_count["n"] == 2
+
+
+def test_on_sync_auth_failed_manual_decline_sets_declined_flag(qtbot, connection, mocker):
+    mocker.patch("fritz_callhistory.gui.main_window.config_module.load", return_value=Config())
+    mocker.patch("fritz_callhistory.gui.main_window.QMessageBox.warning")
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.CredentialsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window._last_sync_user_initiated = True
+
+    window._on_sync_auth_failed("401 Unauthorized")
+
+    assert window._sync_auth_declined is True
+    assert "nicht geändert" in window.statusBar().currentMessage()
+
+
+def test_on_sync_auth_failed_automatic_suppressed_after_decline(qtbot, connection, mocker):
+    # Ohne diese Sperre würde der Auto-Sync-Timer den Dialog bei weiterhin
+    # falschen Zugangsdaten alle sync_interval_minutes erneut aufpoppen lassen.
+    mocker.patch("fritz_callhistory.gui.main_window.config_module.load", return_value=Config())
+    mocker.patch("fritz_callhistory.gui.main_window.QMessageBox.warning")
+    mock_exec = mocker.patch("fritz_callhistory.gui.main_window.CredentialsDialog.exec")
+
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    window._sync_auth_declined = True
+    window._last_sync_user_initiated = False
+
+    window._on_sync_auth_failed("401 Unauthorized")
+
+    mock_exec.assert_not_called()
+    assert "Zugangsdaten prüfen" in window.statusBar().currentMessage()
+
+
+def test_open_credentials_dialog_saves_and_updates_credentials_ref(qtbot, connection, mocker):
+    mocker.patch("fritz_callhistory.gui.main_window.config_module.load", return_value=Config())
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.CredentialsDialog.exec",
+        return_value=QDialog.DialogCode.Accepted,
+    )
+    new_config = Config(username="admin2")
+    mocker.patch("fritz_callhistory.gui.main_window.CredentialsDialog.save", return_value=new_config)
+    updated_configs = []
+
+    window = MainWindow(connection, update_credentials_fn=updated_configs.append)
+    qtbot.addWidget(window)
+    window._sync_auth_declined = True
+
+    window._open_credentials_dialog()
+
+    assert updated_configs == [new_config]
+    assert window._config is new_config
+    assert window._sync_auth_declined is False
+    assert "gespeichert" in window.statusBar().currentMessage()
+
+
+def test_datei_menu_has_credentials_action(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    file_action = next(a for a in window.menuBar().actions() if a.text() == "Datei")
+    file_menu = file_action.menu()
+    action_texts = [action.text() for action in file_menu.actions()]
+    assert "Zugangsdaten ändern…" in action_texts
 
 
 def test_close_while_sync_running_defers_until_sync_finishes(qtbot, connection):
