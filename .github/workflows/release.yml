@@ -14,10 +14,8 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            dist_name: fritz-callhistory
             asset_name: fritz-callhistory-linux-x86_64
           - os: windows-latest
-            dist_name: fritz-callhistory.exe
             asset_name: fritz-callhistory-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
@@ -36,7 +34,9 @@ jobs:
 
       - name: Rename artifact
         shell: bash
-        run: mv "dist/${{ matrix.dist_name }}" "dist/${{ matrix.asset_name }}"
+        # PyInstaller uses the spec's literal name="fritz-callhistory.exe" as
+        # the output filename on every platform, it does not strip .exe on Linux.
+        run: mv "dist/fritz-callhistory.exe" "dist/${{ matrix.asset_name }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
