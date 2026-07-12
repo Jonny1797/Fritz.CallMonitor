@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Settings dialog: the "Telefonbücher" picker now explains what it's used
+  for, and offers a manual comma-separated phonebook-ID entry field as a
+  fallback when the box is unreachable or no credentials are stored (the
+  name-based checkbox list needs a live connection to populate). "Alle
+  Telefonbücher einbeziehen" also stays selectable in that case, since it
+  doesn't require knowing the box's phonebook names.
+
 ## [0.11.0] - 2026-07-12
 
 ### Added

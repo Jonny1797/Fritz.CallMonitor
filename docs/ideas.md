@@ -55,10 +55,3 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
   runtime-reconfiguration plumbing today. A real fix needs a setter on
   `MainWindow` for the timer interval and a way to rebuild/replace the
   `sync_fn`/`import_from_box_fn` closures when phonebook IDs change.
-- **Phonebook picker has no offline fallback** — the settings dialog's
-  Telefonbücher picker needs a live box connection to fetch phonebook names
-  (`FritzBoxClient.phonebooks()`); if that fails or no credentials are
-  stored, the whole picker is disabled and `phonebook_ids` can't be changed
-  at all until connectivity is restored — even though the user might know
-  the numeric IDs already. A fallback manual-entry field (comma-separated
-  IDs, skipping the name lookup) would cover that case.

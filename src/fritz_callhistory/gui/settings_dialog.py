@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QSpinBox,
     QVBoxLayout,
 )
@@ -39,6 +40,8 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Einstellungen")
 
         self._phonebooks_loaded = False
+        self._manual_entry_active = False
+        self._parsed_manual_ids: list[int] = []
         self._phonebook_checkboxes: list[tuple[int, QCheckBox]] = []
         self._existing_phonebook_ids = set(config.phonebook_ids)
 
@@ -50,6 +53,12 @@ class SettingsDialog(QDialog):
         self._popup_checkbox = QCheckBox("Bei eingehenden Anrufen benachrichtigen")
         self._popup_checkbox.setChecked(config.show_incoming_call_popup)
 
+        self._phonebook_explanation_label = QLabel(
+            "Legt fest, welche Telefonbücher der Box für die Namensauflösung "
+            "(Hintergrund-Abgleich) und für 'Von Box importieren…' verwendet werden."
+        )
+        self._phonebook_explanation_label.setWordWrap(True)
+
         self._all_phonebooks_checkbox = QCheckBox("Alle Telefonbücher einbeziehen")
         self._all_phonebooks_checkbox.setChecked(not config.phonebook_ids)
         self._all_phonebooks_checkbox.toggled.connect(self._on_all_phonebooks_toggled)
@@ -58,10 +67,21 @@ class SettingsDialog(QDialog):
         self._phonebook_status_label = QLabel("Lade Telefonbücher …")
         self._phonebook_list_layout.addWidget(self._phonebook_status_label)
 
+        self._manual_ids_edit = QLineEdit()
+        self._manual_ids_edit.setPlaceholderText("z. B. 0, 1")
+        self._manual_ids_edit.setVisible(False)
+        self._manual_ids_error_label = QLabel("")
+        self._manual_ids_error_label.setWordWrap(True)
+        self._manual_ids_error_label.setStyleSheet("color: red;")
+        self._manual_ids_error_label.setVisible(False)
+
         phonebook_box = QGroupBox("Telefonbücher")
         phonebook_layout = QVBoxLayout(phonebook_box)
+        phonebook_layout.addWidget(self._phonebook_explanation_label)
         phonebook_layout.addWidget(self._all_phonebooks_checkbox)
         phonebook_layout.addLayout(self._phonebook_list_layout)
+        phonebook_layout.addWidget(self._manual_ids_edit)
+        phonebook_layout.addWidget(self._manual_ids_error_label)
 
         form = QFormLayout()
         form.addRow("Sync-Intervall", self._interval_spin)
@@ -83,6 +103,7 @@ class SettingsDialog(QDialog):
     def _on_all_phonebooks_toggled(self, checked: bool) -> None:
         for _pid, checkbox in self._phonebook_checkboxes:
             checkbox.setEnabled(not checked)
+        self._manual_ids_edit.setEnabled(not checked)
 
     def set_phonebooks(self, phonebooks: list[tuple[int, str]]) -> None:
         """Baut die Checkbox-Liste auf; checked, wenn die id in config.phonebook_ids
@@ -97,10 +118,46 @@ class SettingsDialog(QDialog):
         self._phonebooks_loaded = True
 
     def set_phonebooks_unavailable(self, message: str) -> None:
-        """Kein list_phonebooks_fn (keine Zugangsdaten) oder Ladefehler - Picker bleibt
-        deaktiviert, phonebook_ids wird beim Speichern unverändert übernommen."""
+        """Kein list_phonebooks_fn (keine Zugangsdaten) oder Ladefehler - Namen können
+        nicht aufgelöst werden, daher bleibt nur die Checkbox-Liste deaktiviert. "Alle
+        Telefonbücher einbeziehen" bleibt wählbar (braucht keine Box-Verbindung), und
+        ein manuelles ID-Eingabefeld füllt die Lücke für alles andere."""
         self._phonebook_status_label.setText(message)
-        self._all_phonebooks_checkbox.setEnabled(False)
+        self._manual_entry_active = True
+        self._manual_ids_edit.setVisible(True)
+        self._manual_ids_edit.setText(
+            ", ".join(str(pid) for pid in sorted(self._existing_phonebook_ids))
+        )
+        self._manual_ids_edit.setEnabled(not self._all_phonebooks_checkbox.isChecked())
+
+    @staticmethod
+    def _parse_manual_ids(text: str) -> list[int] | None:
+        """Kommagetrennte IDs -> Liste; None bei ungültigem oder leerem Ergebnis (eine
+        leere Liste würde beim Speichern "alle Telefonbücher" bedeuten, was der
+        deaktivierten "Alle"-Checkbox widerspräche - siehe accept())."""
+        ids: list[int] = []
+        for token in text.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            if not token.isdigit():
+                return None
+            ids.append(int(token))
+        return ids or None
+
+    def accept(self) -> None:
+        if self._manual_entry_active and not self._all_phonebooks_checkbox.isChecked():
+            parsed = self._parse_manual_ids(self._manual_ids_edit.text())
+            if parsed is None:
+                self._manual_ids_error_label.setText(
+                    "Bitte gültige, kommagetrennte Telefonbuch-IDs angeben, oder "
+                    "'Alle Telefonbücher einbeziehen' aktivieren."
+                )
+                self._manual_ids_error_label.setVisible(True)
+                return
+            self._manual_ids_error_label.setVisible(False)
+            self._parsed_manual_ids = parsed
+        super().accept()
 
     def save(self, base: Config) -> Config:
         phonebook_ids = base.phonebook_ids
@@ -109,6 +166,10 @@ class SettingsDialog(QDialog):
                 []
                 if self._all_phonebooks_checkbox.isChecked()
                 else [pid for pid, checkbox in self._phonebook_checkboxes if checkbox.isChecked()]
+            )
+        elif self._manual_entry_active:
+            phonebook_ids = (
+                [] if self._all_phonebooks_checkbox.isChecked() else self._parsed_manual_ids
             )
         new_config = replace(
             base,
