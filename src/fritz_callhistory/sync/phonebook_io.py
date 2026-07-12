@@ -9,6 +9,7 @@ weiter.
 from __future__ import annotations
 
 import csv
+import io
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,6 +66,23 @@ def _normalized_number_or_warn(
         warnings.append(f"Nummer '{raw}' bei Kontakt '{contact_name}' übersprungen (nicht erkennbar).")
         return None
     return ImportedNumber(number_raw=raw, number_normalized=normalized, number_type=number_type)
+
+
+def _read_text_with_fallback(path: Path) -> str:
+    """Liest eine Import-Datei robust ein: viele Adressbuch-Exporttools schreiben
+    Windows-1252/ISO-8859-1 statt UTF-8 (z.B. jAnrufmonitor-vCards, die trotz
+    VERSION:3.0 noch CHARSET=ISO-8859-1-Parameter im vCard-2.1-Stil setzen)."""
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise PhonebookImportError(f"Datei konnte nicht gelesen werden: {exc}") from exc
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            return raw.decode("cp1252")
+        except UnicodeDecodeError:
+            return raw.decode("latin-1")  # totale Abbildung, wirft nie - letzter Fallback
 
 
 # --- Fritz!Box-kompatibles XML ---
@@ -147,21 +165,51 @@ def write_xml(
 
 _CSV_HEADER = ["contact_id", "display_name", "notes", "number", "number_type"]
 
+# Zweites erkanntes Format: Adressbuch-Exporte von Drittanbieter-Tools
+# (Semikolon-getrennt, ein Kontakt pro Zeile, mehrere Nummernspalten statt
+# eines gruppierenden contact_id) - im Unterschied zu _CSV_HEADER, das nur
+# das eigene write_csv()-Exportformat abbildet.
+_THIRDPARTY_CSV_HEADER = [
+    "Private", "Last Name", "First Name", "Company", "Street", "ZIP Code", "City",
+    "E-Mail", "Picture", "Home", "Mobile", "Homezone", "Business", "Other", "Fax", "Sip", "Main",
+]
+# Geordnete Liste statt dict: legt eine deterministische Spaltenreihenfolge fest
+# für den Fallback "erste nicht-leere Nummer als Name" bei namenlosen Zeilen.
+_THIRDPARTY_NUMBER_COLUMNS = [
+    ("Home", "home"),
+    ("Mobile", "mobile"),
+    ("Business", "work"),
+    ("Fax", "fax_work"),
+    ("Homezone", "other"),
+    ("Other", "other"),
+    ("Sip", "other"),
+    ("Main", "other"),
+]
+
 
 def parse_csv(path: Path) -> ImportResult:
+    text = _read_text_with_fallback(path)
+
     try:
-        with open(path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            if reader.fieldnames != _CSV_HEADER:
-                raise PhonebookImportError(
-                    f"Unerwarteter CSV-Header, erwartet: {','.join(_CSV_HEADER)}"
-                )
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        if reader.fieldnames == _CSV_HEADER:
             rows = list(reader)
-    except OSError as exc:
-        raise PhonebookImportError(f"Datei konnte nicht gelesen werden: {exc}") from exc
+            return _parse_native_csv_rows(rows)
+
+        reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=";")
+        if reader.fieldnames == _THIRDPARTY_CSV_HEADER:
+            rows = list(reader)
+            return _parse_thirdparty_csv_rows(rows)
     except csv.Error as exc:
         raise PhonebookImportError(f"Ungültige CSV-Datei: {exc}") from exc
 
+    raise PhonebookImportError(
+        f"Unerwarteter CSV-Header, erwartet entweder '{','.join(_CSV_HEADER)}' "
+        f"oder ein unterstütztes Adressbuch-Export-Format."
+    )
+
+
+def _parse_native_csv_rows(rows: list[dict]) -> ImportResult:
     warnings: list[str] = []
     grouped: dict[str, dict] = {}
     order: list[str] = []
@@ -206,6 +254,36 @@ def parse_csv(path: Path) -> ImportResult:
             if number is not None:
                 numbers.append(number)
         contacts.append(ImportedContact(display_name=name, notes=group["notes"] or None, numbers=numbers))
+    return ImportResult(contacts=contacts, warnings=warnings)
+
+
+def _parse_thirdparty_csv_rows(rows: list[dict]) -> ImportResult:
+    contacts: list[ImportedContact] = []
+    warnings: list[str] = []
+    for row in rows:
+        last_name = (row.get("Last Name") or "").strip()
+        first_name = (row.get("First Name") or "").strip()
+        company = (row.get("Company") or "").strip()
+        name = f"{first_name} {last_name}".strip() or company
+
+        raw_numbers = [
+            (raw, number_type)
+            for column, number_type in _THIRDPARTY_NUMBER_COLUMNS
+            if (raw := (row.get(column) or "").strip())
+        ]
+
+        if not name:
+            if not raw_numbers:
+                warnings.append("Zeile ohne Namen und ohne Nummer übersprungen.")
+                continue
+            name = raw_numbers[0][0]
+
+        numbers: list[ImportedNumber] = []
+        for raw, number_type in raw_numbers:
+            number = _normalized_number_or_warn(raw, name, number_type, warnings)
+            if number is not None:
+                numbers.append(number)
+        contacts.append(ImportedContact(display_name=name, notes=None, numbers=numbers))
     return ImportResult(contacts=contacts, warnings=warnings)
 
 
@@ -258,10 +336,7 @@ def _unescape_vcard(value: str) -> str:
 
 
 def parse_vcard(path: Path) -> ImportResult:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise PhonebookImportError(f"Datei konnte nicht gelesen werden: {exc}") from exc
+    text = _read_text_with_fallback(path)
 
     # vCard erlaubt "folding": Fortsetzungszeilen beginnen mit Leerzeichen/Tab.
     unfolded_lines: list[str] = []

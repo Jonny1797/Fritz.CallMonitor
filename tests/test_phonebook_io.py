@@ -167,6 +167,106 @@ def test_csv_contact_without_name_is_skipped_with_warning(tmp_path):
     assert len(result.warnings) == 1
 
 
+def test_csv_cp1252_encoded_native_file_is_parsed(tmp_path):
+    path = tmp_path / "phonebook.csv"
+    text = "contact_id,display_name,notes,number,number_type\n1,Jürgen Müller,,+491234567,mobile\n"
+    path.write_bytes(text.encode("cp1252"))
+
+    result = parse_csv(path)
+
+    assert [c.display_name for c in result.contacts] == ["Jürgen Müller"]
+
+
+def test_csv_utf8_bom_is_stripped(tmp_path):
+    path = tmp_path / "phonebook.csv"
+    text = "contact_id,display_name,notes,number,number_type\n1,Max Mustermann,,+491234567,mobile\n"
+    path.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+
+    result = parse_csv(path)
+
+    assert [c.display_name for c in result.contacts] == ["Max Mustermann"]
+
+
+def test_csv_unrecognized_header_still_raises_import_error(tmp_path):
+    path = tmp_path / "bad.csv"
+    path.write_text("a,b,c\n1,2,3\n")
+
+    with pytest.raises(PhonebookImportError):
+        parse_csv(path)
+
+
+# --- CSV: Adressbuch-Export (Drittanbieter) ---
+
+_THIRDPARTY_CSV_HEADER_LINE = (
+    "Private;Last Name;First Name;Company;Street;ZIP Code;City;E-Mail;Picture;"
+    "Home;Mobile;Homezone;Business;Other;Fax;Sip;Main\n"
+)
+
+
+def test_csv_thirdparty_schema_parses_multiple_numbers_per_row(tmp_path):
+    path = tmp_path / "contacts.csv"
+    path.write_text(
+        _THIRDPARTY_CSV_HEADER_LINE
+        + 'NO;Mustermann;Max;;;;;;;"+491234567";;;"+493012345678";;"+494912345";;\n'
+    )
+
+    result = parse_csv(path)
+
+    assert len(result.contacts) == 1
+    contact = result.contacts[0]
+    assert contact.display_name == "Max Mustermann"
+    assert [(n.number_raw, n.number_type) for n in contact.numbers] == [
+        ("+491234567", "home"),
+        ("+493012345678", "work"),
+        ("+494912345", "fax_work"),
+    ]
+
+
+def test_csv_thirdparty_schema_uses_company_when_no_personal_name(tmp_path):
+    path = tmp_path / "contacts.csv"
+    path.write_text(
+        _THIRDPARTY_CSV_HEADER_LINE + 'NO;;;"Acme GmbH";;;;;;"+491234567";;;;;;;\n'
+    )
+
+    result = parse_csv(path)
+
+    assert [c.display_name for c in result.contacts] == ["Acme GmbH"]
+
+
+def test_csv_thirdparty_schema_unnamed_row_uses_first_number_as_name(tmp_path):
+    path = tmp_path / "contacts.csv"
+    path.write_text(_THIRDPARTY_CSV_HEADER_LINE + 'NO;;;;;;;;;;"+491234567";;;;;;\n')
+
+    result = parse_csv(path)
+
+    assert len(result.contacts) == 1
+    contact = result.contacts[0]
+    assert contact.display_name == "+491234567"
+    assert [n.number_raw for n in contact.numbers] == ["+491234567"]
+    assert result.warnings == []
+
+
+def test_csv_thirdparty_schema_row_without_name_or_number_is_skipped_with_warning(tmp_path):
+    path = tmp_path / "contacts.csv"
+    path.write_text(_THIRDPARTY_CSV_HEADER_LINE + ";;;;;;;;;;;;;;;;\n")
+
+    result = parse_csv(path)
+
+    assert result.contacts == []
+    assert len(result.warnings) == 1
+
+
+def test_csv_thirdparty_schema_unparseable_number_is_skipped_with_warning(tmp_path):
+    path = tmp_path / "contacts.csv"
+    path.write_text(_THIRDPARTY_CSV_HEADER_LINE + 'NO;Mustermann;Max;;;;;;;"???";;;;;;;\n')
+
+    result = parse_csv(path)
+
+    assert len(result.contacts) == 1
+    assert result.contacts[0].numbers == []
+    assert len(result.warnings) == 1
+
+
 # --- vCard ---
 
 
@@ -201,6 +301,23 @@ def test_vcard_without_fn_is_skipped_with_warning(tmp_path):
 
     assert result.contacts == []
     assert len(result.warnings) == 1
+
+
+def test_vcard_cp1252_encoded_file_is_parsed(tmp_path):
+    path = tmp_path / "phonebook.vcf"
+    text = (
+        "BEGIN:VCARD\r\nVERSION:3.0\r\n"
+        "N;CHARSET=ISO-8859-1:Müller;Jürgen;;\r\n"
+        "FN;CHARSET=ISO-8859-1:Jürgen Müller\r\n"
+        "TEL;TYPE=cell:+491234567\r\n"
+        "END:VCARD\r\n"
+    )
+    path.write_bytes(text.encode("cp1252"))
+
+    result = parse_vcard(path)
+
+    assert [c.display_name for c in result.contacts] == ["Jürgen Müller"]
+    assert result.contacts[0].numbers[0].number_type == "mobile"
 
 
 # --- import_contacts idempotency ---

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Telefonbuch-Import: CSV-Dateien aus gängigen Adressbuch-Exportformaten
+  (ein Kontakt pro Zeile, Semikolon-getrennt, Spalten wie "Last Name",
+  "First Name", "Company", "Home"/"Mobile"/"Business"/"Fax" etc.) werden
+  jetzt zusätzlich zum bisherigen eigenen Export-Format erkannt und
+  importiert.
+
+### Fixed
+
+- Telefonbuch-Import (CSV/vCard): Dateien mit cp1252/ISO-8859-1-Kodierung
+  (z.B. Exporte aus jAnrufmonitor oder älteren Windows-Adressbüchern)
+  führten zu einem Absturz (`UnicodeDecodeError`) statt einer Fehlermeldung;
+  werden jetzt automatisch per Fallback korrekt gelesen.
+
 ## [0.9.0] - 2026-07-11
 
 ### Added
