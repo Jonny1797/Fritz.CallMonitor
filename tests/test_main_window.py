@@ -307,6 +307,86 @@ def test_close_while_box_import_running_defers_until_import_finishes(qtbot, conn
     assert window.close() is True
 
 
+def test_close_while_settings_phonebook_list_running_defers_until_finished(
+    qtbot, connection, mocker
+):
+    # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
+    # but for the PhonebookListWorker started by _open_settings_dialog() - it is
+    # deliberately parented to MainWindow (not the dialog) so a slow fetch
+    # survives the dialog being closed, which means closeEvent() must know
+    # about it too.
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    release_list = threading.Event()
+
+    def slow_list_phonebooks():
+        release_list.wait(5)
+        return [(0, "Telefonbuch")]
+
+    window = MainWindow(connection, list_phonebooks_fn=slow_list_phonebooks)
+    qtbot.addWidget(window)
+    window.show()
+    window._open_settings_dialog()
+    qtbot.waitUntil(
+        lambda: window._phonebook_list_thread is not None
+        and window._phonebook_list_thread.isRunning(),
+        timeout=2000,
+    )
+
+    closed = window.close()
+
+    assert closed is False
+    assert not window.isVisible()
+    assert window._phonebook_list_thread.isRunning()
+
+    release_list.set()
+    qtbot.waitUntil(lambda: not window._phonebook_list_thread.isRunning(), timeout=2000)
+    qtbot.wait(50)
+
+    assert window.close() is True
+
+
+def test_close_while_phonebook_import_list_running_defers_until_finished(
+    qtbot, connection, mocker
+):
+    # Same bug class as above, but for the second PhonebookListWorker instance -
+    # the one started by _open_phonebook_import_dialog() and held separately as
+    # self._phonebook_import_list_thread so both dialogs can fetch independently.
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    release_list = threading.Event()
+
+    def slow_list_phonebooks():
+        release_list.wait(5)
+        return [(0, "Telefonbuch")]
+
+    window = MainWindow(connection, list_phonebooks_fn=slow_list_phonebooks)
+    qtbot.addWidget(window)
+    window.show()
+    window._open_phonebook_import_dialog()
+    qtbot.waitUntil(
+        lambda: window._phonebook_import_list_thread is not None
+        and window._phonebook_import_list_thread.isRunning(),
+        timeout=2000,
+    )
+
+    closed = window.close()
+
+    assert closed is False
+    assert not window.isVisible()
+    assert window._phonebook_import_list_thread.isRunning()
+
+    release_list.set()
+    qtbot.waitUntil(lambda: not window._phonebook_import_list_thread.isRunning(), timeout=2000)
+    qtbot.wait(50)
+
+    assert window.close() is True
+
+
 def test_close_without_busy_workers_quits_application_explicitly(qtbot, connection, mocker):
     # Regression test: relying purely on Qt's quitOnLastWindowClosed to end
     # app.exec() has proven unreliable in practice (window closes but the

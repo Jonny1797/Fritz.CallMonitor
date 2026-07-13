@@ -223,10 +223,11 @@ class MainWindow(QMainWindow):
 
     def _busy_worker_threads(self) -> list[QThread]:
         """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker/
-        VoicemailActionWorker führen einen einzelnen blockierenden Netzwerkaufruf
-        ohne Abbruchpunkte aus - alle müssen hier erkannt werden, damit
-        closeEvent() das Fenster nicht schliesst, während einer von ihnen noch
-        läuft (siehe closeEvent() für die Begründung)."""
+        VoicemailActionWorker/PhonebookListWorker (beide Instanzen) führen einen
+        einzelnen blockierenden Netzwerkaufruf ohne Abbruchpunkte aus - alle
+        müssen hier erkannt werden, damit closeEvent() das Fenster nicht
+        schliesst, während einer von ihnen noch läuft (siehe closeEvent() für
+        die Begründung)."""
         threads: list[QThread] = []
         if self._sync_thread is not None and self._sync_thread.isRunning():
             threads.append(self._sync_thread)
@@ -241,6 +242,13 @@ class MainWindow(QMainWindow):
         action_thread = self._voicemail_view.action_thread
         if action_thread is not None and action_thread.isRunning():
             threads.append(action_thread)
+        if self._phonebook_list_thread is not None and self._phonebook_list_thread.isRunning():
+            threads.append(self._phonebook_list_thread)
+        if (
+            self._phonebook_import_list_thread is not None
+            and self._phonebook_import_list_thread.isRunning()
+        ):
+            threads.append(self._phonebook_import_list_thread)
         return threads
 
     def closeEvent(self, event: QCloseEvent) -> None:

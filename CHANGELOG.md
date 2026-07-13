@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Quitting the app while the Einstellungen or "Von Box importieren…" dialog's
+  phonebook list is still being fetched from the box no longer risks
+  destroying the still-running background thread (the same
+  SIGABRT-on-destroying-a-running-QThread crash class already guarded
+  against for sync/import/dial/voicemail workers) - `closeEvent()` now waits
+  for these fetches too before actually closing.
+
 ## [0.12.0] - 2026-07-12
 
 ### Added
