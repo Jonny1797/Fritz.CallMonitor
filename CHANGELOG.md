@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- App icon: a red history-ring with a yellow phone glyph inside, in the
+  spirit of the Fritz!Box branding colors. Used for the window/taskbar icon,
+  the system tray icon, and (embedded via PyInstaller) the Windows `.exe`.
+
 ### Changed
 
 - Settings dialog (Einstellungen) changes now apply immediately instead of

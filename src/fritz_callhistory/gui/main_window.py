@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QStyle,
     QSystemTrayIcon,
     QTabWidget,
     QVBoxLayout,
@@ -28,6 +27,7 @@ from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRep
 from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
+from fritz_callhistory.gui.icon import app_icon
 from fritz_callhistory.gui.incoming_call_popup import IncomingCallPopup
 from fritz_callhistory.gui.phonebook_picker_dialog import PhonebookPickerDialog
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
@@ -190,9 +190,7 @@ class MainWindow(QMainWindow):
         # Sync-Thread im Hintergrund lostippt.
         QTimer.singleShot(0, self._trigger_sync)
 
-        self._tray_icon = QSystemTrayIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon), self
-        )
+        self._tray_icon = QSystemTrayIcon(app_icon(), self)
         self._tray_icon.setToolTip("Fritz!Box Anrufhistorie")
 
         self._tray_menu = QMenu(self)

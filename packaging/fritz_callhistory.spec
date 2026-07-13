@@ -10,10 +10,14 @@ import pathlib
 project_root = pathlib.Path(SPECPATH).resolve().parent  # noqa: F821 (von PyInstaller injiziert)
 src_dir = project_root / "src"
 migrations_dir = src_dir / "fritz_callhistory" / "db" / "migrations"
+assets_dir = src_dir / "fritz_callhistory" / "assets"
 
 # db/schema.py liest die Migrationsdateien zur Laufzeit über importlib.resources -
 # ohne diesen Eintrag würde die gefrorene .exe mit einer leeren Datenbank starten.
 datas = [(str(p), "fritz_callhistory/db/migrations") for p in migrations_dir.glob("*.sql")]
+# gui/icon.py liest icon.svg zur Laufzeit ebenso über importlib.resources (Fenster-/
+# Tray-Icon) - gleicher Grund wie bei den Migrationen oben.
+datas += [(str(assets_dir / "icon.svg"), "fritz_callhistory/assets")]
 
 a = Analysis(  # noqa: F821
     [str(project_root / "packaging" / "entry_point.py")],
@@ -56,4 +60,5 @@ exe = EXE(  # noqa: F821
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(assets_dir / "icon.ico"),
 )

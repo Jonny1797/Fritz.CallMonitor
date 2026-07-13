@@ -22,6 +22,7 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
+from fritz_callhistory.gui.icon import app_icon
 from fritz_callhistory.gui.main_window import MainWindow
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn
 from fritz_callhistory.gui.workers import (
@@ -348,6 +349,7 @@ def _handle_sigint(*_args) -> None:
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
     # Muss unabhängig vom Minimize-to-Tray-Setting explizit False sein: sonst
     # könnte Qt beim Verstecken des einzigen Top-Level-Fensters implizit
     # beenden, was closeEvent()'s eigene Minimize-vs-Quit-Entscheidung
