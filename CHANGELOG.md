@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Settings dialog (Einstellungen) changes now apply immediately instead of
+  requiring an app restart: the auto-sync interval, phonebook selection, and
+  incoming-call popup toggle all take effect on save.
+
 ### Fixed
 
 - Quitting the app while the Einstellungen or "Von Box importieren…" dialog's

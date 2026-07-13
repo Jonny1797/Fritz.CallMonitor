@@ -95,6 +95,11 @@ class MainWindow(QMainWindow):
         self._local_phonebook_repo = LocalPhonebookRepository(connection)
         self._show_incoming_call_popup = show_incoming_call_popup
         self._incoming_call_popups: dict[str, IncomingCallPopup] = {}
+        # Vorab auf None statt erst im folgenden if-Block (siehe unten) - so
+        # kann _apply_settings_change() dieses Attribut immer sicher lesen,
+        # auch wenn beim Start noch kein Timer angelegt wurde (kein sync_fn
+        # oder auto_sync_interval_minutes == 0 in der TOML).
+        self._auto_sync_timer: QTimer | None = None
 
         self._calls_tab = CallsTab(connection)
         self._calls_tab.new_missed_calls_changed.connect(self._on_new_missed_calls_changed)
@@ -440,6 +445,28 @@ class MainWindow(QMainWindow):
         self._dial_thread.dial_failed.connect(self._on_dial_failed)
         self._dial_thread.start()
 
+    def _apply_settings_change(self, new_config: Config) -> None:
+        """Wendet eine gerade im Einstellungsdialog gespeicherte Config sofort auf
+        laufenden Zustand an, statt (wie zuvor) einen Neustart zu verlangen.
+        _update_credentials_fn wird hier mitbenutzt, obwohl der Name nach
+        Zugangsdaten klingt: er schreibt tatsächlich nur die komplette Config
+        in credentials_ref.cfg (siehe app.py's _CredentialsRef), aus der
+        _build_sync_fn's Closure bei jedem Sync-Lauf frisch
+        resolved_phonebook_ids() liest - SettingsDialog.save() rührt
+        Adresse/Benutzername/Passwort ohnehin nie an, der Aufruf hier ist also
+        nur ein dritter Nutzer desselben bestehenden Anwendungsfalls."""
+        self._show_incoming_call_popup = new_config.show_incoming_call_popup
+        if self._update_credentials_fn is not None:
+            self._update_credentials_fn(new_config)
+        if self._sync_fn is not None:
+            if self._auto_sync_timer is None:
+                self._auto_sync_timer = QTimer(self)
+                self._auto_sync_timer.timeout.connect(self._trigger_sync)
+            # .start(msec) statt setInterval(): auf einem bereits laufenden
+            # QTimer startet das den Countdown zuverlässig neu, statt nur den
+            # künftigen Intervall-Wert zu setzen.
+            self._auto_sync_timer.start(new_config.sync_interval_minutes * 60 * 1000)
+
     def _open_settings_dialog(self) -> None:
         dialog = SettingsDialog(self._config, parent=self)
         if self._list_phonebooks_fn is None:
@@ -459,11 +486,8 @@ class MainWindow(QMainWindow):
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config = dialog.save(self._config)
-            QMessageBox.information(
-                self,
-                "Einstellungen gespeichert",
-                "Die Änderungen werden erst nach einem Neustart der App wirksam.",
-            )
+            self._apply_settings_change(self._config)
+            self.statusBar().showMessage("Einstellungen gespeichert.", 5000)
 
     def _open_phonebook_import_dialog(self) -> None:
         dialog = PhonebookPickerDialog(parent=self)

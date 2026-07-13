@@ -906,23 +906,60 @@ def test_telefonbuch_menu_import_from_box_action_reflects_availability(qtbot, co
     assert window2._phonebook_import_from_box_action.isEnabled() is True
 
 
-def test_open_settings_dialog_saves_config_and_shows_restart_notice(qtbot, connection, mocker):
+def test_open_settings_dialog_saves_config_and_applies_live(qtbot, connection, mocker):
     mock_exec = mocker.patch(
         "fritz_callhistory.gui.main_window.SettingsDialog.exec",
         return_value=QDialog.DialogCode.Accepted,
     )
-    new_config = Config(sync_interval_minutes=99)
+    new_config = Config(sync_interval_minutes=99, show_incoming_call_popup=False)
     mocker.patch("fritz_callhistory.gui.main_window.SettingsDialog.save", return_value=new_config)
-    mock_information = mocker.patch("fritz_callhistory.gui.main_window.QMessageBox.information")
+    updated_configs = []
 
-    window = MainWindow(connection, list_phonebooks_fn=None)
+    window = MainWindow(
+        connection, list_phonebooks_fn=None, update_credentials_fn=updated_configs.append
+    )
     qtbot.addWidget(window)
 
     window._open_settings_dialog()
 
     mock_exec.assert_called_once()
-    mock_information.assert_called_once()
     assert window._config is new_config
+    assert window._show_incoming_call_popup is False
+    assert updated_configs == [new_config]
+    assert "gespeichert" in window.statusBar().currentMessage()
+
+
+def test_apply_settings_change_creates_timer_if_not_created_at_startup(qtbot, connection):
+    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    qtbot.addWidget(window)
+    assert window._auto_sync_timer is None
+
+    window._apply_settings_change(Config(sync_interval_minutes=5))
+
+    assert window._auto_sync_timer is not None
+    assert window._auto_sync_timer.interval() == 5 * 60 * 1000
+    assert window._auto_sync_timer.isActive()
+
+
+def test_apply_settings_change_restarts_existing_timer_with_new_interval(qtbot, connection):
+    window = MainWindow(connection, sync_fn=lambda: (0, 0), auto_sync_interval_minutes=30)
+    qtbot.addWidget(window)
+    original_timer = window._auto_sync_timer
+
+    window._apply_settings_change(Config(sync_interval_minutes=7))
+
+    assert window._auto_sync_timer is original_timer
+    assert window._auto_sync_timer.interval() == 7 * 60 * 1000
+    assert window._auto_sync_timer.isActive()
+
+
+def test_apply_settings_change_skips_timer_without_sync_fn(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+
+    window._apply_settings_change(Config(sync_interval_minutes=5))
+
+    assert window._auto_sync_timer is None
 
 
 def test_open_settings_dialog_without_list_phonebooks_fn_marks_unavailable(qtbot, connection, mocker):

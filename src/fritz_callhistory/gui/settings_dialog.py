@@ -1,9 +1,9 @@
 """Einstellungsdialog: Sync-Intervall, Telefonbuch-Auswahl, Anruf-Benachrichtigung.
 
-Schreibt Änderungen nur in die Config-TOML (siehe save()) - für ihre Wirkung ist
-ein Neustart der App nötig, da Sync-Intervall/Telefonbuch-IDs aktuell nur einmalig
-beim Start in main_window.py/app.py in Worker-Closures bzw. den Auto-Sync-Timer
-eingebrannt werden (keine Laufzeit-Neukonfiguration vorhanden).
+Schreibt Änderungen in die Config-TOML und gibt die neue Config zurück (siehe
+save()); MainWindow._apply_settings_change() wendet sie danach sofort auf den
+laufenden Zustand an (Auto-Sync-Timer, Popup-Flag, phonebook_ids über
+credentials_ref) - kein Neustart der App mehr nötig.
 
 Kennt bewusst weder FritzBoxClient noch Worker-Threads: MainWindow holt die
 Telefonbuchliste selbst (PhonebookListWorker, an MainWindow statt an diesen

@@ -47,11 +47,3 @@ Truecaller/Hiya, tellows). Not planned/committed to yet — a list to pick from.
 - Backup/restore or "export DB + config" for moving to a new PC.
 - Keyboard shortcuts (e.g. `/` to focus search, `Ctrl+D` to dial selected
   contact).
-- **Apply settings changes without restarting** — the new settings dialog
-  saves `sync_interval_minutes`/`phonebook_ids`/`show_incoming_call_popup`
-  straight to the TOML config, but none of them take effect until the app is
-  restarted: the auto-sync `QTimer` interval and the phonebook IDs baked into
-  `sync_fn`'s closure (`app.py`) are both set up once at startup, with no
-  runtime-reconfiguration plumbing today. A real fix needs a setter on
-  `MainWindow` for the timer interval and a way to rebuild/replace the
-  `sync_fn`/`import_from_box_fn` closures when phonebook IDs change.
