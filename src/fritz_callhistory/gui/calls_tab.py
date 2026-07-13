@@ -107,6 +107,12 @@ class CallsTab(QWidget):
         else:
             self.all_calls_view.reload()
 
+    def focus_search(self) -> None:
+        self._stack.currentWidget().focus_search()
+
+    def dial_selected(self) -> None:
+        self._stack.currentWidget().dial_selected()
+
     def show_contact(self, contact_id: int) -> None:
         self._set_grouped(True)
         self.contacts_view.show_contact(contact_id)

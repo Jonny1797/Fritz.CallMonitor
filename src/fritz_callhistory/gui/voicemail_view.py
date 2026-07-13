@@ -179,6 +179,12 @@ class VoicemailView(QWidget):
             return None
         return self._model.message_at(self._proxy.mapToSource(rows[0]).row())
 
+    def focus_search(self) -> None:
+        pass  # kein Suchfeld in diesem Tab - Stub für die einheitliche MainWindow-Dispatch-Schnittstelle
+
+    def dial_selected(self) -> None:
+        self._on_call_button_clicked()
+
     def _update_action_buttons(self) -> None:
         # Während eine Gelesen-/Löschen-Aktion noch läuft, bleiben alle vier
         # Buttons deaktiviert - sonst könnte z.B. eine Löschen-Bestätigung

@@ -444,6 +444,29 @@ def install_debounced_search(
     return timer
 
 
+def selected_source_row(table: QTableView, proxy: QSortFilterProxyModel) -> int | None:
+    """Source-Model-Zeile der aktuellen (Einzel-)Auswahl von *table*, oder None,
+    wenn nichts ausgewählt ist - fasst das Muster zusammen, das bereits einzeln
+    in phonebook_view.py's _selected_contact_id() und voicemail_view.py's
+    _selected_message() steckt, für Views, die noch keine solche Helper-Methode
+    haben (siehe deren dial_selected())."""
+    indexes = table.selectionModel().selectedRows()
+    if not indexes:
+        return None
+    return proxy.mapToSource(indexes[0]).row()
+
+
+def default_or_first_number(contact: LocalPhonebookContact) -> str | None:
+    """Nummer, die eine "Anrufen"-Aktion ohne weitere Auswahl verwenden soll:
+    die als Standard markierte, sonst die erste - dieselbe Priorität wie das
+    Kontextmenü (install_phonebook_call_context_menu unten)."""
+    numbers = contact.numbers
+    if not numbers:
+        return None
+    default = next((n for n in numbers if n.is_default), None)
+    return (default or numbers[0]).number_normalized
+
+
 def install_call_context_menu(
     table: QTableView,
     proxy: QSortFilterProxyModel,

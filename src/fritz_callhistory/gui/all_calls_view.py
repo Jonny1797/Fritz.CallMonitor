@@ -40,6 +40,7 @@ from fritz_callhistory.gui.models import (
     install_debounced_search,
     install_tristate_sorting,
     port_device_display,
+    selected_source_row,
 )
 from fritz_callhistory.sync.normalize import normalize_number
 
@@ -382,3 +383,15 @@ class AllCallsView(QWidget):
         if call.id == _LIVE_CALL_SENTINEL_ID or call.contact_is_anonymous:
             return None
         return call_number(call)
+
+    def focus_search(self) -> None:
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
+    def dial_selected(self) -> None:
+        row = selected_source_row(self._table, self._proxy)
+        if row is None:
+            return
+        number = self._number_for_row(row)
+        if number is not None:
+            self.call_requested.emit(number)

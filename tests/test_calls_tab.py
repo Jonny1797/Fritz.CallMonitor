@@ -200,6 +200,42 @@ def test_double_clicking_all_calls_row_clears_mirrored_search_in_both_views(qtbo
     assert tab.all_calls_view._search_edit.text() == ""
 
 
+def test_focus_search_delegates_to_currently_visible_page(qtbot, connection):
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+    tab.show()
+    qtbot.waitExposed(tab)
+    tab.activateWindow()
+    tab.raise_()
+
+    # Fenster-Aktivierung läuft auf der offscreen-QPA-Plattform asynchron -
+    # waitUntil() statt einer festen Wartezeit, da die Latenz unter Last
+    # (z.B. voller Testsuite) schwankt.
+    tab.focus_search()
+    qtbot.waitUntil(tab.all_calls_view._search_edit.hasFocus, timeout=2000)
+
+    tab._set_grouped(True)
+    tab.focus_search()
+    qtbot.waitUntil(tab.contacts_view._search_edit.hasFocus, timeout=2000)
+
+
+def test_dial_selected_delegates_to_currently_visible_page(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(CallRepository(connection), contact_id=contact_id)
+
+    tab = CallsTab(connection)
+    qtbot.addWidget(tab)
+    tab.all_calls_view.reload()
+    tab.all_calls_view._table.selectRow(0)
+    received = []
+    tab.call_requested.connect(received.append)
+
+    tab.dial_selected()
+
+    assert received == ["+491234567"]
+
+
 def test_search_does_not_bounce_back_and_forth_between_views(qtbot, connection):
     tab = CallsTab(connection)
     qtbot.addWidget(tab)

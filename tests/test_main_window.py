@@ -1,5 +1,6 @@
 import threading
 
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QSystemTrayIcon
 
 from fritz_callhistory.config import Config
@@ -757,6 +758,99 @@ def test_call_monitor_signals_wired_to_calls_tab(qtbot, connection, mocker):
     mock_thread.connection_lost.connect.assert_any_call(window._on_call_monitor_connection_lost)
     mock_thread.connection_lost.connect.assert_any_call(window._calls_tab.clear_live_calls)
     mock_thread.start.assert_called_once()
+
+
+def _activate(qtbot, window) -> None:
+    """Nötig für alles, das echten Tastatur-Fokus prüft (hasFocus()) - auf der
+    offscreen-QPA-Plattform (siehe conftest.py) reicht show()/waitExposed()
+    dafür nicht, die eigentliche Aktivierung läuft dort asynchron über die
+    Event-Loop."""
+    window.show()
+    qtbot.waitExposed(window)
+    window.activateWindow()
+    window.raise_()
+    qtbot.waitUntil(window.isActiveWindow, timeout=2000)
+
+
+# Die folgenden Tests lösen die QShortcuts direkt über activated.emit() aus
+# statt über einen simulierten Tastendruck (qtbot.keyClick): ob ein
+# Qt.WindowShortcut auf einen echten Tastendruck reagiert, hängt vom
+# Fenster-Aktivierungsstatus ab, den die offscreen-QPA-Plattform über viele
+# in derselben Suite nacheinander erzeugte Top-Level-Fenster hinweg nicht
+# zuverlässig genug abbildet (beobachtete Flakiness in der vollen Suite,
+# isoliert nicht reproduzierbar) - activated.emit() prüft trotzdem die
+# eigentlich interessante Logik (richtige Taste verbunden mit der richtigen
+# Dispatch-Methode), ohne von Qt's Fenstermanager-Simulation abzuhängen.
+def test_focus_search_shortcuts_are_wired_to_active_tab(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    assert window._focus_search_shortcut.key() == QKeySequence("/")
+    assert window._focus_search_shortcut_ctrl_f.key() == QKeySequence("Ctrl+F")
+    _activate(qtbot, window)
+
+    window._focus_search_shortcut.activated.emit()
+    qtbot.waitUntil(window._calls_tab.all_calls_view._search_edit.hasFocus, timeout=2000)
+
+    window._calls_tab.all_calls_view._search_edit.clearFocus()
+    window._focus_search_shortcut_ctrl_f.activated.emit()
+    qtbot.waitUntil(window._calls_tab.all_calls_view._search_edit.hasFocus, timeout=2000)
+
+
+def test_tab_shortcuts_are_wired_to_correct_indices(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    assert [sc.key() for sc in window._tab_shortcuts] == [
+        QKeySequence("Ctrl+1"),
+        QKeySequence("Ctrl+2"),
+        QKeySequence("Ctrl+3"),
+    ]
+
+    window._tab_shortcuts[1].activated.emit()
+    assert window._tabs.currentIndex() == 1
+
+    window._tab_shortcuts[2].activated.emit()
+    assert window._tabs.currentIndex() == 2
+
+    window._tab_shortcuts[0].activated.emit()
+    assert window._tabs.currentIndex() == 0
+
+
+def test_ctrl_d_shortcut_is_wired_to_dial_selected_row_in_active_tab(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    CallRepository(connection).insert(
+        contact_id=contact_id,
+        call_type=1,
+        caller_number="+491234567",
+        called_number=None,
+        port="1",
+        device="Fritz!Fon",
+        call_date="2026-06-01T10:00:00",
+        duration_seconds=30,
+        raw_name=None,
+    )
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    assert window._dial_selected_shortcut.key() == QKeySequence("Ctrl+D")
+    window._calls_tab.all_calls_view.reload()
+    window._calls_tab.all_calls_view._table.selectRow(0)
+    received = []
+    window._calls_tab.call_requested.connect(received.append)
+
+    window._dial_selected_shortcut.activated.emit()
+
+    assert received == ["+491234567"]
+
+
+def test_ctrl_d_shortcut_does_nothing_without_selection(qtbot, connection):
+    window = MainWindow(connection)
+    qtbot.addWidget(window)
+    received = []
+    window._calls_tab.call_requested.connect(received.append)
+
+    window._dial_selected_shortcut.activated.emit()
+
+    assert received == []
 
 
 def test_dial_number_shows_unavailable_message_without_dial_fn(qtbot, connection):

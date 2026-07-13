@@ -282,3 +282,47 @@ def test_show_contact_clears_active_search_filter(qtbot, connection):
     assert view._search_edit.text() == ""
     assert view._contact_model.rowCount() == 1
     assert "Max Mustermann" in view._detail._title_label.text()
+
+
+def test_focus_search_focuses_search_edit(qtbot, connection):
+    view = GroupedContactsView(connection)
+    qtbot.addWidget(view)
+    view.show()
+    qtbot.waitExposed(view)
+    view.activateWindow()
+    view.raise_()
+
+    view.focus_search()
+
+    # Fenster-Aktivierung läuft auf der offscreen-QPA-Plattform asynchron -
+    # waitUntil() statt einer festen Wartezeit, da die Latenz unter Last
+    # (z.B. voller Testsuite) schwankt.
+    qtbot.waitUntil(view._search_edit.hasFocus, timeout=2000)
+
+
+def test_dial_selected_emits_call_requested_for_selected_row(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contacts.upsert("+491234567")
+
+    view = GroupedContactsView(connection)
+    qtbot.addWidget(view)
+    view._table.selectRow(0)
+
+    with qtbot.waitSignal(view.call_requested, timeout=1000) as blocker:
+        view.dial_selected()
+
+    assert blocker.args == ["+491234567"]
+
+
+def test_dial_selected_does_nothing_without_selection(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contacts.upsert("+491234567")
+
+    view = GroupedContactsView(connection)
+    qtbot.addWidget(view)
+    signal_spy = []
+    view.call_requested.connect(signal_spy.append)
+
+    view.dial_selected()
+
+    assert signal_spy == []

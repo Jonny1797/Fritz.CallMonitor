@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - App icon: a red history-ring with a yellow phone glyph inside, in the
   spirit of the Fritz!Box branding colors. Used for the window/taskbar icon,
   the system tray icon, and (embedded via PyInstaller) the Windows `.exe`.
+- Keyboard shortcuts: `/` or `Ctrl+F` focuses the current tab's search box,
+  `Ctrl+D` dials the currently selected row (in "Alle Anrufe",
+  "Anrufbeantworter", and "Telefonbuch"), and `Ctrl+1`/`Ctrl+2`/`Ctrl+3`
+  switch between tabs.
 
 ### Changed
 

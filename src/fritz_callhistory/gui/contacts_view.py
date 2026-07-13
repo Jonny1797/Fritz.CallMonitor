@@ -31,6 +31,7 @@ from fritz_callhistory.gui.models import (
     install_call_context_menu,
     install_debounced_search,
     install_tristate_sorting,
+    selected_source_row,
 )
 
 _CONTACT_NAME_COLUMN = 0
@@ -152,6 +153,18 @@ class GroupedContactsView(QWidget):
     def _contact_number_for_row(self, row: int) -> str | None:
         contact = self._contact_model.contact_at(row)
         return None if contact.is_anonymous else contact.primary_number
+
+    def focus_search(self) -> None:
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
+    def dial_selected(self) -> None:
+        row = selected_source_row(self._table, self._contact_proxy)
+        if row is None:
+            return
+        number = self._contact_number_for_row(row)
+        if number is not None:
+            self.call_requested.emit(number)
 
     def _on_selection_changed(self, selected, deselected) -> None:
         indexes = selected.indexes()

@@ -35,8 +35,10 @@ from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
 from fritz_callhistory.gui.models import (
     DataclassSortProxy,
     PhonebookContactListModel,
+    default_or_first_number,
     install_phonebook_call_context_menu,
     install_tristate_sorting,
+    selected_source_row,
 )
 from fritz_callhistory.gui.workers import ImportFromBoxFn, ImportFromBoxWorker
 from fritz_callhistory.sync.phonebook_io import (
@@ -147,6 +149,18 @@ class PhonebookTab(QWidget):
             return None
         source_row = self._proxy.mapToSource(indexes[0]).row()
         return self._model.contact_at(source_row).id
+
+    def focus_search(self) -> None:
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
+    def dial_selected(self) -> None:
+        row = selected_source_row(self._table, self._proxy)
+        if row is None:
+            return
+        number = default_or_first_number(self._model.contact_at(row))
+        if number is not None:
+            self.call_requested.emit(number)
 
     def _after_local_change(self) -> None:
         self._reload()

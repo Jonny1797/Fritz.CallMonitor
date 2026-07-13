@@ -640,6 +640,71 @@ def test_search_does_not_change_new_missed_count(qtbot, connection):
     assert view._mark_seen_button.isEnabled()
 
 
+def test_focus_search_focuses_search_edit(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    view.show()
+    qtbot.waitExposed(view)
+    view.activateWindow()
+    view.raise_()
+
+    view.focus_search()
+
+    # Fenster-Aktivierung läuft auf der offscreen-QPA-Plattform asynchron -
+    # waitUntil() statt einer festen Wartezeit, da die Latenz unter Last
+    # (z.B. voller Testsuite) schwankt.
+    qtbot.waitUntil(view._search_edit.hasFocus, timeout=2000)
+
+
+def test_dial_selected_emits_call_requested_for_selected_row(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    view._table.selectRow(0)
+
+    with qtbot.waitSignal(view.call_requested, timeout=1000) as blocker:
+        view.dial_selected()
+
+    assert blocker.args == ["+491234567"]
+
+
+def test_dial_selected_does_nothing_without_selection(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("+491234567")
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    signal_spy = []
+    view.call_requested.connect(signal_spy.append)
+
+    view.dial_selected()
+
+    assert signal_spy == []
+
+
+def test_dial_selected_does_nothing_for_anonymous_contact(qtbot, connection):
+    contacts = ContactRepository(connection)
+    calls = CallRepository(connection)
+    contact_id = contacts.upsert("anonymous", is_anonymous=True)
+    _insert_call(calls, contact_id=contact_id, call_date="2026-06-01T10:00:00")
+
+    view = AllCallsView(connection, today_provider=_fixed_today)
+    qtbot.addWidget(view)
+    view._table.selectRow(0)
+    signal_spy = []
+    view.call_requested.connect(signal_spy.append)
+
+    view.dial_selected()
+
+    assert signal_spy == []
+
+
 def test_search_filters_live_call_by_contact_name(qtbot, connection):
     contacts = ContactRepository(connection)
     contact_id = contacts.upsert("+49301234567")

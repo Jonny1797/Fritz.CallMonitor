@@ -18,10 +18,12 @@ from fritz_callhistory.gui.models import (
     PhonebookContactListModel,
     VoicemailListModel,
     _format_call_date,
+    default_or_first_number,
     install_call_context_menu,
     install_phonebook_call_context_menu,
     install_tristate_sorting,
     port_device_display,
+    selected_source_row,
 )
 
 
@@ -647,5 +649,62 @@ def test_voicemail_caller_column_shows_placeholder_when_anonymous(qtbot):
     model = VoicemailListModel([_voicemail_message(raw_name=None, caller_number=None)])
 
     assert model.data(model.index(0, 1)) == "Anonym / unterdrückt"
+
+
+def test_selected_source_row_returns_none_without_selection(qtbot):
+    table, _proxy = _table_with_one_row(qtbot)
+
+    assert selected_source_row(table, _proxy) is None
+
+
+def test_selected_source_row_maps_proxy_selection_to_source_row(qtbot):
+    table, proxy = _table_with_one_row(qtbot)
+    table.selectRow(0)
+
+    assert selected_source_row(table, proxy) == 0
+
+
+def test_default_or_first_number_returns_none_without_numbers():
+    contact = LocalPhonebookContact(id=1, display_name="Nur Name", notes=None, box_uniqueid=None, numbers=[])
+
+    assert default_or_first_number(contact) is None
+
+
+def test_default_or_first_number_returns_first_when_no_default_set():
+    contact = LocalPhonebookContact(
+        id=1,
+        display_name="Max Mustermann",
+        notes=None,
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(
+                id=1, number_raw="A", number_normalized="+491111111", number_type="home", is_default=False
+            ),
+            PhonebookNumber(
+                id=2, number_raw="B", number_normalized="+492222222", number_type="mobile", is_default=False
+            ),
+        ],
+    )
+
+    assert default_or_first_number(contact) == "+491111111"
+
+
+def test_default_or_first_number_prefers_the_default_number():
+    contact = LocalPhonebookContact(
+        id=1,
+        display_name="Max Mustermann",
+        notes=None,
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(
+                id=1, number_raw="A", number_normalized="+491111111", number_type="home", is_default=False
+            ),
+            PhonebookNumber(
+                id=2, number_raw="B", number_normalized="+492222222", number_type="mobile", is_default=True
+            ),
+        ],
+    )
+
+    assert default_or_first_number(contact) == "+492222222"
 
 

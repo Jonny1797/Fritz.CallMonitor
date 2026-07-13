@@ -307,6 +307,37 @@ def test_action_worker_shows_error_on_failure(qtbot, connection):
     assert view._model.rowCount() == 1
 
 
+def test_focus_search_is_a_noop(qtbot, connection):
+    view = VoicemailView(connection)
+    qtbot.addWidget(view)
+
+    view.focus_search()  # kein Suchfeld in diesem Tab - darf nicht crashen
+
+
+def test_dial_selected_emits_call_requested_for_selected_message(qtbot, connection):
+    _insert_message(connection, caller_number="+491712345678")
+    view = VoicemailView(connection)
+    qtbot.addWidget(view)
+    _select_row(view, 0)
+
+    with qtbot.waitSignal(view.call_requested, timeout=1000) as blocker:
+        view.dial_selected()
+
+    assert blocker.args == ["+491712345678"]
+
+
+def test_dial_selected_does_nothing_without_selection(qtbot, connection):
+    _insert_message(connection, caller_number="+491712345678")
+    view = VoicemailView(connection)
+    qtbot.addWidget(view)
+    signal_spy = []
+    view.call_requested.connect(signal_spy.append)
+
+    view.dial_selected()
+
+    assert signal_spy == []
+
+
 def test_delete_button_click_asks_for_confirmation_before_deleting(qtbot, connection, mocker):
     mocker.patch(
         "fritz_callhistory.gui.voicemail_view.QMessageBox.question",

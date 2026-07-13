@@ -31,6 +31,94 @@ def test_phonebook_tab_search_filters_by_name(qtbot, connection):
     assert tab._model.contact_at(0).display_name == "Max Mustermann"
 
 
+def test_focus_search_focuses_search_edit(qtbot, connection):
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    tab.show()
+    qtbot.waitExposed(tab)
+    tab.activateWindow()
+    tab.raise_()
+
+    tab.focus_search()
+
+    # Fenster-Aktivierung läuft auf der offscreen-QPA-Plattform asynchron -
+    # waitUntil() statt einer festen Wartezeit, da die Latenz unter Last
+    # (z.B. voller Testsuite) schwankt.
+    qtbot.waitUntil(tab._search_edit.hasFocus, timeout=2000)
+
+
+def test_dial_selected_emits_call_requested_for_single_number_contact(qtbot, connection):
+    repo = LocalPhonebookRepository(connection)
+    repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("0151 1234567", "+491511234567", "mobile", False)],
+    )
+
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    tab._table.selectRow(0)
+
+    with qtbot.waitSignal(tab.call_requested, timeout=1000) as blocker:
+        tab.dial_selected()
+
+    assert blocker.args == ["+491511234567"]
+
+
+def test_dial_selected_prefers_default_number_over_first(qtbot, connection):
+    repo = LocalPhonebookRepository(connection)
+    repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[
+            ("0151 1111111", "+491511111111", "mobile", False),
+            ("069 222222", "+49692222222", "home", True),
+        ],
+    )
+
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    tab._table.selectRow(0)
+
+    with qtbot.waitSignal(tab.call_requested, timeout=1000) as blocker:
+        tab.dial_selected()
+
+    assert blocker.args == ["+49692222222"]
+
+
+def test_dial_selected_does_nothing_without_selection(qtbot, connection):
+    repo = LocalPhonebookRepository(connection)
+    repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("0151 1234567", "+491511234567", "mobile", False)],
+    )
+
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    signal_spy = []
+    tab.call_requested.connect(signal_spy.append)
+
+    tab.dial_selected()
+
+    assert signal_spy == []
+
+
+def test_dial_selected_does_nothing_for_contact_without_numbers(qtbot, connection):
+    repo = LocalPhonebookRepository(connection)
+    repo.create(display_name="Max Mustermann", notes=None, numbers=[])
+
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    tab._table.selectRow(0)
+    signal_spy = []
+    tab.call_requested.connect(signal_spy.append)
+
+    tab.dial_selected()
+
+    assert signal_spy == []
+
+
 def test_import_from_box_disabled_without_fn(qtbot, connection):
     tab = PhonebookTab(connection, import_from_box_fn=None)
     qtbot.addWidget(tab)

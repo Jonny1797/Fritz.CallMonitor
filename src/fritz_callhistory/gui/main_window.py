@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Callable
 
 from PySide6.QtCore import QThread, QTimer, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -178,6 +178,23 @@ class MainWindow(QMainWindow):
         self._phonebook_menu.addAction(self._phonebook_export_action)
         self._phonebook_menu.addSeparator()
         self._phonebook_menu.addAction(self._phonebook_import_from_box_action)
+
+        # Zwei Shortcuts für dieselbe Aktion: "/" ist die vertraute Konvention
+        # (GitHub, Slack, ...), landet aber auf einer deutschen Tastatur auf
+        # einer Shift-Ebene (QWERTZ) - Ctrl+F als layoutunabhängiger
+        # Zweitweg. Als self._xxx gehalten aus demselben Grund wie
+        # self._sync_action oben (siehe dortiger Kommentar).
+        self._focus_search_shortcut = QShortcut(QKeySequence("/"), self)
+        self._focus_search_shortcut.activated.connect(self._focus_search)
+        self._focus_search_shortcut_ctrl_f = QShortcut(QKeySequence("Ctrl+F"), self)
+        self._focus_search_shortcut_ctrl_f.activated.connect(self._focus_search)
+
+        self._dial_selected_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        self._dial_selected_shortcut.activated.connect(self._dial_selected)
+
+        self._tab_shortcuts = [QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self) for i in range(3)]
+        for i, shortcut in enumerate(self._tab_shortcuts):
+            shortcut.activated.connect(lambda index=i: self._tabs.setCurrentIndex(index))
 
         if auto_sync_interval_minutes and self._sync_fn is not None:
             self._auto_sync_timer = QTimer(self)
@@ -421,6 +438,12 @@ class MainWindow(QMainWindow):
         # wechseln, statt vorauszusetzen, dass es schon aktiv ist.
         self._tabs.setCurrentIndex(0)
         self._calls_tab.show_contact(contact_id)
+
+    def _focus_search(self) -> None:
+        self._tabs.currentWidget().focus_search()
+
+    def _dial_selected(self) -> None:
+        self._tabs.currentWidget().dial_selected()
 
     def _dial_number(self, number: str) -> None:
         # _close_requested-Check aus demselben Grund wie in _trigger_sync():
