@@ -6,8 +6,10 @@ Sync-Service und GUI nur gegen FritzBoxError-Subklassen behandeln müssen.
 
 from __future__ import annotations
 
+import functools
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TypeVar
@@ -72,6 +74,36 @@ def _retry_network(fn, *args, **kwargs) -> _T:
                 time.sleep(_RETRY_DELAY_SECONDS)
     assert last_error is not None
     raise last_error
+
+
+def _translate_errors(permission_message: str | None = None) -> Callable[[Callable], Callable]:
+    """Übersetzt FritzAuthorizationError/_NETWORK_EXCEPTIONS in die eigenen Exception-
+    Typen - das am häufigsten wiederholte Muster in dieser Klasse (fasst den try/except-
+    Rumpf zusammen, den sonst jede Methode einzeln bräuchte). *permission_message* ist
+    die Fritz!Box-Benutzerrecht-Meldung für FritzBoxPermissionError; bleibt sie None,
+    wird FritzAuthorizationError unverändert durchgereicht (z.B. für phonebook_ids())."""
+
+    def decorator(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except FritzAuthorizationError as exc:
+                if permission_message:
+                    raise FritzBoxPermissionError(permission_message) from exc
+                raise
+            except _NETWORK_EXCEPTIONS as exc:
+                raise FritzBoxConnectionError(str(exc)) from exc
+
+        return wrapper
+
+    return decorator
+
+
+_VOICEMAIL_PERMISSION_MESSAGE = (
+    "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
+    "Anrufliste und FRITZ!App Fon'"
+)
 
 
 @dataclass
@@ -205,53 +237,35 @@ class FritzBoxClient:
             system_version=self._connection.system_version,
         )
 
+    @_translate_errors(_VOICEMAIL_PERMISSION_MESSAGE)
     def get_calls(self, *, num: int | None = None, days: int | None = None) -> list[Call]:
-        try:
-            return _retry_network(self._call.get_calls, num=num, days=days)
-        except FritzAuthorizationError as exc:
-            raise FritzBoxPermissionError(
-                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
-                "Anrufliste und FRITZ!App Fon'"
-            ) from exc
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        return _retry_network(self._call.get_calls, num=num, days=days)
 
+    @_translate_errors("Fehlendes Fritz!Box-Benutzerrecht für die Wählhilfe (X_AVM-DE_DialNumber)")
     def dial_number(self, number: str) -> None:
         """Löst einen Anruf über die Box-Wählhilfe aus (X_AVM-DE_DialNumber):
         die Box ruft *number* an und lässt dann das angeschlossene Telefon klingeln."""
-        try:
-            _retry_network(self._call.dial, number)
-        except FritzAuthorizationError as exc:
-            raise FritzBoxPermissionError(
-                "Fehlendes Fritz!Box-Benutzerrecht für die Wählhilfe (X_AVM-DE_DialNumber)"
-            ) from exc
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        _retry_network(self._call.dial, number)
 
+    @_translate_errors()
     def phonebook_ids(self) -> list[int]:
-        try:
-            return list(_retry_network(lambda: self._phonebook.phonebook_ids))
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        return list(_retry_network(lambda: self._phonebook.phonebook_ids))
 
+    @_translate_errors()
     def phonebooks(self) -> list[tuple[int, str]]:
         """Liefert (id, Anzeigename) für jedes Telefonbuch der Box."""
-        try:
-            return _retry_network(
-                lambda: [
-                    (pid, self._phonebook.phonebook_info(pid)["name"])
-                    for pid in self._phonebook.phonebook_ids
-                ]
-            )
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        return _retry_network(
+            lambda: [
+                (pid, self._phonebook.phonebook_info(pid)["name"])
+                for pid in self._phonebook.phonebook_ids
+            ]
+        )
 
+    @_translate_errors()
     def phonebook_name_numbers(self, phonebook_id: int) -> list[tuple[str, list[str]]]:
-        try:
-            return _retry_network(self._phonebook.get_all_name_numbers, phonebook_id)
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        return _retry_network(self._phonebook.get_all_name_numbers, phonebook_id)
 
+    @_translate_errors(_VOICEMAIL_PERMISSION_MESSAGE)
     def voicemail_tam_indices(self) -> list[int]:
         """Ermittelt die aktivierten Anrufbeantworter-Slots (X_AVM-DE_TAM/GetList).
 
@@ -259,15 +273,7 @@ class FritzBoxClient:
         FritzCall/FritzPhonebook), daher direkter call_action(). GetList() braucht kein
         Argument und liefert NewTAMList als eigenen, verschachtelten XML-String mit einem
         <Item> je Box-Slot (die Box hat fest 5 Slots, Index 0-4)."""
-        try:
-            result = _retry_network(self._connection.call_action, "X_AVM-DE_TAM", "GetList")
-        except FritzAuthorizationError as exc:
-            raise FritzBoxPermissionError(
-                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
-                "Anrufliste und FRITZ!App Fon'"
-            ) from exc
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        result = _retry_network(self._connection.call_action, "X_AVM-DE_TAM", "GetList")
         root = ET.fromstring(result["NewTAMList"])
         return [
             int(item.findtext("Index"))
@@ -275,30 +281,24 @@ class FritzBoxClient:
             if item.findtext("Enable") == "1"
         ]
 
+    @_translate_errors(_VOICEMAIL_PERMISSION_MESSAGE)
     def voicemail_messages(self, tam_index: int) -> list[VoicemailMessage]:
         """Nachrichtenliste eines Anrufbeantworter-Slots (X_AVM-DE_TAM/GetMessageList):
         gleiches Muster wie phonebook_contacts_detailed() - Action liefert eine URL,
         die per get_xml_root() abgerufen und selbst geparst wird (kein eingebauter
         fritzconnection-Prozessor für diesen Dienst)."""
-        try:
-            result = _retry_network(
-                self._connection.call_action, "X_AVM-DE_TAM", "GetMessageList", NewIndex=tam_index
-            )
-            root = _retry_network(
-                get_xml_root,
-                result["NewURL"],
-                session=self._connection.session,
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-            )
-        except FritzAuthorizationError as exc:
-            raise FritzBoxPermissionError(
-                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
-                "Anrufliste und FRITZ!App Fon'"
-            ) from exc
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        result = _retry_network(
+            self._connection.call_action, "X_AVM-DE_TAM", "GetMessageList", NewIndex=tam_index
+        )
+        root = _retry_network(
+            get_xml_root,
+            result["NewURL"],
+            session=self._connection.session,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
         return _parse_voicemail_messages(root, tam_index)
 
+    @_translate_errors(_VOICEMAIL_PERMISSION_MESSAGE)
     def voicemail_audio(self, path: str) -> bytes:
         """Lädt die Audiodatei einer Nachricht (relativer *path* aus einer
         VoicemailMessage, z.B. "/download.lua?path=/data/tam/rec/rec.0.000").
@@ -314,69 +314,45 @@ class FritzBoxClient:
         query = path.split("?", 1)[1] if "?" in path else path
         params = dict(pair.split("=", 1) for pair in query.split("&") if "=" in pair)
         url = f"{self._connection.address}:{self._connection.port}/download.lua"
-        try:
-            response = _retry_network(self._connection.http_interface.call_url, url, params)
-        except FritzAuthorizationError as exc:
-            raise FritzBoxPermissionError(
-                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
-                "Anrufliste und FRITZ!App Fon'"
-            ) from exc
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        response = _retry_network(self._connection.http_interface.call_url, url, params)
         return response.content
 
+    @_translate_errors(_VOICEMAIL_PERMISSION_MESSAGE)
     def voicemail_mark_read(self, tam_index: int, message_index: int) -> None:
         """Markiert eine Nachricht auf der Box selbst als gelesen (X_AVM-DE_TAM/
         MarkMessage) - verifiziert gegen eine echte Box, reversibel (NewMarkedAsRead
         0/1). Wird beim Abspielen in der GUI aufgerufen, damit der "neu"-Zustand
         konsistent mit der Box bleibt statt nur durch ein Handset aktualisierbar zu sein."""
-        try:
-            _retry_network(
-                self._connection.call_action,
-                "X_AVM-DE_TAM",
-                "MarkMessage",
-                NewIndex=tam_index,
-                NewMessageIndex=message_index,
-                NewMarkedAsRead=1,
-            )
-        except FritzAuthorizationError as exc:
-            raise FritzBoxPermissionError(
-                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
-                "Anrufliste und FRITZ!App Fon'"
-            ) from exc
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        _retry_network(
+            self._connection.call_action,
+            "X_AVM-DE_TAM",
+            "MarkMessage",
+            NewIndex=tam_index,
+            NewMessageIndex=message_index,
+            NewMarkedAsRead=1,
+        )
 
+    @_translate_errors(_VOICEMAIL_PERMISSION_MESSAGE)
     def voicemail_delete(self, tam_index: int, message_index: int) -> None:
         """Löscht eine Nachricht auf der Box selbst (X_AVM-DE_TAM/DeleteMessage) -
         verifiziert gegen eine echte Box, nicht umkehrbar. message_index ist wie bei
         voicemail_mark_read() der Box-eigene <Index>, der nicht stabil über
         Löschungen hinweg ist - Aufrufer müssen ihn unmittelbar vor diesem Aufruf
         über voicemail_messages() neu auflösen."""
-        try:
-            _retry_network(
-                self._connection.call_action,
-                "X_AVM-DE_TAM",
-                "DeleteMessage",
-                NewIndex=tam_index,
-                NewMessageIndex=message_index,
-            )
-        except FritzAuthorizationError as exc:
-            raise FritzBoxPermissionError(
-                "Fehlendes Fritz!Box-Benutzerrecht: 'Sprachnachrichten, Fax, "
-                "Anrufliste und FRITZ!App Fon'"
-            ) from exc
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        _retry_network(
+            self._connection.call_action,
+            "X_AVM-DE_TAM",
+            "DeleteMessage",
+            NewIndex=tam_index,
+            NewMessageIndex=message_index,
+        )
 
+    @_translate_errors()
     def phonebook_contacts_detailed(self, phonebook_id: int) -> list[FritzPhonebookContact]:
         """Wie phonebook_name_numbers(), aber inkl. uniqueid/category/Nummern-Typ
         - für den einmaligen "Von Box importieren"-Zug ins lokale Telefonbuch."""
-        try:
-            url = _retry_network(self._phonebook.phonebook_info, phonebook_id)["url"]
-            root = _retry_network(
-                get_xml_root, url, session=self._connection.session, timeout=_REQUEST_TIMEOUT_SECONDS
-            )
-        except _NETWORK_EXCEPTIONS as exc:
-            raise FritzBoxConnectionError(str(exc)) from exc
+        url = _retry_network(self._phonebook.phonebook_info, phonebook_id)["url"]
+        root = _retry_network(
+            get_xml_root, url, session=self._connection.session, timeout=_REQUEST_TIMEOUT_SECONDS
+        )
         return _parse_phonebook_contacts(root)

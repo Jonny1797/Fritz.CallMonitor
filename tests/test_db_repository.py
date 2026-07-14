@@ -467,6 +467,40 @@ def test_local_phonebook_create_and_get_round_trip(connection):
     ]
 
 
+def test_local_phonebook_list_all_groups_numbers_per_contact(connection):
+    repo = LocalPhonebookRepository(connection)
+    alice_id = repo.create(
+        display_name="Alice Beispiel",
+        notes=None,
+        numbers=[
+            ("0171 1111111", "+491711111111", "mobile", False),
+            ("030 1111111", "+49301111111", "home", False),
+        ],
+    )
+    bob_id = repo.create(
+        display_name="Bob Beispiel",
+        notes=None,
+        numbers=[
+            ("0171 2222222", "+491712222222", "mobile", False),
+            ("030 2222222", "+49302222222", "home", False),
+            ("0171 3333333", "+491713333333", "work", False),
+        ],
+    )
+
+    contacts = repo.list_all()
+
+    assert [c.id for c in contacts] == [alice_id, bob_id]
+    assert [n.number_normalized for n in contacts[0].numbers] == [
+        "+491711111111",
+        "+49301111111",
+    ]
+    assert [n.number_normalized for n in contacts[1].numbers] == [
+        "+491712222222",
+        "+49302222222",
+        "+491713333333",
+    ]
+
+
 def test_local_phonebook_get_missing_returns_none(connection):
     repo = LocalPhonebookRepository(connection)
     assert repo.get(999) is None

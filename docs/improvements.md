@@ -2,75 +2,34 @@
 
 From a full read-through of `src/fritz_callhistory/` (plus `packaging/entry_point.py`
 and `scripts/check_connection.py`) looking for readability, performance, and
-best-practice issues. Not planned/committed to yet — a list to pick from.
-Ordered by impact.
+best-practice issues. Ordered by impact.
 
-## 1. `LocalPhonebookRepository.list_all` is N+1
+Items 1, 2, 3, and 6 were implemented on 2026-07-14. Items 4 and 5 are left open —
+both need a deliberate trade-off call or a real-box test rather than an unattended
+pass (see their entries below).
 
-`src/fritz_callhistory/db/repository.py:367-373`
+## 1. `LocalPhonebookRepository.list_all` is N+1 — done
 
-```python
-def list_all(self, query: str = "") -> list[LocalPhonebookContact]:
-    pattern = f"%{query}%"
-    rows = self._conn.execute(
-        "SELECT id FROM phonebook_contacts WHERE display_name LIKE ? ORDER BY display_name",
-        (pattern,),
-    ).fetchall()
-    return [self._load(row["id"]) for row in rows]
-```
+Fixed: `list_all` now fetches all matching contacts and their numbers via a single
+`LEFT JOIN` query, grouped into `LocalPhonebookContact` objects in Python, instead
+of one query for ids plus two more per contact via `_load()`. See
+`src/fritz_callhistory/db/repository.py`'s `LocalPhonebookRepository.list_all`.
 
-`_load()` (line 533) issues two more queries per contact (contact row + numbers).
-This backs the always-visible "Telefonbuch" tab, so it runs on every
-reload/search keystroke (debounced, but still). Fix: fetch all matching contacts
-and all their numbers in two queries, then group numbers by
-`phonebook_contact_id` in Python before constructing `LocalPhonebookContact`
-objects — same shape as `CallRepository.all_calls`'s single-JOIN approach used
-elsewhere in this file.
+## 2. Exception-translation duplication in `FritzBoxClient` — done
 
-## 2. Exception-translation duplication in `FritzBoxClient`
+Fixed: added a `_translate_errors(permission_message=None)` decorator in
+`src/fritz_callhistory/fritz/client.py` that collapses the repeated
+`try/except FritzAuthorizationError / except _NETWORK_EXCEPTIONS` block, applied
+to all `FritzBoxClient` methods except `__init__` (which raises `FritzBoxAuthError`
+instead and doesn't fit the decorator's shape).
 
-`src/fritz_callhistory/fritz/client.py` (repeated ~7 times, e.g. lines 208-217,
-219-229, 255-270, 278-300, 302-326, 328-348, 350-370)
+## 3. `QThread` worker boilerplate in `gui/workers.py` — done
 
-Every method wraps its `_retry_network(...)` call in the same three-way
-`try/except FritzAuthorizationError / except _NETWORK_EXCEPTIONS` translation.
-This is the most repeated block in the codebase and is easy to get subtly wrong
-on the next new method (e.g. forgetting the permission message). A decorator
-would collapse it:
-
-```python
-def _translate_errors(permission_message: str | None = None):
-    def decorator(fn):
-        @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
-            try:
-                return fn(*args, **kwargs)
-            except FritzAuthorizationError as exc:
-                if permission_message:
-                    raise FritzBoxPermissionError(permission_message) from exc
-                raise
-            except _NETWORK_EXCEPTIONS as exc:
-                raise FritzBoxConnectionError(str(exc)) from exc
-        return wrapper
-    return decorator
-```
-
-Methods without a permission-specific message (e.g. `phonebook_ids`,
-`phonebook_contacts_detailed`) would just omit the argument.
-
-## 3. `QThread` worker boilerplate in `gui/workers.py`
-
-`src/fritz_callhistory/gui/workers.py` (all six worker classes, e.g. lines
-38-50, 66-75, 91-100, 116-125, 140-149, 165-174)
-
-Each worker's `run()` repeats the same `except FritzBoxError / except Exception`
-tail with a different final signal name. The classes genuinely differ enough
-(differing signal signatures, `SyncWorker` splitting out `auth_failed`,
-`CredentialsTestWorker` having 4 branches) that collapsing them into one generic
-class isn't a clean win — but the common tail is worth extracting into a small
-base class that `DialWorker`, `VoicemailActionWorker`, `PhonebookListWorker`,
-`VoicemailAudioWorker`, and `ImportFromBoxWorker` could use directly;
-`SyncWorker` and `CredentialsTestWorker` would keep their own `run()`.
+Fixed: added a `_SimpleWorker` base class in `src/fritz_callhistory/gui/workers.py`
+that collapses the repeated `run()` tail, used by `DialWorker`,
+`VoicemailActionWorker`, `PhonebookListWorker`, `VoicemailAudioWorker`, and
+`ImportFromBoxWorker`. `SyncWorker` and `CredentialsTestWorker` kept their own
+`run()` as planned, since they branch into multiple distinct signals.
 
 ## 4. Per-row commits in the sync loop — real, but a documented trade-off
 
@@ -106,17 +65,13 @@ through raw — if `call_url()` re-encodes its `params` dict before building the
 request, switching parsers could change what's sent. Worth trying only with a
 test against a real box's `download.lua` path.
 
-## 6. Minor: near-duplicate `set_search_text`/`focus_search` across views
+## 6. Minor: near-duplicate `set_search_text`/`focus_search` across views — done
 
-`src/fritz_callhistory/gui/contacts_view.py:116-128`,
-`src/fritz_callhistory/gui/all_calls_view.py:234-246`
-
-Both `set_search_text` methods are near-verbatim (block signals, set text,
-unblock, stop debounce timer), and `focus_search` (set focus + select-all)
-repeats across `contacts_view.py`, `all_calls_view.py`, and `phonebook_view.py`.
-Given the two views are deliberately kept independent/testable, this is minor —
-a shared free function in `gui/models.py` (alongside `install_debounced_search`)
-would remove the duplication without coupling the views to each other.
+Fixed: added `focus_search_edit`/`set_search_text_silently` free functions to
+`src/fritz_callhistory/gui/models.py` (alongside `install_debounced_search`),
+used by `contacts_view.py`, `all_calls_view.py` (both helpers), and
+`phonebook_view.py` (`focus_search_edit` only). `voicemail_view.py`'s
+`focus_search` stays as-is — it's a no-op stub, not a duplicate.
 
 ## Reviewed, no findings
 

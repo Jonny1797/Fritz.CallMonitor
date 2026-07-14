@@ -28,10 +28,12 @@ from fritz_callhistory.gui.contact_detail import ContactDetailWidget
 from fritz_callhistory.gui.models import (
     ContactListModel,
     DataclassSortProxy,
+    focus_search_edit,
     install_call_context_menu,
     install_debounced_search,
     install_tristate_sorting,
     selected_source_row,
+    set_search_text_silently,
 )
 
 _CONTACT_NAME_COLUMN = 0
@@ -114,18 +116,7 @@ class GroupedContactsView(QWidget):
         self._contact_model.set_contacts(self._contacts_repo.search(self._search_edit.text()))
 
     def set_search_text(self, text: str) -> None:
-        """Übernimmt Suchtext von der jeweils anderen Ansicht (siehe CallsTab),
-        ohne search_changed erneut auszulösen - sonst würde jede Ansicht die
-        andere endlos zurück-propagieren. Kein sofortiges reload_contacts():
-        solange diese Ansicht nicht sichtbar ist, holt CallsTab._set_grouped()
-        das beim Umschalten nach, statt bei jedem Tastenanschlag der anderen
-        Ansicht eine ungenutzte Query zu feuern."""
-        if self._search_edit.text() == text:
-            return
-        self._search_edit.blockSignals(True)
-        self._search_edit.setText(text)
-        self._search_edit.blockSignals(False)
-        self._search_timer.stop()
+        set_search_text_silently(self._search_edit, self._search_timer, text)
 
     def show_contact(self, contact_id: int) -> None:
         # search_timer.stop() ist nötig: search_edit.clear() löst über
@@ -155,8 +146,7 @@ class GroupedContactsView(QWidget):
         return None if contact.is_anonymous else contact.primary_number
 
     def focus_search(self) -> None:
-        self._search_edit.setFocus()
-        self._search_edit.selectAll()
+        focus_search_edit(self._search_edit)
 
     def dial_selected(self) -> None:
         row = selected_source_row(self._table, self._contact_proxy)

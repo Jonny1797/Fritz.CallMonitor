@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-14
+
 ### Changed
 
 - Contact display-name resolution (runs after every sync and every local
   "Telefonbuch" edit) now loads the local and box phonebooks into memory once
   and writes all changed names in a single transaction, instead of running two
   lookup queries and a separate commit per contact.
+- The "Telefonbuch" tab's contact list now loads all matching contacts and
+  their phone numbers in a single query, instead of one extra query pair per
+  contact on every reload/search keystroke.
 - Forgejo release now attaches the same Linux and Windows executables as
   the GitHub release, instead of being changelog-notes-only. Since this
   Forgejo runner is aarch64 and can't build the x86_64/Windows binaries

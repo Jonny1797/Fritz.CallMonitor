@@ -381,12 +381,54 @@ class LocalPhonebookRepository:
         self._conn = connection
 
     def list_all(self, query: str = "") -> list[LocalPhonebookContact]:
+        """Wie eine Serie von get()-Aufrufen für alle passenden Kontakte, aber als
+        einzelnes LEFT JOIN statt N+1 Einzelabfragen - backt den immer sichtbaren
+        "Telefonbuch"-Tab, der bei jedem Reload/Suchtastenanschlag läuft."""
         pattern = f"%{query}%"
         rows = self._conn.execute(
-            "SELECT id FROM phonebook_contacts WHERE display_name LIKE ? ORDER BY display_name",
+            """
+            SELECT
+                pc.id AS contact_id,
+                pc.display_name AS display_name,
+                pc.notes AS notes,
+                pc.box_uniqueid AS box_uniqueid,
+                pcn.id AS number_id,
+                pcn.number_raw AS number_raw,
+                pcn.number_normalized AS number_normalized,
+                pcn.number_type AS number_type,
+                pcn.is_default AS is_default
+            FROM phonebook_contacts pc
+            LEFT JOIN phonebook_contact_numbers pcn ON pcn.phonebook_contact_id = pc.id
+            WHERE pc.display_name LIKE ?
+            ORDER BY pc.display_name, pc.id, pcn.id
+            """,
             (pattern,),
         ).fetchall()
-        return [self._load(row["id"]) for row in rows]
+
+        contacts: dict[int, LocalPhonebookContact] = {}
+        for row in rows:
+            contact_id = row["contact_id"]
+            contact = contacts.get(contact_id)
+            if contact is None:
+                contact = LocalPhonebookContact(
+                    id=contact_id,
+                    display_name=row["display_name"],
+                    notes=row["notes"],
+                    box_uniqueid=row["box_uniqueid"],
+                    numbers=[],
+                )
+                contacts[contact_id] = contact
+            if row["number_id"] is not None:
+                contact.numbers.append(
+                    PhonebookNumber(
+                        id=row["number_id"],
+                        number_raw=row["number_raw"],
+                        number_normalized=row["number_normalized"],
+                        number_type=row["number_type"],
+                        is_default=bool(row["is_default"]),
+                    )
+                )
+        return list(contacts.values())
 
     def get(self, contact_id: int) -> LocalPhonebookContact | None:
         row = self._conn.execute(

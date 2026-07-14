@@ -444,6 +444,28 @@ def install_debounced_search(
     return timer
 
 
+def focus_search_edit(search_edit: QLineEdit) -> None:
+    """Fokussiert und markiert den Inhalt eines Suchfelds - gemeinsame focus_search()-
+    Implementierung von ContactsView/AllCallsView/PhonebookView."""
+    search_edit.setFocus()
+    search_edit.selectAll()
+
+
+def set_search_text_silently(search_edit: QLineEdit, search_timer: QTimer, text: str) -> None:
+    """Übernimmt Suchtext von der jeweils anderen Ansicht, ohne textChanged auszulösen -
+    sonst würden sich die Ansichten endlos gegenseitig zurückpropagieren (siehe
+    CallsTab). Gemeinsame set_search_text()-Implementierung von ContactsView/
+    AllCallsView. Kein sofortiges Reload: solange die Zielansicht nicht sichtbar ist,
+    holt CallsTab das beim Umschalten nach, statt bei jedem Tastenanschlag der anderen
+    Ansicht eine ungenutzte Query zu feuern."""
+    if search_edit.text() == text:
+        return
+    search_edit.blockSignals(True)
+    search_edit.setText(text)
+    search_edit.blockSignals(False)
+    search_timer.stop()
+
+
 def selected_source_row(table: QTableView, proxy: QSortFilterProxyModel) -> int | None:
     """Source-Model-Zeile der aktuellen (Einzel-)Auswahl von *table*, oder None,
     wenn nichts ausgewählt ist - fasst das Muster zusammen, das bereits einzeln

@@ -50,7 +50,36 @@ class SyncWorker(QThread):
         self.finished_sync.emit(inserted, updated)
 
 
-class ImportFromBoxWorker(QThread):
+class _SimpleWorker(QThread):
+    """Basisklasse für Worker mit genau einem Erfolgs-/Fehler-Signalpaar: fasst den in
+    ImportFromBoxWorker/DialWorker/VoicemailActionWorker/PhonebookListWorker/
+    VoicemailAudioWorker wiederholten except FritzBoxError/Exception-Rumpf zusammen.
+    SyncWorker und CredentialsTestWorker behalten ihr eigenes run() - sie unterscheiden
+    mehrere Fehlerarten über verschiedene Signale, was hier nicht reinpasst."""
+
+    def __init__(self, fn: Callable[[], object], parent=None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            result = self._fn()
+        except FritzBoxError as exc:
+            self._emit_failure(str(exc))
+            return
+        except Exception as exc:  # Thread darf nie stillschweigend sterben
+            self._emit_failure(f"Unerwarteter Fehler: {exc}")
+            return
+        self._emit_success(result)
+
+    def _emit_success(self, result: object) -> None:
+        raise NotImplementedError
+
+    def _emit_failure(self, message: str) -> None:
+        raise NotImplementedError
+
+
+class ImportFromBoxWorker(_SimpleWorker):
     """Führt den einmaligen "Von Box importieren"-Zug (fritz/client.py's
     phonebook_contacts_detailed() -> LocalPhonebookRepository) in einem
     eigenen Thread aus - gleiche Form wie SyncWorker."""
@@ -59,23 +88,16 @@ class ImportFromBoxWorker(QThread):
     import_failed = Signal(str)
 
     def __init__(self, import_fn: ImportFromBoxFn, phonebook_ids: list[int], parent=None) -> None:
-        super().__init__(parent)
-        self._import_fn = import_fn
-        self._phonebook_ids = phonebook_ids
+        super().__init__(lambda: import_fn(phonebook_ids), parent)
 
-    def run(self) -> None:
-        try:
-            imported = self._import_fn(self._phonebook_ids)
-        except FritzBoxError as exc:
-            self.import_failed.emit(str(exc))
-            return
-        except Exception as exc:  # Thread darf nie stillschweigend sterben
-            self.import_failed.emit(f"Unerwarteter Fehler: {exc}")
-            return
-        self.finished_import.emit(imported)
+    def _emit_success(self, result: object) -> None:
+        self.finished_import.emit(result)
+
+    def _emit_failure(self, message: str) -> None:
+        self.import_failed.emit(message)
 
 
-class DialWorker(QThread):
+class DialWorker(_SimpleWorker):
     """Führt einen einzelnen Wählhilfe-Anruf (fritz/client.py's dial_number())
     in einem eigenen Thread aus - gleiche Form wie SyncWorker. *dial_fn* ist ein
     parameterloser Closure (die Nummer ist bereits eingebrannt), damit dieser
@@ -85,22 +107,16 @@ class DialWorker(QThread):
     dial_failed = Signal(str)
 
     def __init__(self, dial_fn: Callable[[], None], parent=None) -> None:
-        super().__init__(parent)
-        self._dial_fn = dial_fn
+        super().__init__(dial_fn, parent)
 
-    def run(self) -> None:
-        try:
-            self._dial_fn()
-        except FritzBoxError as exc:
-            self.dial_failed.emit(str(exc))
-            return
-        except Exception as exc:  # Thread darf nie stillschweigend sterben
-            self.dial_failed.emit(f"Unerwarteter Fehler: {exc}")
-            return
+    def _emit_success(self, result: object) -> None:
         self.dial_succeeded.emit()
 
+    def _emit_failure(self, message: str) -> None:
+        self.dial_failed.emit(message)
 
-class VoicemailActionWorker(QThread):
+
+class VoicemailActionWorker(_SimpleWorker):
     """Führt eine einzelne Box-Aktion auf einer Anrufbeantworter-Nachricht aus
     (Gelesen-Markieren oder Löschen) in einem eigenen Thread - gleiche Form wie
     DialWorker, wiederverwendet für beide Aktionen (der jeweilige Closure trägt
@@ -110,22 +126,16 @@ class VoicemailActionWorker(QThread):
     action_failed = Signal(str)
 
     def __init__(self, action_fn: Callable[[], None], parent=None) -> None:
-        super().__init__(parent)
-        self._action_fn = action_fn
+        super().__init__(action_fn, parent)
 
-    def run(self) -> None:
-        try:
-            self._action_fn()
-        except FritzBoxError as exc:
-            self.action_failed.emit(str(exc))
-            return
-        except Exception as exc:  # Thread darf nie stillschweigend sterben
-            self.action_failed.emit(f"Unerwarteter Fehler: {exc}")
-            return
+    def _emit_success(self, result: object) -> None:
         self.action_succeeded.emit()
 
+    def _emit_failure(self, message: str) -> None:
+        self.action_failed.emit(message)
 
-class PhonebookListWorker(QThread):
+
+class PhonebookListWorker(_SimpleWorker):
     """Holt die verfügbaren Telefonbücher (fritz/client.py's phonebooks()) in
     einem eigenen Thread - gleiche Form wie SyncWorker. Wird von MainWindow
     (nicht von SettingsDialog!) gehalten, siehe _open_settings_dialog()."""
@@ -134,22 +144,16 @@ class PhonebookListWorker(QThread):
     listing_failed = Signal(str)
 
     def __init__(self, list_fn: ListPhonebooksFn, parent=None) -> None:
-        super().__init__(parent)
-        self._list_fn = list_fn
+        super().__init__(list_fn, parent)
 
-    def run(self) -> None:
-        try:
-            phonebooks = self._list_fn()
-        except FritzBoxError as exc:
-            self.listing_failed.emit(str(exc))
-            return
-        except Exception as exc:  # Thread darf nie stillschweigend sterben
-            self.listing_failed.emit(f"Unerwarteter Fehler: {exc}")
-            return
-        self.finished_listing.emit(phonebooks)
+    def _emit_success(self, result: object) -> None:
+        self.finished_listing.emit(result)
+
+    def _emit_failure(self, message: str) -> None:
+        self.listing_failed.emit(message)
 
 
-class VoicemailAudioWorker(QThread):
+class VoicemailAudioWorker(_SimpleWorker):
     """Holt die Audiodaten einer einzelnen Anrufbeantworter-Nachricht
     (fritz/client.py's voicemail_audio()) in einem eigenen Thread - gleiche Form
     wie DialWorker. *audio_fn* ist ein parameterloser Closure (der Pfad ist bereits
@@ -159,19 +163,13 @@ class VoicemailAudioWorker(QThread):
     audio_failed = Signal(str)
 
     def __init__(self, audio_fn: VoicemailAudioFn, parent=None) -> None:
-        super().__init__(parent)
-        self._audio_fn = audio_fn
+        super().__init__(audio_fn, parent)
 
-    def run(self) -> None:
-        try:
-            data = self._audio_fn()
-        except FritzBoxError as exc:
-            self.audio_failed.emit(str(exc))
-            return
-        except Exception as exc:  # Thread darf nie stillschweigend sterben
-            self.audio_failed.emit(f"Unerwarteter Fehler: {exc}")
-            return
-        self.audio_ready.emit(data)
+    def _emit_success(self, result: object) -> None:
+        self.audio_ready.emit(result)
+
+    def _emit_failure(self, message: str) -> None:
+        self.audio_failed.emit(message)
 
 
 class CredentialsTestWorker(QThread):
