@@ -10,8 +10,17 @@ jobs:
     # Adjust to whatever label your forgejo-runner exposes (see its
     # config.yaml labels: list) if this doesn't match your instance.
     runs-on: ubuntu-latest
+    env:
+      # This instance is reverse-proxied under a path prefix (ROOT_URL
+      # https://mash.gaja-uranos.de/forgejo/), but the Actions task context
+      # (github.server_url / github.api_url) is generated without that
+      # prefix, so both need to be overridden explicitly below rather than
+      # relied on. Adjust if your instance's base URL differs.
+      FORGEJO_BASE_URL: https://mash.gaja-uranos.de/forgejo
     steps:
       - uses: actions/checkout@v7
+        with:
+          github-server-url: ${{ env.FORGEJO_BASE_URL }}
 
       - name: Extract changelog section for this version
         run: |
@@ -38,7 +47,7 @@ jobs:
             -H "Authorization: token ${TOKEN}" \
             -H "Content-Type: application/json" \
             --data-binary @/tmp/release_payload.json \
-            "${{ github.api_url }}/repos/${{ github.repository }}/releases")
+            "${{ env.FORGEJO_BASE_URL }}/api/v1/repos/${{ github.repository }}/releases")
 
           cat /tmp/release_response.json
           if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
