@@ -17,10 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them as Forgejo release assets — works regardless of which remote's tag
   push happens to land first.
 
-## [0.0.3-test] - 2026-07-14
-
-CI pipeline test, not a real release.
-
 ## [1.0.0] - 2026-07-13
 
 ### Added
