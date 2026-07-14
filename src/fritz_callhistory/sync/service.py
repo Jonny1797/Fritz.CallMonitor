@@ -52,16 +52,20 @@ def resolve_contact_names(
     Kein Netzwerkzugriff, daher bewusst eine freie Funktion statt einer
     SyncService-Methode - kann auch von der GUI direkt nach lokalen
     Telefonbuch-Aenderungen aufgerufen werden, ohne SyncService/FritzBoxClient.
+
+    Lädt beide Telefonbücher einmalig komplett (statt pro Kontakt einzeln
+    nachzuschlagen) und schreibt alle geänderten Anzeigenamen in einer einzigen
+    Transaktion - für N Kontakte 2 Queries + 1 Commit statt bis zu 3N.
     """
-    updated = 0
+    local_names = local_phonebook.all_names()
+    box_names = phonebook.all_names()
+    updates: dict[int, str] = {}
     for contact in contacts.search(""):
-        name = local_phonebook.lookup_name(contact.primary_number) or phonebook.lookup_name(
-            contact.primary_number
-        )
+        name = local_names.get(contact.primary_number) or box_names.get(contact.primary_number)
         if name and name != contact.display_name:
-            contacts.set_display_name(contact.id, name)
-            updated += 1
-    return updated
+            updates[contact.id] = name
+    contacts.set_display_names(updates)
+    return len(updates)
 
 
 class SyncService:

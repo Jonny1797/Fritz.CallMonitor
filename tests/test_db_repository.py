@@ -6,6 +6,7 @@ from fritz_callhistory.db.repository import (
     CallRepository,
     ContactRepository,
     LocalPhonebookRepository,
+    PhonebookRepository,
     SyncStateRepository,
     VoicemailRepository,
 )
@@ -622,6 +623,27 @@ def test_local_phonebook_lookup_name_ties_break_by_lowest_id(connection):
 def test_local_phonebook_lookup_name_returns_none_when_missing(connection):
     repo = LocalPhonebookRepository(connection)
     assert repo.lookup_name("+491234567") is None
+
+
+def test_local_phonebook_all_names_ties_break_by_lowest_id(connection):
+    repo = LocalPhonebookRepository(connection)
+    repo.create(display_name="Erster", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
+    repo.create(display_name="Zweiter", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
+
+    assert repo.all_names() == {"+491234567": "Erster"}
+
+
+def test_phonebook_all_names_ties_break_by_lowest_phonebook_id(connection):
+    repo = PhonebookRepository(connection)
+    repo.replace_entries(2, [("Zweites Buch", "+491234567")])
+    repo.replace_entries(0, [("Erstes Buch", "+491234567")])
+
+    assert repo.all_names() == {"+491234567": "Erstes Buch"}
+
+
+def test_phonebook_all_names_returns_empty_dict_when_no_entries(connection):
+    repo = PhonebookRepository(connection)
+    assert repo.all_names() == {}
 
 
 def test_local_phonebook_box_uniqueid_round_trip(connection):

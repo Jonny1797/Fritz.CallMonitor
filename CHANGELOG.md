@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Contact display-name resolution (runs after every sync and every local
+  "Telefonbuch" edit) now loads the local and box phonebooks into memory once
+  and writes all changed names in a single transaction, instead of running two
+  lookup queries and a separate commit per contact.
 - Forgejo release now attaches the same Linux and Windows executables as
   the GitHub release, instead of being changelog-notes-only. Since this
   Forgejo runner is aarch64 and can't build the x86_64/Windows binaries

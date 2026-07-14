@@ -99,6 +99,16 @@ class ContactRepository:
         )
         self._conn.commit()
 
+    def set_display_names(self, updates: dict[int, str]) -> None:
+        """Batched Variante von set_display_name für viele Kontakte in einer Transaktion."""
+        if not updates:
+            return
+        self._conn.executemany(
+            "UPDATE contacts SET display_name = ? WHERE id = ?",
+            [(name, contact_id) for contact_id, name in updates.items()],
+        )
+        self._conn.commit()
+
     def _query(self, where: str, params: tuple, order_by: str = "") -> list[Contact]:
         rows = self._conn.execute(
             f"""
@@ -328,12 +338,18 @@ class PhonebookRepository:
         )
         self._conn.commit()
 
-    def lookup_name(self, number_normalized: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT name FROM phonebook_entries WHERE number_normalized = ? ORDER BY phonebook_id LIMIT 1",
-            (number_normalized,),
-        ).fetchone()
-        return row["name"] if row else None
+    def all_names(self) -> dict[str, str]:
+        """number_normalized -> name für alle Einträge. Bei mehreren Telefonbüchern mit
+        derselben Nummer gewinnt die niedrigste phonebook_id (ORDER BY ASC + first-wins
+        via setdefault) - dieselbe Priorität, die die frühere lookup_name-Einzelabfrage
+        per ORDER BY phonebook_id LIMIT 1 pro Nummer hatte."""
+        names: dict[str, str] = {}
+        rows = self._conn.execute(
+            "SELECT number_normalized, name FROM phonebook_entries ORDER BY phonebook_id"
+        ).fetchall()
+        for row in rows:
+            names.setdefault(row["number_normalized"], row["name"])
+        return names
 
 
 @dataclass
@@ -435,6 +451,23 @@ class LocalPhonebookRepository:
             (number_normalized,),
         ).fetchone()
         return row["display_name"] if row else None
+
+    def all_names(self) -> dict[str, str]:
+        """number_normalized -> display_name für alle Kontakte. Bei mehreren Kontakten mit
+        derselben Nummer gewinnt die niedrigste phonebook_contact_id - dieselbe Priorität,
+        die die frühere lookup_name-Einzelabfrage per ORDER BY pc.id LIMIT 1 pro Nummer hatte."""
+        names: dict[str, str] = {}
+        rows = self._conn.execute(
+            """
+            SELECT pcn.number_normalized AS number_normalized, pc.display_name AS display_name
+            FROM phonebook_contact_numbers pcn
+            JOIN phonebook_contacts pc ON pc.id = pcn.phonebook_contact_id
+            ORDER BY pc.id
+            """
+        ).fetchall()
+        for row in rows:
+            names.setdefault(row["number_normalized"], row["display_name"])
+        return names
 
     def find_by_number(self, number_normalized: str) -> LocalPhonebookContact | None:
         """Wie lookup_name, aber gibt den vollen Kontakt zurück - für den

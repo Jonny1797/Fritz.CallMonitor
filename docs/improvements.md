@@ -5,23 +5,7 @@ and `scripts/check_connection.py`) looking for readability, performance, and
 best-practice issues. Not planned/committed to yet — a list to pick from.
 Ordered by impact.
 
-## 1. `resolve_contact_names` re-queries the DB per contact, on a hot path
-
-`src/fritz_callhistory/sync/service.py:43-64`
-
-Runs on every sync and after every local phonebook edit (`gui/phonebook_view.py`'s
-`_after_local_change`). For each contact it fires two `lookup_name` SELECTs (local
-+ box phonebook) and, on a name change, a separate commit via `set_display_name`.
-For N contacts that's up to 3N round-trips + up to N commits, every time — the
-hottest instance of the "repeated queries in a loop" pattern in this codebase.
-
-Fix direction: load both phonebooks into `dict[number_normalized, name]` once (two
-queries total instead of 2N), then do a single in-memory pass, and batch the
-`display_name` updates into one transaction. Needs new bulk-fetch methods on
-`PhonebookRepository`/`LocalPhonebookRepository` (currently only single-lookup
-`lookup_name` exists).
-
-## 2. `LocalPhonebookRepository.list_all` is N+1
+## 1. `LocalPhonebookRepository.list_all` is N+1
 
 `src/fritz_callhistory/db/repository.py:367-373`
 
@@ -43,7 +27,7 @@ and all their numbers in two queries, then group numbers by
 objects — same shape as `CallRepository.all_calls`'s single-JOIN approach used
 elsewhere in this file.
 
-## 3. Exception-translation duplication in `FritzBoxClient`
+## 2. Exception-translation duplication in `FritzBoxClient`
 
 `src/fritz_callhistory/fritz/client.py` (repeated ~7 times, e.g. lines 208-217,
 219-229, 255-270, 278-300, 302-326, 328-348, 350-370)
@@ -74,7 +58,7 @@ def _translate_errors(permission_message: str | None = None):
 Methods without a permission-specific message (e.g. `phonebook_ids`,
 `phonebook_contacts_detailed`) would just omit the argument.
 
-## 4. `QThread` worker boilerplate in `gui/workers.py`
+## 3. `QThread` worker boilerplate in `gui/workers.py`
 
 `src/fritz_callhistory/gui/workers.py` (all six worker classes, e.g. lines
 38-50, 66-75, 91-100, 116-125, 140-149, 165-174)
@@ -88,7 +72,7 @@ base class that `DialWorker`, `VoicemailActionWorker`, `PhonebookListWorker`,
 `VoicemailAudioWorker`, and `ImportFromBoxWorker` could use directly;
 `SyncWorker` and `CredentialsTestWorker` would keep their own `run()`.
 
-## 5. Per-row commits in the sync loop — real, but a documented trade-off
+## 4. Per-row commits in the sync loop — real, but a documented trade-off
 
 `src/fritz_callhistory/db/repository.py` — `ContactRepository.upsert` (line 92),
 `CallRepository.insert` (line 197), `VoicemailRepository.insert_or_update`
@@ -106,7 +90,7 @@ interactive GUI-facing repo methods as-is) is defensible, but should be
 introduced deliberately with that trade-off in mind rather than as a blanket
 "remove per-op commits" change.
 
-## 6. Manual query-string parsing in `voicemail_audio` — worth a second look, not a clear win
+## 5. Manual query-string parsing in `voicemail_audio` — worth a second look, not a clear win
 
 `src/fritz_callhistory/fritz/client.py:314-315`
 
@@ -122,7 +106,7 @@ through raw — if `call_url()` re-encodes its `params` dict before building the
 request, switching parsers could change what's sent. Worth trying only with a
 test against a real box's `download.lua` path.
 
-## 7. Minor: near-duplicate `set_search_text`/`focus_search` across views
+## 6. Minor: near-duplicate `set_search_text`/`focus_search` across views
 
 `src/fritz_callhistory/gui/contacts_view.py:116-128`,
 `src/fritz_callhistory/gui/all_calls_view.py:234-246`
