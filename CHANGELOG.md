@@ -7,17 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Forgejo release workflow now builds the Linux executable via PyInstaller
-  and attaches it to the created release, matching the GitHub workflow
-  (Windows stays GitHub-only, since PyInstaller can't cross-compile a
-  Windows `.exe` from a Linux runner).
-
-## [0.0.2-test] - 2026-07-14
-
-CI pipeline test, not a real release.
-
 ## [1.0.0] - 2026-07-13
 
 ### Added

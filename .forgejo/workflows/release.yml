@@ -6,14 +6,9 @@ on:
       - "*.*.*"
 
 jobs:
-  build:
+  release:
     # Adjust to whatever label your forgejo-runner exposes (see its
     # config.yaml labels: list) if this doesn't match your instance.
-    #
-    # This only builds the Linux executable. PyInstaller can't cross-compile
-    # a Windows .exe from a Linux runner, so the Windows build stays
-    # GitHub-only (.github/workflows/release.yml) unless a Windows-capable
-    # forgejo-runner is registered too.
     runs-on: ubuntu-latest
     env:
       # This instance is reverse-proxied under a path prefix (ROOT_URL
@@ -34,60 +29,12 @@ jobs:
           git fetch -q --depth 1 "${{ env.FORGEJO_BASE_URL }}/${{ github.repository }}.git" "${{ github.ref_name }}"
           git checkout -q FETCH_HEAD
 
-      - name: Install uv
-        # Not actions/setup-uv: its bundled JS runtime (undici) needs a
-        # newer Node than this runner's node20 binary provides, and fails
-        # with "webidl.util.markAsUncloneable is not a function". The
-        # shell installer sidesteps the runner's JS-action Node entirely.
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Build executable
-        run: uv run pyinstaller packaging/fritz_callhistory.spec
-
-      - name: Rename artifact
-        run: mv "dist/fritz-callhistory.exe" "dist/fritz-callhistory-linux-x86_64"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: fritz-callhistory-linux-x86_64
-          path: dist/fritz-callhistory-linux-x86_64
-          if-no-files-found: error
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    env:
-      # See the `build` job above for why actions/checkout isn't used.
-      FORGEJO_BASE_URL: https://mash.gaja-uranos.de/forgejo
-    steps:
-      - name: Checkout
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git init -q
-          git config http.extraheader "Authorization: token ${TOKEN}"
-          git fetch -q --depth 1 "${{ env.FORGEJO_BASE_URL }}/${{ github.repository }}.git" "${{ github.ref_name }}"
-          git checkout -q FETCH_HEAD
-
       - name: Extract changelog section for this version
         run: |
           scripts/changelog_section.sh "${{ github.ref_name }}" > /tmp/release_notes.md
           cat /tmp/release_notes.md
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: fritz-callhistory-linux-x86_64
-          path: artifacts
-
       - name: Create Forgejo release
-        id: create_release
         env:
           # Requires Settings > Actions > General > "Read and write" access
           # for the repository's default token. If your instance doesn't
@@ -114,26 +61,5 @@ jobs:
           cat /tmp/release_response.json
           if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
             echo "Release creation failed with HTTP $http_status" >&2
-            exit 1
-          fi
-
-          jq -r '.id' /tmp/release_response.json > /tmp/release_id.txt
-
-      - name: Upload release asset
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          release_id=$(cat /tmp/release_id.txt)
-          asset="artifacts/fritz-callhistory-linux-x86_64"
-
-          http_status=$(curl -s --show-error -o /tmp/asset_response.json -w '%{http_code}' \
-            -X POST \
-            -H "Authorization: token ${TOKEN}" \
-            -F "attachment=@${asset};filename=fritz-callhistory-linux-x86_64" \
-            "${{ env.FORGEJO_BASE_URL }}/api/v1/repos/${{ github.repository }}/releases/${release_id}/assets?name=fritz-callhistory-linux-x86_64")
-
-          cat /tmp/asset_response.json
-          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
-            echo "Asset upload failed with HTTP $http_status" >&2
             exit 1
           fi
