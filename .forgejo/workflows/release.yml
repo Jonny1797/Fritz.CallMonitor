@@ -19,6 +19,9 @@ jobs:
       # set to. Hence the manual clone below instead of actions/checkout.
       # Adjust FORGEJO_BASE_URL if your instance's base URL differs.
       FORGEJO_BASE_URL: https://mash.gaja-uranos.de/forgejo
+      # github.repository is this Forgejo repo's own <owner>/<repo> path,
+      # which differs from its path on GitHub - set explicitly instead.
+      GITHUB_REPO: Jonny1797/Fritz.CallMonitor
     steps:
       - name: Checkout
         env:
@@ -33,6 +36,51 @@ jobs:
         run: |
           scripts/changelog_section.sh "${{ github.ref_name }}" > /tmp/release_notes.md
           cat /tmp/release_notes.md
+
+      - name: Wait for GitHub release assets
+        # The GitHub and Forgejo workflows both trigger off the same tag
+        # push, with no guaranteed order between the two remotes, and the
+        # GitHub build (PyInstaller on Linux + Windows) takes a few minutes.
+        # Rather than building here too (this runner is aarch64 and can't
+        # produce the x86_64/Windows binaries GitHub does - see git log for
+        # the earlier attempt and why it was reverted), poll GitHub's public
+        # release API until both expected assets show up.
+        run: |
+          command -v jq >/dev/null || (apt-get update -qq && apt-get install -y -qq jq)
+
+          tag="${{ github.ref_name }}"
+          assets="fritz-callhistory-linux-x86_64 fritz-callhistory-windows-x86_64.exe"
+          deadline=$((SECONDS + 1200))
+
+          while :; do
+            response=$(curl -s -w '\n%{http_code}' "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}")
+            http_status=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+
+            if [ "$http_status" = "200" ]; then
+              missing=0
+              for asset in $assets; do
+                echo "$body" | jq -e --arg name "$asset" '.assets[] | select(.name == $name)' >/dev/null || missing=1
+              done
+              [ "$missing" -eq 0 ] && break
+            fi
+
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for GitHub release '${tag}' with assets: ${assets}" >&2
+              exit 1
+            fi
+            echo "GitHub release/assets for '${tag}' not ready yet, retrying in 15s..."
+            sleep 15
+          done
+
+      - name: Download GitHub release assets
+        run: |
+          mkdir -p artifacts
+          tag="${{ github.ref_name }}"
+          for asset in fritz-callhistory-linux-x86_64 fritz-callhistory-windows-x86_64.exe; do
+            curl -sL --fail -o "artifacts/${asset}" \
+              "https://github.com/${GITHUB_REPO}/releases/download/${tag}/${asset}"
+          done
 
       - name: Create Forgejo release
         env:
@@ -63,3 +111,25 @@ jobs:
             echo "Release creation failed with HTTP $http_status" >&2
             exit 1
           fi
+
+          jq -r '.id' /tmp/release_response.json > /tmp/release_id.txt
+
+      - name: Upload release assets
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release_id=$(cat /tmp/release_id.txt)
+
+          for asset in fritz-callhistory-linux-x86_64 fritz-callhistory-windows-x86_64.exe; do
+            http_status=$(curl -s --show-error -o /tmp/asset_response.json -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: token ${TOKEN}" \
+              -F "attachment=@artifacts/${asset};filename=${asset}" \
+              "${{ env.FORGEJO_BASE_URL }}/api/v1/repos/${{ github.repository }}/releases/${release_id}/assets?name=${asset}")
+
+            cat /tmp/asset_response.json
+            if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+              echo "Asset upload failed for ${asset} with HTTP $http_status" >&2
+              exit 1
+            fi
+          done

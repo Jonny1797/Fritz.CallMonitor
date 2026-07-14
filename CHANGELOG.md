@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Forgejo release now attaches the same Linux and Windows executables as
+  the GitHub release, instead of being changelog-notes-only. Since this
+  Forgejo runner is aarch64 and can't build the x86_64/Windows binaries
+  itself, it polls GitHub's public release API (up to 20 minutes) until
+  the GitHub Actions build publishes them, then downloads and re-uploads
+  them as Forgejo release assets — works regardless of which remote's tag
+  push happens to land first.
+
 ## [1.0.0] - 2026-07-13
 
 ### Added
