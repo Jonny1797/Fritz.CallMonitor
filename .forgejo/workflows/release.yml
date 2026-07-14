@@ -35,9 +35,13 @@ jobs:
           git checkout -q FETCH_HEAD
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
-        with:
-          enable-cache: true
+        # Not actions/setup-uv: its bundled JS runtime (undici) needs a
+        # newer Node than this runner's node20 binary provides, and fails
+        # with "webidl.util.markAsUncloneable is not a function". The
+        # shell installer sidesteps the runner's JS-action Node entirely.
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: uv sync
