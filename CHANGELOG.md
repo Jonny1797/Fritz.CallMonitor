@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.1-test] - 2026-07-14
-
-CI pipeline test, not a real release.
-
 ## [1.0.0] - 2026-07-13
 
 ### Added
