@@ -78,7 +78,7 @@ class ContactRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._conn = connection
 
-    def upsert(self, primary_number: str, *, is_anonymous: bool = False) -> int:
+    def upsert(self, primary_number: str, *, is_anonymous: bool = False, commit: bool = True) -> int:
         cursor = self._conn.execute(
             """
             INSERT INTO contacts (primary_number, is_anonymous)
@@ -89,7 +89,8 @@ class ContactRepository:
             (primary_number, int(is_anonymous)),
         )
         contact_id = cursor.fetchone()[0]
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return contact_id
 
     def set_display_name(self, contact_id: int, display_name: str | None) -> None:
@@ -175,6 +176,7 @@ class CallRepository:
         duration_seconds: int | None,
         raw_name: str | None,
         box_call_id: int | None = None,
+        commit: bool = True,
     ) -> bool:
         """Fügt einen Anruf ein. Gibt False zurück, wenn er bereits existiert (Dedupe).
 
@@ -204,7 +206,8 @@ class CallRepository:
                 box_call_id,
             ),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return cursor.rowcount > 0
 
     def for_contact(self, contact_id: int, limit: int | None = None) -> list[CallRecord]:
@@ -682,6 +685,7 @@ class VoicemailRepository:
         duration_seconds: int | None,
         raw_name: str | None,
         is_new: bool,
+        commit: bool = True,
     ) -> bool:
         """Fügt eine Nachricht ein. Gibt False zurück, wenn sie bereits existiert (Dedupe).
 
@@ -717,7 +721,8 @@ class VoicemailRepository:
                 """,
                 (int(is_new), tam_index, box_path, message_date),
             )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return was_inserted
 
     def list_messages(self) -> list[VoicemailMessageRecord]:
@@ -747,7 +752,11 @@ class VoicemailRepository:
         self._conn.commit()
 
     def prune_missing(
-        self, existing_keys: set[tuple[int, str, str]], queried_tam_indices: set[int]
+        self,
+        existing_keys: set[tuple[int, str, str]],
+        queried_tam_indices: set[int],
+        *,
+        commit: bool = True,
     ) -> None:
         """Entfernt lokale Nachrichten, die beim letzten vollständigen Sync nicht
         mehr unter den Box-Nachrichten waren (z.B. an einem Telefon gelöscht) -
@@ -773,6 +782,7 @@ class VoicemailRepository:
                 "DELETE FROM voicemail_messages WHERE id = ?",
                 [(message_id,) for message_id in stale_ids],
             )
+        if commit:
             self._conn.commit()
 
     @staticmethod

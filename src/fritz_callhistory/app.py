@@ -85,6 +85,7 @@ def _build_sync_fn(
                 PhonebookRepository(worker_connection),
                 LocalPhonebookRepository(worker_connection),
                 VoicemailRepository(worker_connection),
+                worker_connection,
             )
             inserted = service.sync_calls()
             updated = service.sync_phonebook(current.resolved_phonebook_ids())

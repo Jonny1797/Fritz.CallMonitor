@@ -4,9 +4,9 @@ From a full read-through of `src/fritz_callhistory/` (plus `packaging/entry_poin
 and `scripts/check_connection.py`) looking for readability, performance, and
 best-practice issues. Ordered by impact.
 
-Items 1, 2, 3, and 6 were implemented on 2026-07-14. Items 4 and 5 are left open —
-both need a deliberate trade-off call or a real-box test rather than an unattended
-pass (see their entries below).
+Items 1, 2, 3, and 6 were implemented on 2026-07-14. Item 4 was implemented on
+2026-07-17. Item 5 is left open — it needs a real-box test rather than an
+unattended pass (see its entry below).
 
 ## 1. `LocalPhonebookRepository.list_all` is N+1 — done
 
@@ -31,23 +31,21 @@ that collapses the repeated `run()` tail, used by `DialWorker`,
 `ImportFromBoxWorker`. `SyncWorker` and `CredentialsTestWorker` kept their own
 `run()` as planned, since they branch into multiple distinct signals.
 
-## 4. Per-row commits in the sync loop — real, but a documented trade-off
+## 4. Per-row commits in the sync loop — done
 
-`src/fritz_callhistory/db/repository.py` — `ContactRepository.upsert` (line 92),
-`CallRepository.insert` (line 197), `VoicemailRepository.insert_or_update`
-(line 645)
-
-`SyncService.sync_calls`/`sync_voicemail` (`sync/service.py:84-146`) call these
-once per remote call/message, and each call commits individually — for a sync of
-a few hundred calls that's a few hundred separate commits. Not a free-lunch fix
-though: `app.py`'s SIGINT/`os._exit` handling explicitly relies on "every DB
-write commits individually" so a hard kill loses at most one write (see
-`_handle_sigint` and the `os._exit(exit_code)` comment in `app.py:332-406`).
-Sync is idempotent and safely re-runnable, so a batched-commit fast path
-specific to `SyncService` (wrap the per-call loop in one transaction, leave the
-interactive GUI-facing repo methods as-is) is defensible, but should be
-introduced deliberately with that trade-off in mind rather than as a blanket
-"remove per-op commits" change.
+Fixed: `ContactRepository.upsert`, `CallRepository.insert`,
+`VoicemailRepository.insert_or_update`, and `VoicemailRepository.prune_missing`
+(`src/fritz_callhistory/db/repository.py`) now take an opt-out
+`commit: bool = True` parameter, defaulting to the prior per-call commit
+behavior for all interactive/GUI callers. `SyncService.sync_calls`/
+`sync_voicemail` (`sync/service.py`) pass `commit=False` through their loops
+and issue a single `self._conn.commit()` at the end instead — for a sync of a
+few hundred calls that's one commit instead of a few hundred. This does widen
+`app.py`'s SIGINT/`os._exit` hard-kill data-loss window from "at most one row"
+to "at most one sync batch" (see `_handle_sigint`/`os._exit(exit_code)` in
+`app.py:332-406`), but since sync is idempotent and safely re-runnable, a lost
+batch is simply re-fetched and re-inserted on the next sync — no corruption,
+just redone work for whatever was interrupted.
 
 ## 5. Manual query-string parsing in `voicemail_audio` — worth a second look, not a clear win
 

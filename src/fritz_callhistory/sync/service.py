@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import sqlite3
 
 from fritzconnection.lib.fritzcall import ACTIVE_OUT_CALL_TYPE, OUT_CALL_TYPE, Call
 
@@ -77,6 +78,7 @@ class SyncService:
         phonebook: PhonebookRepository,
         local_phonebook: LocalPhonebookRepository,
         voicemail: VoicemailRepository,
+        connection: sqlite3.Connection,
     ) -> None:
         self._client = client
         self._contacts = contacts
@@ -84,6 +86,7 @@ class SyncService:
         self._phonebook = phonebook
         self._local_phonebook = local_phonebook
         self._voicemail = voicemail
+        self._conn = connection
 
     def sync_calls(self, *, days: int | None = None) -> int:
         """Holt Anrufe von der Box und übernimmt neue Einträge in die lokale DB.
@@ -95,7 +98,9 @@ class SyncService:
         inserted = 0
         for call in remote_calls:
             normalized_number, is_anonymous = normalize_number(_counterparty_number(call))
-            contact_id = self._contacts.upsert(normalized_number, is_anonymous=is_anonymous)
+            contact_id = self._contacts.upsert(
+                normalized_number, is_anonymous=is_anonymous, commit=False
+            )
 
             was_inserted = self._calls.insert(
                 contact_id=contact_id,
@@ -110,9 +115,15 @@ class SyncService:
                 duration_seconds=_duration_seconds(call),
                 raw_name=call.Name,
                 box_call_id=call.id,
+                commit=False,
             )
             if was_inserted:
                 inserted += 1
+        # Ein Commit für den gesamten Sync statt einem pro Anruf (siehe
+        # docs/improvements.md #4) - unproblematisch, da ein Sync idempotent
+        # und jederzeit gefahrlos wiederholbar ist: ein abgebrochener Sync
+        # holt beim naechsten Mal einfach dieselben Anrufe erneut.
+        self._conn.commit()
         return inserted
 
     def sync_voicemail(self) -> int:
@@ -143,10 +154,15 @@ class SyncService:
                     duration_seconds=message.duration_seconds,
                     raw_name=message.name,
                     is_new=message.is_new,
+                    commit=False,
                 )
                 if was_inserted:
                     inserted += 1
-        self._voicemail.prune_missing(seen_keys, queried_tam_indices)
+        self._voicemail.prune_missing(seen_keys, queried_tam_indices, commit=False)
+        # Ein Commit für den gesamten Sync statt einem pro Nachricht (siehe
+        # docs/improvements.md #4), aus demselben Idempotenz-Grund wie in
+        # sync_calls().
+        self._conn.commit()
         return inserted
 
     def sync_phonebook(self, phonebook_ids: list[int] | None = None) -> int:

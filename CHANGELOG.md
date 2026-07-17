@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `SyncService.sync_calls()`/`sync_voicemail()` now commit once per full sync
+  instead of once per synced call/voicemail message. Sync is idempotent and
+  safely re-runnable, so a batch left uncommitted by a hard kill mid-sync is
+  simply re-fetched on the next run.
+
 ## [1.0.1] - 2026-07-14
 
 ### Changed

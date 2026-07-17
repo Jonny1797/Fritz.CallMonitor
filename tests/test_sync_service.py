@@ -1,3 +1,5 @@
+import sqlite3
+
 from fritzconnection.lib.fritzcall import Call
 
 from fritz_callhistory.db.repository import (
@@ -7,8 +9,20 @@ from fritz_callhistory.db.repository import (
     PhonebookRepository,
     VoicemailRepository,
 )
+from fritz_callhistory.db.schema import migrate
 from fritz_callhistory.fritz.client import VoicemailMessage
 from fritz_callhistory.sync.service import SyncService, resolve_contact_names
+
+
+class _CountingConnection(sqlite3.Connection):
+    """sqlite3.Connection kann nicht gemonkeypatcht werden (immutable Builtin-Typ) -
+    eine Subklasse per connect()-factory zaehlt echte commit()-Aufrufe mit."""
+
+    commit_count = 0
+
+    def commit(self) -> None:
+        self.commit_count += 1
+        super().commit()
 
 
 def _make_call(
@@ -71,6 +85,7 @@ def _service(connection, calls=None, phonebooks=None, voicemail_messages=None):
         PhonebookRepository(connection),
         LocalPhonebookRepository(connection),
         VoicemailRepository(connection),
+        connection,
     )
 
 
@@ -154,6 +169,28 @@ def test_sync_is_idempotent_on_repeated_run(connection):
     assert second == 0
     contacts = ContactRepository(connection).search("")
     assert len(CallRepository(connection).for_contact(contacts[0].id)) == 1
+
+
+def test_sync_calls_commits_once_for_the_whole_batch():
+    connection = sqlite3.connect(":memory:", factory=_CountingConnection)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    migrate(connection)
+    try:
+        calls = [
+            _make_call(call_type=1, caller_number="030 1234567", date="01.06.26 10:00", call_id=1),
+            _make_call(call_type=1, caller_number="030 7654321", date="01.06.26 10:05", call_id=2),
+            _make_call(call_type=1, caller_number="030 1234567", date="01.06.26 10:10", call_id=3),
+        ]
+        service = _service(connection, calls)
+        commits_before = connection.commit_count
+
+        inserted = service.sync_calls()
+
+        assert inserted == 3
+        assert connection.commit_count - commits_before == 1
+    finally:
+        connection.close()
 
 
 def test_sync_two_calls_same_contact_are_grouped(connection):
