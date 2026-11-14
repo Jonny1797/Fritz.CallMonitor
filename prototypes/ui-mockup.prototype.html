@@ -1,0 +1,814 @@
+<title>Anrufverlauf UI-Prototyp</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!--
+  PROTOTYPE, throwaway. Answers: "What should the Fritz!Box call-history app look like?"
+  Three structurally different layouts on one page, switchable via #a / #b / #c,
+  the floating bar at the bottom, or the ←/→ keys. All data is fake and lives in memory.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a desktop-app window filling the viewport; each variant owns its own inner layout. */
+:root {
+  --bg: #eef1f5; --surface: #ffffff; --surface-2: #f4f6f9; --line: #d8dee7;
+  --fg: #19212e; --muted: #5d6879; --accent: #0f6e8c; --accent-fg: #ffffff; --accent-soft: #e2f0f5;
+  --in: #1d8657; --out: #4659a8; --missed: #c4362c; --vm: #a86f12; --rej: #6b7280;
+  --live: #16a34a; --live-soft: #e3f6ea; --shadow: 0 10px 30px rgba(20,30,50,.14);
+  --proto-bg: #1b1b1f; --proto-fg: #f5f5f5;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1319; --surface: #171c24; --surface-2: #1d232d; --line: #2c3542;
+  --fg: #e5e9ef; --muted: #96a1b2; --accent: #4fb3d1; --accent-fg: #06222b; --accent-soft: #16313b;
+  --in: #4cc08a; --out: #8e9de3; --missed: #f06a5e; --vm: #e2a74a; --rej: #9aa3b0;
+  --live: #4ade80; --live-soft: #123222; --shadow: 0 10px 30px rgba(0,0,0,.5);
+  --proto-bg: #f5f5f5; --proto-fg: #1b1b1f; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1319; --surface: #171c24; --surface-2: #1d232d; --line: #2c3542;
+  --fg: #e5e9ef; --muted: #96a1b2; --accent: #4fb3d1; --accent-fg: #06222b; --accent-soft: #16313b;
+  --in: #4cc08a; --out: #8e9de3; --missed: #f06a5e; --vm: #e2a74a; --rej: #9aa3b0;
+  --live: #4ade80; --live-soft: #123222; --shadow: 0 10px 30px rgba(0,0,0,.5);
+  --proto-bg: #f5f5f5; --proto-fg: #1b1b1f; color-scheme: dark; }
+
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; }
+#app { height: 100%; box-sizing: border-box; padding-block: 12px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+* { box-sizing: border-box; }
+svg { width: 1.1em; height: 1.1em; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg .f { fill: currentColor; stroke: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+/* shared controls */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--surface); cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.danger { color: var(--missed); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--surface-2); }
+.icon-btn { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; border: 1px solid transparent; background: transparent; cursor: pointer; color: var(--muted); }
+.icon-btn:hover { background: var(--surface-2); color: var(--fg); }
+.input { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; }
+.search { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.search input { border: 0; background: transparent; padding: 7px 0; outline: none; width: 100%; min-width: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: transparent; padding: 5px 10px; cursor: pointer; border-right: 1px solid var(--line); }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); font-size: 11px; font-weight: 700; }
+.badge.red { background: var(--missed); color: #fff; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.toggle input { accent-color: var(--accent); }
+.unseen-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.t-in { color: var(--in); } .t-out { color: var(--out); } .t-missed { color: var(--missed); } .t-vm { color: var(--vm); } .t-rejected { color: var(--rej); }
+.avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--line); font-weight: 600; font-size: 13px; color: var(--muted); flex: none; }
+.avatar.lg { width: 56px; height: 56px; font-size: 18px; }
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 10px; font-size: 11px; border: 1px solid var(--line); color: var(--muted); }
+.live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live); animation: pulse 1.6s infinite; flex: none; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 60%, transparent); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .live-dot, .spin, .ring { animation: none !important; } }
+
+.win { height: 100%; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+.scroll { overflow: auto; min-height: 0; }
+.empty { padding: 32px; text-align: center; color: var(--muted); }
+
+/* player */
+.player { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.play-btn { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--vm); color: var(--surface); cursor: pointer; flex: none; }
+.track { position: relative; flex: 1; height: 24px; min-width: 60px; display: flex; align-items: center; gap: 2px; }
+.track i { flex: 1; background: color-mix(in srgb, var(--vm) 30%, transparent); border-radius: 1px; }
+.track .prog { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--vm) 22%, transparent); border-right: 2px solid var(--vm); pointer-events: none; }
+
+/* form */
+.form { display: grid; gap: 14px; }
+.field { display: grid; gap: 4px; }
+.field > label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.num-row { display: grid; grid-template-columns: 110px 1fr 32px; gap: 6px; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* modal + toasts */
+.modal-back { position: fixed; inset: 0; background: rgba(10,15,25,.45); display: grid; place-items: center; z-index: 40; padding: 16px; }
+.modal { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); width: min(560px, 100%); max-height: 90%; overflow: auto; }
+.modal header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.modal header h2 { margin: 0; font-size: 16px; }
+.modal .body { padding: 18px; }
+.ring { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); z-index: 60; width: min(340px, calc(100% - 32px));
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px; display: grid; gap: 10px; animation: ringIn .35s ease-out; }
+.ring .head { display: flex; gap: 12px; align-items: center; }
+.ring .ico { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--live-soft); color: var(--live); animation: shake 1.2s infinite; }
+@keyframes ringIn { from { transform: translateY(-12px); opacity: .3; } }
+@keyframes shake { 0%, 50%, 100% { transform: rotate(0); } 10%, 30% { transform: rotate(-12deg); } 20%, 40% { transform: rotate(12deg); } }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 55; background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; }
+
+/* prototype switcher (not part of the design) */
+.proto { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 70; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center;
+  background: var(--proto-bg); color: var(--proto-fg); padding: 6px 8px; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: 13px; max-width: calc(100% - 32px); }
+.proto button { background: transparent; border: 0; color: inherit; cursor: pointer; padding: 4px 10px; border-radius: 999px; }
+.proto button:hover { background: color-mix(in srgb, var(--proto-fg) 15%, transparent); }
+.proto .lbl { font-weight: 600; min-width: 150px; text-align: center; }
+.proto .sep { width: 1px; height: 18px; background: color-mix(in srgb, var(--proto-fg) 30%, transparent); margin: 0 4px; }
+.proto .state { opacity: .7; font-family: var(--mono); font-size: 11px; padding: 0 8px; }
+
+/* ───────── Variant A: three panes ───────── */
+.a-title { display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.conn { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.conn .ok { width: 8px; height: 8px; border-radius: 50%; background: var(--live); }
+.spacer { flex: 1; }
+.a-live { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--live-soft); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.a-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1.25fr) minmax(0, 1fr); }
+.a-nav { border-right: 1px solid var(--line); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; background: var(--surface-2); }
+.a-nav button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; text-align: left; }
+.a-nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.a-nav button .badge { margin-left: auto; }
+.a-nav .foot { margin-top: auto; padding: 8px 10px; font-size: 12px; color: var(--muted); }
+.a-list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.a-tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border-bottom: 1px solid var(--line); align-items: center; }
+.a-tools .search { flex: 1 1 200px; }
+.a-row { display: grid; grid-template-columns: 22px 10px minmax(0, 1fr) auto 52px; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.a-row:hover { background: var(--surface-2); }
+.a-row.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.a-row.unseen .name { font-weight: 700; }
+.a-row.unseen { background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
+.a-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-row .sub { font-size: 12px; color: var(--muted); }
+.a-row .when, .a-row .dur { font-size: 12px; color: var(--muted); text-align: right; }
+.a-detail { min-height: 0; overflow: auto; padding: 18px; display: grid; gap: 18px; align-content: start; }
+.a-pers { display: flex; gap: 14px; align-items: center; }
+.a-pers h2 { margin: 0; font-size: 18px; }
+.a-hist { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.a-hist .h { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); font-size: 13px; align-items: center; }
+.a-hist .h:last-child { border-bottom: 0; }
+.sec-title { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+.a-group-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.a-group-row:hover { background: var(--surface-2); }
+.a-group-row.sel { background: var(--accent-soft); }
+.counts { display: flex; gap: 8px; font-size: 12px; }
+.counts span { display: inline-flex; align-items: center; gap: 2px; }
+.backup-grid { display: grid; gap: 14px; padding: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-content: start; }
+.panel { border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; }
+.panel h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+
+/* ───────── Variant B: timeline feed ───────── */
+.b-top { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.b-top .search { flex: 1 1 260px; max-width: 560px; padding: 2px 12px; border-radius: 999px; }
+.b-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+.b-rail { border-right: 1px solid var(--line); padding: 16px; display: grid; gap: 22px; align-content: start; overflow: auto; }
+.b-rail .opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; border: 0; background: transparent; width: 100%; text-align: left; }
+.b-rail .opt.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.b-rail .opt .n { margin-left: auto; font-size: 12px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 12px; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.b-feed { overflow: auto; min-height: 0; padding: 18px 24px 40px; }
+.b-feed-inner { max-width: 780px; margin: 0 auto; display: grid; gap: 6px; }
+.b-now { border: 1px solid color-mix(in srgb, var(--live) 50%, var(--line)); background: var(--live-soft); border-radius: 12px; padding: 16px 18px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
+.b-now .big { font-size: 22px; font-weight: 600; }
+.b-day { position: sticky; top: -18px; z-index: 2; background: var(--surface); padding: 12px 0 6px; font-weight: 700; font-size: 13px; display: flex; gap: 10px; align-items: baseline; }
+.b-item { display: grid; grid-template-columns: 52px 22px minmax(0, 1fr); gap: 10px; cursor: pointer; }
+.b-item .time { text-align: right; font-size: 12px; color: var(--muted); padding-top: 12px; }
+.b-item .rail { position: relative; display: flex; justify-content: center; }
+.b-item .rail::before { content: ""; position: absolute; top: 0; bottom: -6px; width: 2px; background: var(--line); }
+.b-item .rail .node { position: relative; margin-top: 10px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid currentColor; font-size: 11px; }
+.b-card { padding: 9px 12px; border-radius: 8px; border: 1px solid transparent; display: grid; gap: 6px; min-width: 0; }
+.b-item:hover .b-card { background: var(--surface-2); }
+.b-item.unseen .b-card { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.b-item.unseen .who { font-weight: 700; }
+.b-item.open .b-card { border-color: var(--line); background: var(--surface-2); }
+.b-card .line1 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.b-card .who { font-size: 15px; }
+.b-expand { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; display: grid; gap: 10px; }
+.mini-hist { display: flex; gap: 6px; flex-wrap: wrap; }
+.mini-hist span { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); }
+.b-group { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+.b-group > .hd { display: flex; gap: 12px; align-items: center; padding: 12px 14px; cursor: pointer; flex-wrap: wrap; }
+.b-group.unseen > .hd { background: var(--accent-soft); }
+.b-group > .items { border-top: 1px solid var(--line); padding: 8px 12px; display: grid; gap: 4px; }
+.b-group .it { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 13px; }
+.drawer-back { position: fixed; inset: 0; background: rgba(10,15,25,.35); z-index: 35; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100%); background: var(--surface); border-left: 1px solid var(--line); z-index: 36; display: flex; flex-direction: column; box-shadow: var(--shadow); padding-top: env(safe-area-inset-top, 0px); }
+.drawer header { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.drawer header h2 { margin: 0; font-size: 16px; flex: 1; }
+.d-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+
+/* ───────── Variant C: people + conversation ───────── */
+.c-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 330px minmax(0, 1fr); }
+.c-people { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
+.c-people .top { padding: 12px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); }
+.c-person { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.c-person:hover { background: var(--surface); }
+.c-person.sel { background: var(--surface); box-shadow: inset 3px 0 0 var(--accent); }
+.c-person .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-person.unseen .nm { font-weight: 700; }
+.c-person .last { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; }
+.c-person .right { display: grid; justify-items: end; gap: 4px; font-size: 11px; color: var(--muted); }
+.c-thread { display: flex; flex-direction: column; min-height: 0; }
+.c-head { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.c-head h2 { margin: 0; font-size: 17px; }
+.c-filter { display: flex; gap: 8px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; color: var(--muted); }
+.c-msgs { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+.c-sep { align-self: center; font-size: 11px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); padding: 2px 10px; border-radius: 999px; margin: 6px 0; }
+.bub { max-width: min(420px, 80%); padding: 10px 12px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); display: grid; gap: 4px; }
+.bub.in { align-self: flex-start; border-bottom-left-radius: 4px; }
+.bub.out { align-self: flex-end; border-bottom-right-radius: 4px; background: var(--accent-soft); }
+.bub.vm { align-self: flex-start; min-width: min(320px, 80%); border-color: color-mix(in srgb, var(--vm) 45%, var(--line)); }
+.bub.unseen { box-shadow: 0 0 0 2px var(--accent); }
+.bub .meta { font-size: 11px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.sys { align-self: center; display: inline-flex; gap: 6px; align-items: center; font-size: 12px; padding: 4px 12px; border-radius: 999px; background: color-mix(in srgb, var(--missed) 12%, var(--surface)); color: var(--missed); border: 1px solid color-mix(in srgb, var(--missed) 30%, transparent); }
+.sys.rej { background: var(--surface); color: var(--rej); border-color: var(--line); }
+.sys.unseen { box-shadow: 0 0 0 2px var(--accent); font-weight: 700; }
+.c-status { display: flex; align-items: center; gap: 14px; padding: 6px 14px; border-top: 1px solid var(--line); background: var(--surface-2); font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.c-live { position: fixed; right: max(24px, env(safe-area-inset-right, 0px)); bottom: calc(80px + env(safe-area-inset-bottom, 0px)); z-index: 30; background: var(--surface); border: 1px solid color-mix(in srgb, var(--live) 50%, var(--line)); border-radius: 14px; box-shadow: var(--shadow); padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+
+@media (max-width: 860px) {
+  #app { height: auto; }
+  .win { height: auto; min-height: 100%; }
+  .a-body, .b-body, .c-body { grid-template-columns: minmax(0, 1fr); }
+  .a-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+  .a-nav .foot { display: none; }
+  .a-list, .c-people, .b-rail { border-right: 0; border-bottom: 1px solid var(--line); }
+  .a-list .scroll, .c-people .scroll { max-height: 50vh; }
+  .c-msgs { max-height: 70vh; }
+  .num-row { grid-template-columns: 90px minmax(0, 1fr) 32px; }
+}
+</style>
+
+<div id="app"></div>
+<div id="overlay"></div>
+
+<script>
+/* ───────── icons ───────── */
+const I = {
+  in: '<svg viewBox="0 0 24 24"><path d="M17 7 7 17M7 9v8h8"/></svg>',
+  out: '<svg viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg>',
+  missed: '<svg viewBox="0 0 24 24"><path d="M15 9 5 19M5 11v8h8"/><path d="M15 4l5 5M20 4l-5 5"/></svg>',
+  rejected: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M6.5 6.5l11 11"/></svg>',
+  vm: '<svg viewBox="0 0 24 24"><circle cx="7" cy="13" r="3.5"/><circle cx="17" cy="13" r="3.5"/><path d="M7 16.5h10"/></svg>',
+  phone: '<svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>',
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.5-4.5M4 4v4h4M4 13a8 8 0 0 0 14.5 4.5M20 20v-4h-4"/></svg>',
+  play: '<svg viewBox="0 0 24 24"><path class="f" d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><path class="f" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>',
+  edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  archive: '<svg viewBox="0 0 24 24"><path d="M3 5h18v4H3zM5 9v10h14V9M10 13h4"/></svg>',
+  user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+  users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/></svg>',
+  x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  list: '<svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>',
+  download: '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  upload: '<svg viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
+  chevL: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
+  chevR: '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>',
+};
+const TYPES = {
+  in: { label: 'Angenommen', cls: 't-in' }, out: { label: 'Ausgehend', cls: 't-out' },
+  missed: { label: 'Verpasst', cls: 't-missed' }, rejected: { label: 'Abgewiesen', cls: 't-rejected' },
+  vm: { label: 'Anrufbeantworter', cls: 't-vm' },
+};
+const ANON = 'anon';
+const DEVICES = ['Telefon Küche', 'Telefon Büro', 'Mobilteil Wohnzimmer'];
+
+/* ───────── fake data (in memory, example only) ───────── */
+let nextId = 1000;
+const contacts = [
+  { id: 1, name: 'Anna Becker', numbers: [{ type: 'Mobil', n: '+49 171 2345678' }, { type: 'Privat', n: '+49 30 4412093' }], note: 'Schwester', book: 'Telefonbuch' },
+  { id: 2, name: 'Praxis Dr. Yilmaz', numbers: [{ type: 'Arbeit', n: '+49 30 8829110' }], note: 'Hausarzt, Mo–Fr 8–12 Uhr', book: 'Telefonbuch' },
+  { id: 3, name: 'Thomas Krüger', numbers: [{ type: 'Mobil', n: '+49 160 9876543' }], note: '', book: 'Telefonbuch' },
+  { id: 4, name: 'Mama', numbers: [{ type: 'Privat', n: '+49 6221 334455' }, { type: 'Mobil', n: '+49 152 22334455' }], note: '', book: 'Telefonbuch' },
+  { id: 5, name: 'Hausverwaltung Stern', numbers: [{ type: 'Arbeit', n: '+49 30 5550120' }], note: 'Kundennr. 44-1180', book: 'Telefonbuch' },
+  { id: 6, name: 'Lena Hoffmann', numbers: [{ type: 'Mobil', n: '+49 176 44556677' }], note: '', book: 'Nur lokal' },
+  { id: 7, name: 'Autowerkstatt Brandt', numbers: [{ type: 'Arbeit', n: '+49 30 7781234' }], note: 'Inspektion fällig im Dez.', book: 'Arbeit' },
+  { id: 8, name: 'Jonas Weber', numbers: [{ type: 'Mobil', n: '+49 157 3344556' }], note: '', book: 'Telefonbuch' },
+];
+// [minutes ago, type, number, duration seconds, seen]
+const RAW = [
+  [14, 'missed', '+49 171 2345678', null, false],
+  [16, 'vm', '+49 171 2345678', 38, false],
+  [52, 'missed', '+49 89 12345678', null, false],
+  [95, 'in', '+49 30 8829110', 184, true],
+  [180, 'out', '+49 6221 334455', 1260, true],
+  [240, 'missed', ANON, null, false],
+  [300, 'rejected', '+49 800 1234567', null, true],
+  [60 * 20, 'out', '+49 160 9876543', 312, true],
+  [60 * 21, 'in', '+49 160 9876543', 95, true],
+  [60 * 23, 'vm', '+49 30 7781234', 52, false],
+  [60 * 23 + 2, 'missed', '+49 30 7781234', null, true],
+  [60 * 26, 'in', '+49 171 2345678', 2210, true],
+  [60 * 30, 'out', '+49 30 5550120', 240, true],
+  [60 * 44, 'in', '+49 152 22334455', 610, true],
+  [60 * 46, 'missed', '+49 176 44556677', null, true],
+  [60 * 47, 'out', '+49 176 44556677', 420, true],
+  [60 * 50, 'vm', '+49 30 5550120', 71, true],
+  [60 * 68, 'out', '+49 30 8829110', 65, true],
+  [60 * 70, 'in', '+49 157 3344556', 1802, true],
+  [60 * 74, 'missed', '+49 89 12345678', null, true],
+  [60 * 95, 'out', '+49 6221 334455', 980, true],
+  [60 * 98, 'rejected', ANON, null, true],
+  [60 * 120, 'in', '+49 171 2345678', 540, true],
+  [60 * 125, 'out', '+49 171 2345678', 32, true],
+  [60 * 140, 'vm', '+49 6221 334455', 24, true],
+  [60 * 142, 'missed', '+49 6221 334455', null, true],
+  [60 * 165, 'out', '+49 30 7781234', 150, true],
+  [60 * 190, 'in', '+49 160 9876543', 75, true],
+  [60 * 215, 'out', '+49 157 3344556', 600, true],
+  [60 * 260, 'in', '+49 30 4412093', 1440, true],
+  [60 * 300, 'missed', '+49 800 1234567', null, true],
+  [60 * 330, 'out', '+49 30 8829110', 120, true],
+  [60 * 400, 'in', '+49 6221 334455', 2700, true],
+];
+const entries = RAW.map(([m, type, number, dur, seen], i) => ({
+  id: i + 1, ts: Date.now() - m * 60000, type, number, dur, seen,
+  device: DEVICES[i % 3], line: '030 1234567',
+}));
+
+/* ───────── app state ───────── */
+const S = {
+  variant: 'a',
+  q: '', from: '', to: '', preset: 'all', type: 'all', unseenOnly: false, group: false,
+  // A
+  section: 'calls', selKey: null, selEntry: null,
+  // B
+  openId: null, openGroup: null, drawer: false,
+  // C
+  cKey: null, cMode: 'people', cFilter: 'all',
+  // shared
+  draft: null, modal: null, confirmDel: null, alsoBox: false,
+  syncing: false, lastSync: Date.now() - 4 * 60000, lastBackup: Date.now() - 3 * 86400000, autoBackup: true,
+  live: null, ring: null, play: null, toast: null, books: { Telefonbuch: true, Arbeit: true, Familie: false },
+};
+
+/* ───────── helpers ───────── */
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const digits = s => String(s).replace(/\D/g, '');
+const sameNum = (a, b) => a !== ANON && b !== ANON && digits(a) === digits(b);
+const contactOf = num => contacts.find(c => c.numbers.some(x => sameNum(x.n, num))) || null;
+const keyOf = e => { const c = contactOf(e.number); return c ? 'c' + c.id : 'n' + e.number; };
+const numLabel = n => n === ANON ? 'Rufnummer unterdrückt' : n;
+const nameOf = e => contactOf(e.number)?.name || (e.number === ANON ? 'Unbekannt' : e.number);
+const numTypeOf = e => { const c = contactOf(e.number); return c ? c.numbers.find(x => sameNum(x.n, e.number))?.type : null; };
+const initials = name => /^[+\d]/.test(name) ? '#' : name.split(/\s+/).filter(w => /^\p{L}/u.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+const pad = n => String(n).padStart(2, '0');
+const fmtTime = ts => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const dayStart = ts => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const dayDiff = ts => Math.round((dayStart(Date.now()) - dayStart(ts)) / 86400000);
+const dayLabel = ts => { const n = dayDiff(ts); return n === 0 ? 'Heute' : n === 1 ? 'Gestern' : new Date(ts).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' }); };
+const fmtWhen = ts => { const n = dayDiff(ts); return n === 0 ? fmtTime(ts) : n === 1 ? 'Gestern ' + fmtTime(ts) : new Date(ts).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' ' + fmtTime(ts); };
+const fmtDur = s => s == null ? '—' : s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${Math.floor(s / 60)}:${pad(s % 60)}`;
+const ago = ts => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'gerade eben' : m < 60 ? `vor ${m} Min.` : fmtWhen(ts); };
+const typeIco = t => `<span class="${TYPES[t].cls}" title="${TYPES[t].label}">${I[t]}</span>`;
+const isoDay = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+
+function matchQ(e) {
+  if (!S.q.trim()) return true;
+  const q = S.q.trim().toLowerCase();
+  if (nameOf(e).toLowerCase().includes(q)) return true;
+  const qd = digits(q); if (!qd || e.number === ANON) return false;
+  const nd = digits(e.number);
+  return nd.includes(qd) || nd.includes(qd.replace(/^0/, '49'));
+}
+function inRange(e) {
+  if (S.from && e.ts < new Date(S.from + 'T00:00').getTime()) return false;
+  if (S.to && e.ts > new Date(S.to + 'T23:59:59').getTime()) return false;
+  return true;
+}
+function filtered({ type = S.type, vm = true } = {}) {
+  return entries.filter(e => (vm || e.type !== 'vm') && (type === 'all' || e.type === type)
+    && (!S.unseenOnly || !e.seen) && matchQ(e) && inRange(e)).sort((a, b) => b.ts - a.ts);
+}
+function groups(list) {
+  const m = new Map();
+  for (const e of list) {
+    const k = keyOf(e);
+    if (!m.has(k)) m.set(k, { key: k, name: nameOf(e), contact: contactOf(e.number), number: e.number, items: [], unseen: 0, last: e.ts });
+    const g = m.get(k); g.items.push(e); if (!e.seen) g.unseen++; g.last = Math.max(g.last, e.ts);
+  }
+  return [...m.values()].sort((a, b) => b.last - a.last);
+}
+const byKey = k => entries.filter(e => keyOf(e) === k).sort((a, b) => b.ts - a.ts);
+const unseenCount = (t) => entries.filter(e => !e.seen && (!t || (t === 'calls' ? e.type !== 'vm' : e.type === t))).length;
+function setPreset(p) {
+  S.preset = p; const d = new Date();
+  if (p === 'all') { S.from = S.to = ''; }
+  else if (p === 'today') { S.from = S.to = isoDay(d); }
+  else if (p === 'yday') { d.setDate(d.getDate() - 1); S.from = S.to = isoDay(d); }
+  else { S.to = isoDay(Date.now()); d.setDate(d.getDate() - (p === '7' ? 6 : 29)); S.from = isoDay(d); }
+}
+function counts(items) {
+  const c = { in: 0, out: 0, missed: 0, vm: 0, rejected: 0 };
+  items.forEach(e => c[e.type]++);
+  return `<span class="counts">${['in', 'out', 'missed', 'vm'].filter(t => c[t]).map(t => `<span class="${TYPES[t].cls}">${I[t]}<span class="num">${c[t]}</span></span>`).join('')}</span>`;
+}
+
+/* voicemail player */
+const WAVE = Array.from({ length: 40 }, (_, i) => 25 + Math.round(70 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * .45))));
+function player(e) {
+  const p = S.play?.id === e.id ? S.play : null;
+  const pct = p ? (p.pos / e.dur) * 100 : 0;
+  return `<div class="player">
+    <button class="play-btn" data-act="play" data-id="${e.id}" aria-label="${p?.on ? 'Pause' : 'Abspielen'}">${p?.on ? I.pause : I.play}</button>
+    <div class="track" data-act="seek" data-id="${e.id}">${WAVE.map(h => `<i style="height:${h}%"></i>`).join('')}<div class="prog" data-prog="${e.id}" style="width:${pct}%"></div></div>
+    <span class="num small muted" data-pos="${e.id}">${fmtDur(Math.floor(p?.pos || 0))} / ${fmtDur(e.dur)}</span>
+  </div>`;
+}
+
+/* ───────── shared pieces: contact form, backup panel, modals ───────── */
+function newDraft(number) {
+  return { id: null, name: '', numbers: [{ type: 'Mobil', n: number && number !== ANON ? number : '' }], note: '', book: 'Telefonbuch' };
+}
+function editDraft(c) { return JSON.parse(JSON.stringify(c)); }
+function contactForm() {
+  const d = S.draft;
+  return `<form class="form" data-form="contact" onsubmit="return false">
+    <div class="field"><label for="f-name">Name</label><input id="f-name" class="input" data-in="name" value="${esc(d.name)}" placeholder="z. B. Anna Becker"></div>
+    <div class="field"><label>Rufnummern</label>
+      ${d.numbers.map((x, i) => `<div class="num-row">
+        <select id="f-nt-${i}" class="input" data-in="ntype:${i}">${['Mobil', 'Privat', 'Arbeit', 'Fax'].map(t => `<option ${t === x.type ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <input id="f-n-${i}" class="input num" data-in="num:${i}" value="${esc(x.n)}" placeholder="+49 …">
+        <button type="button" class="icon-btn" data-act="rmnum" data-i="${i}" aria-label="Nummer entfernen">${I.x}</button></div>`).join('')}
+      <div><button type="button" class="btn ghost" data-act="addnum">${I.plus} Nummer hinzufügen</button></div>
+    </div>
+    <div class="field"><label for="f-note">Notiz</label><textarea id="f-note" class="input" rows="2" data-in="note">${esc(d.note)}</textarea></div>
+    <div class="field"><label for="f-book">Gespeichert in</label>
+      <select id="f-book" class="input" data-in="book">${['Telefonbuch', 'Arbeit', 'Nur lokal'].map(b => `<option value="${b}" ${b === d.book ? 'selected' : ''}>${b === 'Nur lokal' ? 'Nur in dieser App (nicht in der Fritz!Box)' : 'Fritz!Box-Telefonbuch „' + b + '“'}</option>`).join('')}</select></div>
+    <div class="row-actions">
+      <button type="button" class="btn primary" data-act="save">${I.check} ${d.id ? 'Speichern' : 'Kontakt anlegen'}</button>
+      <button type="button" class="btn" data-act="cancel">Abbrechen</button>
+      ${d.id ? `<span class="spacer"></span><button type="button" class="btn danger" data-act="del" data-id="${d.id}">${I.trash} Löschen</button>` : ''}
+    </div>
+  </form>`;
+}
+function backupPanels() {
+  return `
+  <section class="panel">
+    <h3>${I.archive} Sicherung</h3>
+    <p class="muted" style="margin:0">Sichert Anrufverlauf, Anrufbeantworter-Nachrichten und Kontakte in eine Datei. Die Fritz!Box hält nur die letzten 400 Anrufe.</p>
+    <div class="small">Letzte Sicherung: <b>${fmtWhen(S.lastBackup)}</b> · ${entries.length} Einträge, ${contacts.length} Kontakte</div>
+    <div class="row-actions"><button class="btn primary" data-act="backup">${I.download} Jetzt sichern …</button><button class="btn" data-act="toast" data-msg="Wiederherstellen: Dateiauswahl würde sich öffnen">${I.upload} Wiederherstellen …</button></div>
+    <label class="toggle"><input id="auto-bk" type="checkbox" data-in="autoBackup" ${S.autoBackup ? 'checked' : ''}> Täglich automatisch sichern</label>
+  </section>
+  <section class="panel">
+    <h3>${I.users} Kontakte aus der Fritz!Box importieren</h3>
+    <p class="muted" style="margin:0">Welche Telefonbücher sollen übernommen werden? Bestehende Kontakte werden anhand der Rufnummer zusammengeführt.</p>
+    ${Object.keys(S.books).map(b => `<label class="toggle"><input id="bk-${b}" type="checkbox" data-in="book-sel:${b}" ${S.books[b] ? 'checked' : ''}> ${b} <span class="muted small">(${b === 'Telefonbuch' ? 6 : b === 'Arbeit' ? 1 : 12} Einträge)</span></label>`).join('')}
+    <div class="row-actions"><button class="btn primary" data-act="import">${I.download} Importieren</button></div>
+  </section>`;
+}
+function renderOverlay() {
+  let h = '';
+  if (S.modal === 'contact' && S.draft) h += `<div class="modal-back" data-act="close-bg"><div class="modal" role="dialog" aria-modal="true"><header><h2>${S.draft.id ? 'Kontakt bearbeiten' : 'Neuer Kontakt'}</h2><button class="icon-btn" data-act="cancel" aria-label="Schließen">${I.x}</button></header><div class="body">${contactForm()}</div></div></div>`;
+  if (S.modal === 'backup') h += `<div class="modal-back" data-act="close-bg"><div class="modal" role="dialog" aria-modal="true"><header><h2>Sicherung &amp; Import</h2><button class="icon-btn" data-act="close" aria-label="Schließen">${I.x}</button></header><div class="body" style="display:grid;gap:14px">${backupPanels()}</div></div></div>`;
+  if (S.confirmDel) {
+    const c = contacts.find(x => x.id === S.confirmDel);
+    h += `<div class="modal-back"><div class="modal" role="alertdialog" aria-modal="true"><header><h2>Kontakt löschen?</h2></header><div class="body" style="display:grid;gap:14px">
+      <p style="margin:0">„${esc(c.name)}“ wird gelöscht. Der Anrufverlauf bleibt erhalten und wird danach nur mit Rufnummer angezeigt.</p>
+      ${c.book !== 'Nur lokal' ? `<label class="toggle"><input id="also-box" type="checkbox" data-in="alsoBox" ${S.alsoBox ? 'checked' : ''}> Auch aus dem Fritz!Box-Telefonbuch „${esc(c.book)}“ löschen</label>` : ''}
+      <div class="row-actions"><button class="btn primary" style="background:var(--missed);border-color:var(--missed);color:#fff" data-act="del-yes">${I.trash} Löschen</button><button class="btn" data-act="del-no">Abbrechen</button></div></div></div></div>`;
+  }
+  if (S.ring) {
+    const c = contactOf(S.ring.number);
+    h += `<div class="ring" role="alert"><div class="head"><div class="ico">${I.phone}</div><div style="min-width:0">
+      <div class="small muted">Eingehender Anruf · ${S.ring.line}</div>
+      <div style="font-weight:700;font-size:16px">${esc(c?.name || numLabel(S.ring.number))}</div>
+      <div class="num small muted">${c ? esc(S.ring.number) : 'Nicht im Telefonbuch'}</div></div></div>
+      <div class="small muted">${(() => { const h = byKey(keyOf(S.ring)); return h.length ? `Zuletzt: ${TYPES[h[0].type].label.toLowerCase()}, ${fmtWhen(h[0].ts)} · ${h.length} Einträge` : 'Noch keine früheren Anrufe'; })()}</div>
+      <div class="row-actions"><button class="btn primary" data-act="ring-open">Verlauf öffnen</button>${c ? '' : `<button class="btn" data-act="ring-save">${I.plus} Als Kontakt</button>`}<button class="btn ghost" data-act="ring-hide">Ausblenden</button></div></div>`;
+  }
+  if (S.toast) h += `<div class="toast" role="status">${esc(S.toast)}</div>`;
+  const sv = { a: 'A · Drei Spalten', b: 'B · Zeitstrahl', c: 'C · Personen' }[S.variant];
+  h += `<div class="proto" aria-label="Prototyp-Steuerung">
+    <button data-act="prev" aria-label="Vorherige Variante">${I.chevL}</button><span class="lbl">${sv}</span><button data-act="next" aria-label="Nächste Variante">${I.chevR}</button>
+    <span class="sep"></span><button data-act="sim-ring">Klingeln simulieren</button><button data-act="sim-live">${S.live ? 'Gespräch beenden' : 'Gespräch simulieren'}</button>
+    <span class="state">ungesehen ${unseenCount()} · live ${S.live ? 'ja' : 'nein'}</span></div>`;
+  document.getElementById('overlay').innerHTML = h;
+}
+function syncInfo() {
+  return S.syncing ? `<span class="small muted">Synchronisiere …</span>` : `<span class="small muted">Stand ${fmtTime(S.lastSync)}</span>`;
+}
+const refreshBtn = (label = true) => `<button class="${label ? 'btn' : 'icon-btn'}" data-act="refresh" ${S.syncing ? 'disabled' : ''} title="Daten jetzt von der Fritz!Box abrufen"><span class="${S.syncing ? 'spin' : ''}" style="display:inline-flex">${I.refresh}</span>${label ? ' Aktualisieren' : ''}</button>`;
+const liveName = () => esc(contactOf(S.live.number)?.name || numLabel(S.live.number));
+
+/* ───────── Variant A: three panes (mail-client style) ───────── */
+function renderA() {
+  const nav = [['calls', I.list, 'Anrufliste', unseenCount('calls')], ['vm', I.vm, 'Anrufbeantworter', unseenCount('vm')], ['contacts', I.users, 'Kontakte', 0], ['backup', I.archive, 'Sicherung & Import', 0]];
+  let list = '', detail = '';
+  if (S.section === 'calls' || S.section === 'vm') {
+    const isVm = S.section === 'vm';
+    const items = isVm ? filtered({ type: 'vm' }) : filtered({ vm: false });
+    const tools = `<div class="a-tools">
+      <label class="search">${I.search}<input id="q" data-in="q" value="${esc(S.q)}" placeholder="Name oder Nummer suchen"></label>
+      <input id="from" class="input" type="date" data-in="from" value="${S.from}" aria-label="Von"><span class="muted">–</span><input id="to" class="input" type="date" data-in="to" value="${S.to}" aria-label="Bis">
+      ${isVm ? '' : `<div class="seg">${[['all', 'Alle'], ['in', 'Angenommen'], ['out', 'Ausgehend'], ['missed', 'Verpasst']].map(([k, l]) => `<button class="${S.type === k ? 'on' : ''}" data-act="type" data-v="${k}">${l}</button>`).join('')}</div>`}
+      <label class="toggle small"><input id="grp" type="checkbox" data-in="group" ${S.group ? 'checked' : ''}> Nach Person gruppieren</label>
+      <label class="toggle small"><input id="uo" type="checkbox" data-in="unseenOnly" ${S.unseenOnly ? 'checked' : ''}> Nur ungesehene</label>
+      <span class="spacer"></span><button class="btn ghost small" data-act="seen-all">Alle als gesehen markieren</button></div>`;
+    let rows;
+    if (S.group) {
+      rows = groups(items).map(g => `<div class="a-group-row ${S.selKey === g.key ? 'sel' : ''}" data-act="selkey" data-k="${esc(g.key)}">
+        <div class="avatar">${esc(initials(g.name))}</div>
+        <div style="min-width:0"><div class="name" style="${g.unseen ? 'font-weight:700' : ''}">${esc(g.name)}</div><div class="sub small muted">${g.items.length} Einträge · zuletzt ${fmtWhen(g.last)}</div></div>
+        <div style="display:grid;justify-items:end;gap:4px">${counts(g.items)}${g.unseen ? `<span class="badge">${g.unseen}</span>` : ''}</div></div>`).join('');
+    } else {
+      rows = items.map(e => `<div class="a-row ${e.seen ? '' : 'unseen'} ${S.selEntry === e.id ? 'sel' : ''}" data-act="selentry" data-id="${e.id}">
+        ${typeIco(e.type)}${e.seen ? '<span></span>' : '<span class="unseen-dot" title="Ungesehen"></span>'}
+        <div style="min-width:0"><div class="name">${esc(nameOf(e))}</div><div class="sub">${contactOf(e.number) ? `<span class="num">${esc(e.number)}</span> · ${numTypeOf(e)}` : TYPES[e.type].label + (e.number === ANON ? '' : ' · nicht im Telefonbuch')}</div></div>
+        <div class="when num">${fmtWhen(e.ts)}</div><div class="dur num">${fmtDur(e.dur)}</div></div>`).join('');
+    }
+    list = tools + `<div class="scroll">${rows || '<div class="empty">Keine Einträge für diese Suche oder diesen Zeitraum.</div>'}</div>`;
+    const key = S.selKey;
+    if (key) {
+      const hist = byKey(key); const c = key[0] === 'c' ? contacts.find(x => 'c' + x.id === key) : null;
+      const name = c?.name || (key.slice(1) === ANON ? 'Unbekannt' : key.slice(1));
+      const sel = entries.find(e => e.id === S.selEntry);
+      detail = `<div class="a-pers"><div class="avatar lg">${esc(initials(name))}</div><div style="min-width:0;flex:1"><h2>${esc(name)}</h2>
+          <div class="small muted">${c ? c.numbers.map(n => `<span class="num">${esc(n.n)}</span> (${n.type})`).join(' · ') : numLabel(key.slice(1))}</div>
+          ${c?.note ? `<div class="small" style="margin-top:4px">${esc(c.note)}</div>` : ''}</div>
+          ${c ? `<button class="btn" data-act="goto-contact" data-id="${c.id}">${I.edit} Bearbeiten</button>` : key.slice(1) !== ANON ? `<button class="btn" data-act="new-from" data-n="${esc(key.slice(1))}">${I.plus} Als Kontakt speichern</button>` : ''}</div>
+        ${sel && sel.type === 'vm' ? `<div class="panel"><div class="sec-title">Nachricht vom ${fmtWhen(sel.ts)}</div>${player(sel)}</div>` : ''}
+        ${sel && sel.type !== 'vm' ? `<div class="panel"><div class="sec-title">Ausgewählter Anruf</div><div style="display:flex;gap:10px;align-items:center">${typeIco(sel.type)} <b>${TYPES[sel.type].label}</b> · ${fmtWhen(sel.ts)} · Dauer <span class="num">${fmtDur(sel.dur)}</span></div><div class="small muted">${esc(sel.device)} · Leitung ${sel.line} · <span class="num">${esc(numLabel(sel.number))}</span></div></div>` : ''}
+        <div><div class="sec-title">Verlauf mit ${esc(name)} (${hist.length})</div><div class="a-hist">
+          ${hist.map(e => `<div class="h" style="${e.seen ? '' : 'font-weight:700'}">${typeIco(e.type)}<span>${TYPES[e.type].label}${e.type === 'vm' ? ` <button class="btn ghost small" data-act="selentry" data-id="${e.id}">${I.play} anhören</button>` : ''}</span><span class="num muted">${fmtWhen(e.ts)} · ${fmtDur(e.dur)}</span></div>`).join('')}</div></div>`;
+    } else detail = `<div class="empty">Eintrag links auswählen, um Details und den Verlauf der Person zu sehen.</div>`;
+  } else if (S.section === 'contacts') {
+    const cs = contacts.filter(c => !S.q || c.name.toLowerCase().includes(S.q.toLowerCase()) || c.numbers.some(n => digits(n.n).includes(digits(S.q)) && digits(S.q))).sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    list = `<div class="a-tools"><label class="search">${I.search}<input id="q" data-in="q" value="${esc(S.q)}" placeholder="Kontakte durchsuchen"></label><button class="btn primary" data-act="new-contact">${I.plus} Neuer Kontakt</button></div>
+      <div class="scroll">${cs.map(c => `<div class="a-group-row ${S.draft?.id === c.id ? 'sel' : ''}" data-act="edit-contact" data-id="${c.id}"><div class="avatar">${esc(initials(c.name))}</div>
+        <div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="small muted num">${esc(c.numbers[0]?.n || '')}${c.numbers.length > 1 ? ` +${c.numbers.length - 1}` : ''}</div></div><span class="tag">${esc(c.book)}</span></div>`).join('')}</div>`;
+    detail = S.draft ? `<div><div class="sec-title">${S.draft.id ? 'Kontakt bearbeiten' : 'Neuer Kontakt'}</div>${contactForm()}</div>` : `<div class="empty">Kontakt auswählen oder neu anlegen.</div>`;
+  }
+  const body = S.section === 'backup'
+    ? `<div class="a-list" style="grid-column: span 2; border-right:0"><div class="backup-grid">${backupPanels()}</div></div>`
+    : `<section class="a-list">${list}</section><section class="a-detail">${detail}</section>`;
+  return `<div class="win">
+    <header class="a-title"><div class="brand">${I.phone} Anrufverlauf</div><div class="conn"><span class="ok"></span> fritz.box · verbunden</div><span class="spacer"></span>${syncInfo()}${refreshBtn()}</header>
+    ${S.live ? `<div class="a-live"><span class="live-dot"></span><b>Gespräch läuft</b><span>${liveName()}</span><span class="num muted">${esc(numLabel(S.live.number))}</span><span class="num" data-live-timer></span><span class="small muted">${S.live.device}</span><span class="spacer"></span><button class="btn" data-act="live-open">Verlauf öffnen</button></div>` : ''}
+    <div class="a-body"><nav class="a-nav">${nav.map(([k, ic, l, n]) => `<button class="${S.section === k ? 'on' : ''}" data-act="section" data-v="${k}">${ic} ${l}${n ? `<span class="badge">${n}</span>` : ''}</button>`).join('')}
+      <div class="foot">${entries.length} Einträge lokal gespeichert</div></nav>${body}</div></div>`;
+}
+
+/* ───────── Variant B: timeline feed with filter rail ───────── */
+function renderB() {
+  const all = filtered({ type: 'all' });
+  const items = S.type === 'all' ? all : all.filter(e => e.type === S.type);
+  const cnt = t => all.filter(e => t === 'all' || e.type === t).length;
+  const rail = `<aside class="b-rail">
+    <div><div class="sec-title">Art</div>${[['all', I.list, 'Alles'], ['missed', I.missed, 'Verpasst'], ['vm', I.vm, 'Anrufbeantworter'], ['in', I.in, 'Angenommen'], ['out', I.out, 'Ausgehend'], ['rejected', I.rejected, 'Abgewiesen']].map(([k, ic, l]) => `<button class="opt ${S.type === k ? 'on' : ''}" data-act="type" data-v="${k}"><span class="${TYPES[k]?.cls || ''}">${ic}</span> ${l}<span class="n num">${cnt(k)}</span></button>`).join('')}</div>
+    <div><div class="sec-title">Zeitraum</div><div class="chips">${[['all', 'Alles'], ['today', 'Heute'], ['yday', 'Gestern'], ['7', '7 Tage'], ['30', '30 Tage']].map(([k, l]) => `<button class="chip ${S.preset === k ? 'on' : ''}" data-act="preset" data-v="${k}">${l}</button>`).join('')}</div>
+      <div style="display:grid;gap:6px;margin-top:10px"><input id="from" class="input" type="date" data-in="from" value="${S.from}" aria-label="Von"><input id="to" class="input" type="date" data-in="to" value="${S.to}" aria-label="Bis"></div></div>
+    <div style="display:grid;gap:8px"><div class="sec-title">Ansicht</div>
+      <label class="toggle"><input id="uo" type="checkbox" data-in="unseenOnly" ${S.unseenOnly ? 'checked' : ''}> Nur ungesehene</label>
+      <label class="toggle"><input id="grp" type="checkbox" data-in="group" ${S.group ? 'checked' : ''}> Nach Person gruppieren</label></div>
+    <div class="small muted">fritz.box verbunden<br>${entries.length} Einträge gesichert</div>
+  </aside>`;
+  let feed = '';
+  if (S.live) feed += `<div class="b-now"><span class="live-dot"></span><div style="flex:1;min-width:180px"><div class="small muted">JETZT · ${S.live.dir === 'in' ? 'eingehendes' : 'ausgehendes'} Gespräch · ${S.live.device}</div><div class="big">${liveName()}</div><div class="num muted">${esc(numLabel(S.live.number))}</div></div><div class="num big" data-live-timer></div></div>`;
+  const un = unseenCount();
+  feed += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap"><b style="font-size:18px">${S.group ? 'Nach Person' : 'Verlauf'}</b>${un ? `<span class="badge">${un} neu</span><button class="btn ghost small" data-act="seen-all">Alle als gesehen markieren</button>` : ''}</div>`;
+  if (!items.length) feed += `<div class="empty">Nichts gefunden. Filter links anpassen.</div>`;
+  else if (S.group) {
+    feed += groups(items).map(g => {
+      const open = S.openGroup === g.key;
+      return `<div class="b-group ${g.unseen ? 'unseen' : ''}"><div class="hd" data-act="opengroup" data-k="${esc(g.key)}"><div class="avatar">${esc(initials(g.name))}</div>
+        <div style="flex:1;min-width:0"><div style="font-weight:${g.unseen ? 700 : 500}">${esc(g.name)}</div><div class="small muted">zuletzt ${ago(g.last)}</div></div>${counts(g.items)}${g.unseen ? `<span class="badge">${g.unseen}</span>` : ''}</div>
+        ${open ? `<div class="items">${g.items.map(e => `<div class="it" style="${e.seen ? '' : 'font-weight:700'}">${typeIco(e.type)}<span>${TYPES[e.type].label}${e.type === 'vm' ? '<div style="margin-top:4px">' + player(e) + '</div>' : ''}</span><span class="num muted small">${fmtWhen(e.ts)} · ${fmtDur(e.dur)}</span></div>`).join('')}
+          <div class="row-actions" style="margin-top:6px">${g.contact ? `<button class="btn small" data-act="edit-contact" data-id="${g.contact.id}">${I.edit} Kontakt bearbeiten</button>` : g.number !== ANON ? `<button class="btn small" data-act="new-from" data-n="${esc(g.number)}">${I.plus} Als Kontakt speichern</button>` : ''}</div></div>` : ''}</div>`;
+    }).join('');
+  } else {
+    let lastDay = null;
+    for (const e of items) {
+      const d = dayLabel(e.ts);
+      if (d !== lastDay) { const n = items.filter(x => dayLabel(x.ts) === d); feed += `<div class="b-day">${d}<span class="small muted" style="font-weight:400">${n.length} Einträge${n.filter(x => x.type === 'missed').length ? ' · ' + n.filter(x => x.type === 'missed').length + ' verpasst' : ''}</span></div>`; lastDay = d; }
+      const open = S.openId === e.id; const c = contactOf(e.number);
+      feed += `<div class="b-item ${e.seen ? '' : 'unseen'} ${open ? 'open' : ''}" data-act="openitem" data-id="${e.id}">
+        <div class="time num">${fmtTime(e.ts)}</div><div class="rail"><div class="node ${TYPES[e.type].cls}">${I[e.type]}</div></div>
+        <div class="b-card"><div class="line1">${e.seen ? '' : '<span class="unseen-dot"></span>'}<span class="who">${esc(nameOf(e))}</span><span class="small ${TYPES[e.type].cls}">${TYPES[e.type].label}</span>${e.dur != null ? `<span class="small muted num">${fmtDur(e.dur)}</span>` : ''}<span class="spacer"></span>${c ? `<span class="small muted num">${esc(e.number)}</span>` : ''}</div>
+        ${e.type === 'vm' ? `<div data-stop>${player(e)}</div>` : ''}
+        ${open ? (() => {
+          const h = byKey(keyOf(e)).filter(x => x.id !== e.id).slice(0, 6);
+          return `<div class="b-expand" data-stop><div class="small muted">${c ? c.numbers.map(n => `${n.type}: <span class="num">${esc(n.n)}</span>`).join(' · ') + (c.note ? ' · ' + esc(c.note) : '') : e.number === ANON ? 'Rufnummer wurde unterdrückt.' : 'Diese Nummer ist in keinem Telefonbuch.'} · ${esc(e.device)}</div>
+            ${h.length ? `<div class="mini-hist">${h.map(x => `<span>${typeIco(x.type)}<span class="num">${fmtWhen(x.ts)}</span></span>`).join('')}</div>` : ''}
+            <div class="row-actions">${c ? `<button class="btn small" data-act="edit-contact" data-id="${c.id}">${I.edit} Kontakt bearbeiten</button><button class="btn small" data-act="filter-person" data-q="${esc(c.name)}">Nur ${esc(c.name.split(' ')[0])} zeigen</button>` : e.number !== ANON ? `<button class="btn small" data-act="new-from" data-n="${esc(e.number)}">${I.plus} Als Kontakt speichern</button>` : ''}</div></div>`;
+        })() : ''}</div></div>`;
+    }
+  }
+  const drawer = S.drawer ? `<div class="drawer-back" data-act="drawer"></div><aside class="drawer"><header><h2>Kontakte</h2><button class="btn primary" data-act="new-contact">${I.plus} Neu</button><button class="icon-btn" data-act="drawer" aria-label="Schließen">${I.x}</button></header>
+    <div class="scroll" style="flex:1">${[...contacts].sort((a, b) => a.name.localeCompare(b.name, 'de')).map(c => `<div class="d-row"><div class="avatar">${esc(initials(c.name))}</div><div style="min-width:0"><div>${esc(c.name)}</div><div class="small muted num">${c.numbers.map(n => esc(n.n)).join(', ')}</div></div>
+      <div style="display:flex"><button class="icon-btn" data-act="edit-contact" data-id="${c.id}" aria-label="Bearbeiten">${I.edit}</button><button class="icon-btn" data-act="del" data-id="${c.id}" aria-label="Löschen">${I.trash}</button></div></div>`).join('')}</div></aside>` : '';
+  return `<div class="win"><header class="b-top"><div class="brand">${I.phone} Anrufverlauf</div>
+      <label class="search">${I.search}<input id="q" data-in="q" value="${esc(S.q)}" placeholder="Wen suchst du? Name oder Nummer"></label><span class="spacer"></span>
+      ${syncInfo()}${refreshBtn(false)}<button class="btn" data-act="drawer">${I.users} Kontakte</button><button class="btn" data-act="modal-backup">${I.archive} Sicherung</button></header>
+    <div class="b-body">${rail}<main class="b-feed"><div class="b-feed-inner">${feed}</div></main></div>${drawer}</div>`;
+}
+
+/* ───────── Variant C: people list + conversation thread ───────── */
+function renderC() {
+  const base = filtered({ type: 'all' });
+  const pf = S.cFilter;
+  let left;
+  if (S.cMode === 'people') {
+    let gs = groups(base);
+    if (pf === 'missed') gs = gs.filter(g => g.items.some(e => e.type === 'missed'));
+    if (pf === 'vm') gs = gs.filter(g => g.items.some(e => e.type === 'vm'));
+    if (pf === 'unseen') gs = gs.filter(g => g.unseen);
+    // include contacts without any calls when searching, so they can be found and edited
+    if (S.q && pf === 'all') contacts.filter(c => c.name.toLowerCase().includes(S.q.toLowerCase()) && !gs.some(g => g.key === 'c' + c.id)).forEach(c => gs.push({ key: 'c' + c.id, name: c.name, contact: c, items: [], unseen: 0, last: 0 }));
+    left = gs.map(g => { const l = g.items[0]; return `<div class="c-person ${g.unseen ? 'unseen' : ''} ${S.cKey === g.key ? 'sel' : ''}" data-act="ckey" data-k="${esc(g.key)}">
+      <div class="avatar">${esc(initials(g.name))}</div><div style="min-width:0"><div class="nm">${esc(g.name)}</div><div class="last">${l ? typeIco(l.type) + ' ' + TYPES[l.type].label + (l.dur != null ? ' · ' + fmtDur(l.dur) : '') : 'Noch keine Anrufe'}</div></div>
+      <div class="right"><span class="num">${l ? fmtWhen(l.ts) : ''}</span>${g.unseen ? `<span class="badge">${g.unseen}</span>` : ''}</div></div>`; }).join('');
+  } else {
+    let list = base;
+    if (pf === 'missed') list = list.filter(e => e.type === 'missed');
+    if (pf === 'vm') list = list.filter(e => e.type === 'vm');
+    if (pf === 'unseen') list = list.filter(e => !e.seen);
+    left = list.map(e => `<div class="c-person ${e.seen ? '' : 'unseen'} ${S.cKey === keyOf(e) ? 'sel' : ''}" data-act="ckey" data-k="${esc(keyOf(e))}">
+      <div class="avatar ${TYPES[e.type].cls}">${I[e.type]}</div><div style="min-width:0"><div class="nm">${esc(nameOf(e))}</div><div class="last">${TYPES[e.type].label}${e.dur != null ? ' · ' + fmtDur(e.dur) : ''}</div></div>
+      <div class="right"><span class="num">${fmtWhen(e.ts)}</span>${e.seen ? '' : '<span class="unseen-dot"></span>'}</div></div>`).join('');
+  }
+  let thread;
+  if (S.cKey) {
+    const k = S.cKey; const c = k[0] === 'c' ? contacts.find(x => 'c' + x.id === k) : null;
+    const name = c?.name || (k.slice(1) === ANON ? 'Unbekannt' : k.slice(1));
+    const hist = byKey(k).filter(inRange).reverse();
+    let msgs = '', ld = null;
+    for (const e of hist) {
+      const d = dayLabel(e.ts); if (d !== ld) { msgs += `<div class="c-sep">${d}</div>`; ld = d; }
+      const un = e.seen ? '' : 'unseen';
+      if (e.type === 'missed' || e.type === 'rejected') msgs += `<div class="sys ${e.type === 'rejected' ? 'rej' : ''} ${un}">${I[e.type]} ${TYPES[e.type].label}er Anruf · ${fmtTime(e.ts)}${c && c.numbers.length > 1 ? ' · ' + numTypeOf(e) : ''}</div>`;
+      else if (e.type === 'vm') msgs += `<div class="bub vm ${un}"><div class="meta t-vm">${I.vm} Nachricht auf dem Anrufbeantworter</div>${player(e)}<div class="meta">${fmtTime(e.ts)}</div></div>`;
+      else msgs += `<div class="bub ${e.type} ${un}"><div style="display:flex;gap:8px;align-items:center">${typeIco(e.type)}<b>${e.type === 'in' ? 'Anruf angenommen' : 'Du hast angerufen'}</b></div><div class="meta"><span class="num">${fmtDur(e.dur)}</span> · ${fmtTime(e.ts)} · ${esc(e.device)}${c && c.numbers.length > 1 ? ' · ' + numTypeOf(e) : ''}</div></div>`;
+    }
+    if (S.live && keyOf(S.live) === k) msgs += `<div class="bub in" style="border-color:var(--live)"><div style="display:flex;gap:8px;align-items:center"><span class="live-dot"></span><b>Gespräch läuft</b></div><div class="meta num" data-live-timer></div></div>`;
+    thread = `<div class="c-head"><div class="avatar lg">${esc(initials(name))}</div><div style="flex:1;min-width:0"><h2>${esc(name)}</h2>
+        <div class="small muted">${c ? c.numbers.map(n => `${n.type} <span class="num">${esc(n.n)}</span>`).join(' · ') + ` · <span class="tag">${esc(c.book)}</span>` : numLabel(k.slice(1))}</div>${c?.note ? `<div class="small">${esc(c.note)}</div>` : ''}</div>
+        ${c ? `<button class="btn" data-act="edit-contact" data-id="${c.id}">${I.edit} Bearbeiten</button><button class="icon-btn" data-act="del" data-id="${c.id}" aria-label="Löschen">${I.trash}</button>` : k.slice(1) !== ANON ? `<button class="btn primary" data-act="new-from" data-n="${esc(k.slice(1))}">${I.plus} Als Kontakt speichern</button>` : ''}</div>
+      <div class="c-filter">Zeitraum <input id="from" class="input" type="date" data-in="from" value="${S.from}" aria-label="Von"> – <input id="to" class="input" type="date" data-in="to" value="${S.to}" aria-label="Bis">${S.from || S.to ? `<button class="btn ghost small" data-act="preset" data-v="all">zurücksetzen</button>` : ''}<span class="spacer"></span>${hist.length} Einträge</div>
+      <div class="c-msgs" id="c-msgs">${msgs || '<div class="empty">Keine Einträge im gewählten Zeitraum.</div>'}</div>`;
+  } else thread = `<div class="empty" style="margin:auto">Person links auswählen.</div>`;
+  return `<div class="win"><div class="c-body">
+      <aside class="c-people"><div class="top"><div style="display:flex;gap:8px;align-items:center"><div class="brand" style="flex:1">${I.phone} Anrufverlauf</div><button class="btn primary" data-act="new-contact">${I.plus} Kontakt</button></div>
+        <label class="search">${I.search}<input id="q" data-in="q" value="${esc(S.q)}" placeholder="Name oder Nummer"></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><div class="seg">${[['people', 'Personen'], ['chrono', 'Chronik']].map(([k, l]) => `<button class="${S.cMode === k ? 'on' : ''}" data-act="cmode" data-v="${k}">${l}</button>`).join('')}</div>
+        <div class="seg">${[['all', 'Alle'], ['unseen', 'Neu'], ['missed', 'Verpasst'], ['vm', 'AB']].map(([k, l]) => `<button class="${pf === k ? 'on' : ''}" data-act="cfilter" data-v="${k}">${l}${k === 'unseen' && unseenCount() ? ` <span class="badge">${unseenCount()}</span>` : ''}</button>`).join('')}</div></div></div>
+        <div class="scroll" style="flex:1">${left || '<div class="empty">Keine Treffer.</div>'}</div></aside>
+      <main class="c-thread">${thread}</main></div>
+    <footer class="c-status"><span class="conn"><span class="ok" style="width:8px;height:8px;border-radius:50%;background:var(--live)"></span> fritz.box verbunden</span>${syncInfo()}${refreshBtn()}<span class="spacer"></span><button class="btn ghost" data-act="modal-backup">${I.archive} Sicherung &amp; Import</button></footer>
+    ${S.live ? `<div class="c-live"><span class="live-dot"></span><div><div class="small muted">Gespräch läuft</div><b>${liveName()}</b></div><span class="num" data-live-timer style="font-size:18px"></span><button class="btn small" data-act="live-open">Öffnen</button></div>` : ''}</div>`;
+}
+
+/* ───────── render loop ───────── */
+function render() {
+  const a = document.activeElement; const fid = a?.id; const pos = a && 'selectionStart' in a ? (() => { try { return a.selectionStart; } catch { return null; } })() : null;
+  const msgs = document.getElementById('c-msgs'); const keepScroll = msgs && msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight > 40 ? msgs.scrollTop : null;
+  document.getElementById('app').innerHTML = { a: renderA, b: renderB, c: renderC }[S.variant]();
+  renderOverlay();
+  if (fid) { const el = document.getElementById(fid); if (el) { el.focus(); if (pos != null) try { el.setSelectionRange(pos, pos); } catch {} } }
+  const m = document.getElementById('c-msgs'); if (m) m.scrollTop = keepScroll ?? m.scrollHeight;
+  tickLive();
+}
+function toast(msg) { S.toast = msg; renderOverlay(); clearTimeout(toast.t); toast.t = setTimeout(() => { S.toast = null; renderOverlay(); }, 2600); }
+function tickLive() { if (!S.live) return; const s = Math.floor((Date.now() - S.live.start) / 1000); document.querySelectorAll('[data-live-timer]').forEach(el => el.textContent = fmtDur(s)); }
+setInterval(tickLive, 1000);
+setInterval(() => {
+  const p = S.play; if (!p?.on) return;
+  const e = entries.find(x => x.id === p.id); p.pos += .25;
+  if (p.pos >= e.dur) { p.pos = 0; p.on = false; render(); return; }
+  document.querySelectorAll(`[data-prog="${p.id}"]`).forEach(el => el.style.width = (p.pos / e.dur * 100) + '%');
+  document.querySelectorAll(`[data-pos="${p.id}"]`).forEach(el => el.textContent = `${fmtDur(Math.floor(p.pos))} / ${fmtDur(e.dur)}`);
+}, 250);
+
+function openPerson(k) {
+  if (S.variant === 'a') { S.section = 'calls'; S.selKey = k; S.selEntry = byKey(k)[0]?.id ?? null; }
+  if (S.variant === 'b') { S.group = true; S.openGroup = k; }
+  if (S.variant === 'c') { S.cKey = k; byKey(k).forEach(e => e.seen = true); }
+}
+function startEdit(draft) {
+  S.draft = draft;
+  if (S.variant === 'a') S.section = 'contacts'; else S.modal = 'contact';
+}
+const VARIANTS = ['a', 'b', 'c'];
+function setVariant(v) { S.variant = v; S.modal = null; S.drawer = false; if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v); render(); }
+
+/* ───────── events ───────── */
+document.addEventListener('click', ev => {
+  const t = ev.target.closest('[data-act]'); if (!t) return;
+  if (t.dataset.act === 'openitem' && ev.target.closest('[data-stop]')) return;
+  if (t.dataset.act === 'close-bg' && ev.target !== t) return;
+  const d = t.dataset, id = +d.id;
+  switch (d.act) {
+    case 'prev': return setVariant(VARIANTS[(VARIANTS.indexOf(S.variant) + 2) % 3]);
+    case 'next': return setVariant(VARIANTS[(VARIANTS.indexOf(S.variant) + 1) % 3]);
+    case 'section': S.section = d.v; S.draft = null; S.selKey = null; S.selEntry = null; S.type = 'all'; break;
+    case 'type': S.type = d.v; break;
+    case 'preset': setPreset(d.v); break;
+    case 'selentry': { const e = entries.find(x => x.id === id); e.seen = true; S.selEntry = id; S.selKey = keyOf(e); break; }
+    case 'selkey': S.selKey = d.k; S.selEntry = null; byKey(d.k).forEach(e => e.seen = true); break;
+    case 'openitem': { const e = entries.find(x => x.id === id); e.seen = true; S.openId = S.openId === id ? null : id; break; }
+    case 'opengroup': S.openGroup = S.openGroup === d.k ? null : d.k; byKey(d.k).forEach(e => e.seen = true); break;
+    case 'filter-person': S.q = d.q; S.openId = null; break;
+    case 'ckey': S.cKey = d.k; byKey(d.k).forEach(e => e.seen = true); break;
+    case 'cmode': S.cMode = d.v; break;
+    case 'cfilter': S.cFilter = d.v; break;
+    case 'seen-all': entries.forEach(e => e.seen = true); toast('Alle Einträge als gesehen markiert'); break;
+    case 'play': {
+      const e = entries.find(x => x.id === id); e.seen = true;
+      if (S.play?.id === id) S.play.on = !S.play.on; else S.play = { id, pos: 0, on: true };
+      break;
+    }
+    case 'seek': {
+      if (ev.target.closest('.play-btn')) return;
+      const r = t.getBoundingClientRect(); const e = entries.find(x => x.id === id);
+      S.play = { id, pos: Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * e.dur, on: true }; e.seen = true; break;
+    }
+    case 'refresh':
+      S.syncing = true; render();
+      setTimeout(() => {
+        S.syncing = false; S.lastSync = Date.now();
+        entries.push({ id: ++nextId, ts: Date.now() - 60000, type: 'missed', number: '+49 160 9876543', dur: null, seen: false, device: DEVICES[0], line: '030 1234567' });
+        render(); toast('Synchronisiert: 1 neuer Eintrag');
+      }, 1400);
+      return;
+    case 'goto-contact': case 'edit-contact': startEdit(editDraft(contacts.find(c => c.id === id))); S.drawer = false; break;
+    case 'new-contact': startEdit(newDraft()); S.drawer = false; break;
+    case 'new-from': startEdit(newDraft(d.n)); break;
+    case 'addnum': S.draft.numbers.push({ type: 'Mobil', n: '' }); break;
+    case 'rmnum': S.draft.numbers.splice(+d.i, 1); if (!S.draft.numbers.length) S.draft.numbers.push({ type: 'Mobil', n: '' }); break;
+    case 'save': {
+      const dr = S.draft; dr.numbers = dr.numbers.filter(n => n.n.trim());
+      if (!dr.name.trim()) { toast('Bitte einen Namen eingeben'); return; }
+      if (dr.id) Object.assign(contacts.find(c => c.id === dr.id), dr); else { dr.id = ++nextId; contacts.push(dr); }
+      toast(dr.book === 'Nur lokal' ? `„${dr.name}“ gespeichert` : `„${dr.name}“ gespeichert und ins Fritz!Box-Telefonbuch geschrieben`);
+      S.modal = null; if (S.variant === 'a') S.draft = editDraft(dr); else S.draft = null;
+      if (S.variant === 'c') S.cKey = 'c' + dr.id;
+      break;
+    }
+    case 'cancel': S.draft = null; S.modal = null; break;
+    case 'del': S.confirmDel = id; S.alsoBox = false; break;
+    case 'del-no': S.confirmDel = null; break;
+    case 'del-yes': {
+      const i = contacts.findIndex(c => c.id === S.confirmDel); const c = contacts[i]; contacts.splice(i, 1);
+      toast(`„${c.name}“ gelöscht${S.alsoBox ? ' (auch in der Fritz!Box)' : ''}`);
+      if (S.draft?.id === c.id) { S.draft = null; S.modal = null; }
+      if (S.cKey === 'c' + c.id) S.cKey = null; if (S.selKey === 'c' + c.id) S.selKey = null;
+      S.confirmDel = null; break;
+    }
+    case 'drawer': S.drawer = !S.drawer; break;
+    case 'modal-backup': S.modal = 'backup'; break;
+    case 'close': case 'close-bg': S.modal = null; S.draft = null; break;
+    case 'backup': S.lastBackup = Date.now(); toast('Sicherung gespeichert: anrufverlauf-' + isoDay(Date.now()) + '.zip'); break;
+    case 'import': toast('Import: ' + Object.keys(S.books).filter(b => S.books[b]).join(', ') + ' · 2 neue, 5 zusammengeführt'); break;
+    case 'toast': toast(d.msg); return;
+    case 'sim-ring': {
+      const pool = ['+49 171 2345678', '+49 89 12345678', '+49 30 5550120', ANON];
+      S.ring = { number: pool[Math.floor(Math.random() * pool.length)], line: '030 1234567' };
+      clearTimeout(S.ringT); S.ringT = setTimeout(() => ringEnd(true), 15000); break;
+    }
+    case 'ring-hide': ringEnd(false); return;
+    case 'ring-open': { const k = keyOf(S.ring); ringEnd(false); openPerson(k); break; }
+    case 'ring-save': { const n = S.ring.number; ringEnd(false); startEdit(newDraft(n)); break; }
+    case 'sim-live':
+      if (S.live) { entries.push({ id: ++nextId, ts: S.live.start, type: 'in', number: S.live.number, dur: Math.max(1, Math.floor((Date.now() - S.live.start) / 1000)), seen: true, device: S.live.device, line: '030 1234567' }); S.live = null; }
+      else S.live = { number: '+49 6221 334455', start: Date.now() - 47000, dir: 'in', device: 'Mobilteil Wohnzimmer' };
+      break;
+    case 'live-open': openPerson(keyOf(S.live)); break;
+    default: return;
+  }
+  render();
+});
+function ringEnd(timeout) {
+  if (!S.ring) return; clearTimeout(S.ringT);
+  // A ring that nobody answers ends up as a new, unseen missed call.
+  entries.push({ id: ++nextId, ts: Date.now(), type: 'missed', number: S.ring.number, dur: null, seen: false, device: DEVICES[2], line: S.ring.line });
+  S.ring = null; render(); if (timeout) toast('Anruf nicht angenommen, als verpasst eingetragen');
+}
+document.addEventListener('input', ev => {
+  const el = ev.target, k = el.dataset.in; if (!k) return;
+  if (k === 'name' || k === 'note' || k === 'book') { S.draft[k] = el.value; return; }
+  if (k.startsWith('num:')) { S.draft.numbers[+k.slice(4)].n = el.value; return; }
+  if (k.startsWith('ntype:')) { S.draft.numbers[+k.slice(6)].type = el.value; return; }
+  if (k.startsWith('book-sel:')) { S.books[k.slice(9)] = el.checked; return; }
+  if (el.type === 'checkbox') S[k] = el.checked; else S[k] = el.value;
+  if (k === 'from' || k === 'to') S.preset = 'custom';
+  clearTimeout(render.t); render.t = setTimeout(render, k === 'q' ? 150 : 0);
+});
+document.addEventListener('keydown', ev => {
+  if (ev.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (ev.key === 'ArrowLeft') setVariant(VARIANTS[(VARIANTS.indexOf(S.variant) + 2) % 3]);
+  if (ev.key === 'ArrowRight') setVariant(VARIANTS[(VARIANTS.indexOf(S.variant) + 1) % 3]);
+  if (ev.key === 'Escape') { S.modal = null; S.drawer = false; S.confirmDel = null; if (S.variant !== 'a') S.draft = null; render(); }
+});
+function fromHash() { const v = location.hash.slice(1); setVariant(VARIANTS.includes(v) ? v : 'a'); }
+window.addEventListener('hashchange', fromHash);
+// sensible starting selections so each variant opens in a working state
+S.selKey = 'c1'; S.selEntry = 2; S.cKey = 'c1'; S.openId = 1;
+fromHash();
+</script>
