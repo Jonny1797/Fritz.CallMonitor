@@ -23,3 +23,6 @@ config.toml
 # Editors
 .vscode/
 .idea/
+
+# Sandcastle (Node tooling)
+node_modules/
