@@ -367,6 +367,7 @@ const fmtWhen = ts => { const n = dayDiff(ts); return n === 0 ? fmtTime(ts) : n 
 const fmtDur = s => s == null ? '—' : s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${Math.floor(s / 60)}:${pad(s % 60)}`;
 const ago = ts => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'gerade eben' : m < 60 ? `vor ${m} Min.` : fmtWhen(ts); };
 const typeIco = t => `<span class="${TYPES[t].cls}" title="${TYPES[t].label}">${I[t]}</span>`;
+const rangeLabel = () => { const f = s => s ? new Date(s + 'T12:00').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) : '…'; return S.from === S.to ? f(S.from) : `${f(S.from)} – ${f(S.to)}`; };
 const isoDay = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
 function matchQ(e) {
@@ -424,7 +425,7 @@ function player(e) {
 
 /* ───────── shared pieces: contact form, backup panel, modals ───────── */
 function newDraft(number) {
-  return { id: null, name: '', numbers: [{ type: 'Mobil', n: number && number !== ANON ? number : '' }], note: '', book: 'Telefonbuch' };
+  return { id: null, name: '', numbers: [{ type: 'Mobil', n: number && number !== ANON ? number : '' }], note: '', book: 'Nur lokal' };
 }
 function editDraft(c) { return JSON.parse(JSON.stringify(c)); }
 function contactForm() {
@@ -439,8 +440,7 @@ function contactForm() {
       <div><button type="button" class="btn ghost" data-act="addnum">${I.plus} Nummer hinzufügen</button></div>
     </div>
     <div class="field"><label for="f-note">Notiz</label><textarea id="f-note" class="input" rows="2" data-in="note">${esc(d.note)}</textarea></div>
-    <div class="field"><label for="f-book">Gespeichert in</label>
-      <select id="f-book" class="input" data-in="book">${['Telefonbuch', 'Arbeit', 'Nur lokal'].map(b => `<option value="${b}" ${b === d.book ? 'selected' : ''}>${b === 'Nur lokal' ? 'Nur in dieser App (nicht in der Fritz!Box)' : 'Fritz!Box-Telefonbuch „' + b + '“'}</option>`).join('')}</select></div>
+    <div class="small muted">${d.book === 'Nur lokal' ? 'Lokal angelegt.' : `Ursprünglich importiert aus dem Fritz!Box-Telefonbuch „${esc(d.book)}“.`} Änderungen bleiben in dieser App, das Telefonbuch der Fritz!Box wird nicht verändert.</div>
     <div class="row-actions">
       <button type="button" class="btn primary" data-act="save">${I.check} ${d.id ? 'Speichern' : 'Kontakt anlegen'}</button>
       <button type="button" class="btn" data-act="cancel">Abbrechen</button>
@@ -472,7 +472,7 @@ function renderOverlay() {
     const c = contacts.find(x => x.id === S.confirmDel);
     h += `<div class="modal-back"><div class="modal" role="alertdialog" aria-modal="true"><header><h2>Kontakt löschen?</h2></header><div class="body" style="display:grid;gap:14px">
       <p style="margin:0">„${esc(c.name)}“ wird gelöscht. Der Anrufverlauf bleibt erhalten und wird danach nur mit Rufnummer angezeigt.</p>
-      ${c.book !== 'Nur lokal' ? `<label class="toggle"><input id="also-box" type="checkbox" data-in="alsoBox" ${S.alsoBox ? 'checked' : ''}> Auch aus dem Fritz!Box-Telefonbuch „${esc(c.book)}“ löschen</label>` : ''}
+      ${c.book !== 'Nur lokal' ? `<p class="small muted" style="margin:0">Der Eintrag im Fritz!Box-Telefonbuch „${esc(c.book)}“ bleibt bestehen. Beim nächsten Import würde er wieder übernommen.</p>` : ''}
       <div class="row-actions"><button class="btn primary" style="background:var(--missed);border-color:var(--missed);color:#fff" data-act="del-yes">${I.trash} Löschen</button><button class="btn" data-act="del-no">Abbrechen</button></div></div></div></div>`;
   }
   if (S.ring) {
@@ -651,14 +651,17 @@ function renderC() {
     thread = `<div class="c-head"><div class="avatar lg">${esc(initials(name))}</div><div style="flex:1;min-width:0"><h2>${esc(name)}</h2>
         <div class="small muted">${c ? c.numbers.map(n => `${n.type} <span class="num">${esc(n.n)}</span>`).join(' · ') + ` · <span class="tag">${esc(c.book)}</span>` : numLabel(k.slice(1))}</div>${c?.note ? `<div class="small">${esc(c.note)}</div>` : ''}</div>
         ${c ? `<button class="btn" data-act="edit-contact" data-id="${c.id}">${I.edit} Bearbeiten</button><button class="icon-btn" data-act="del" data-id="${c.id}" aria-label="Löschen">${I.trash}</button>` : k.slice(1) !== ANON ? `<button class="btn primary" data-act="new-from" data-n="${esc(k.slice(1))}">${I.plus} Als Kontakt speichern</button>` : ''}</div>
-      <div class="c-filter">Zeitraum <input id="from" class="input" type="date" data-in="from" value="${S.from}" aria-label="Von"> – <input id="to" class="input" type="date" data-in="to" value="${S.to}" aria-label="Bis">${S.from || S.to ? `<button class="btn ghost small" data-act="preset" data-v="all">zurücksetzen</button>` : ''}<span class="spacer"></span>${hist.length} Einträge</div>
+      <div class="c-filter">${S.from || S.to ? `Gefiltert: ${rangeLabel()} <button class="btn ghost small" data-act="preset" data-v="all">Filter zurücksetzen</button>` : 'Gesamter Verlauf'}<span class="spacer"></span>${hist.length} Einträge</div>
       <div class="c-msgs" id="c-msgs">${msgs || '<div class="empty">Keine Einträge im gewählten Zeitraum.</div>'}</div>`;
   } else thread = `<div class="empty" style="margin:auto">Person links auswählen.</div>`;
   return `<div class="win"><div class="c-body">
       <aside class="c-people"><div class="top"><div style="display:flex;gap:8px;align-items:center"><div class="brand" style="flex:1">${I.phone} Anrufverlauf</div><button class="btn primary" data-act="new-contact">${I.plus} Kontakt</button></div>
         <label class="search">${I.search}<input id="q" data-in="q" value="${esc(S.q)}" placeholder="Name oder Nummer"></label>
         <div style="display:flex;gap:8px;flex-wrap:wrap"><div class="seg">${[['people', 'Personen'], ['chrono', 'Chronik']].map(([k, l]) => `<button class="${S.cMode === k ? 'on' : ''}" data-act="cmode" data-v="${k}">${l}</button>`).join('')}</div>
-        <div class="seg">${[['all', 'Alle'], ['unseen', 'Neu'], ['missed', 'Verpasst'], ['vm', 'AB']].map(([k, l]) => `<button class="${pf === k ? 'on' : ''}" data-act="cfilter" data-v="${k}">${l}${k === 'unseen' && unseenCount() ? ` <span class="badge">${unseenCount()}</span>` : ''}</button>`).join('')}</div></div></div>
+        <div class="seg">${[['all', 'Alle'], ['unseen', 'Neu'], ['missed', 'Verpasst'], ['vm', 'AB']].map(([k, l]) => `<button class="${pf === k ? 'on' : ''}" data-act="cfilter" data-v="${k}">${l}${k === 'unseen' && unseenCount() ? ` <span class="badge">${unseenCount()}</span>` : ''}</button>`).join('')}</div></div>
+        <div style="display:grid;gap:6px"><div class="chips">${[['all', 'Alles'], ['today', 'Heute'], ['yday', 'Gestern'], ['7', '7 Tage'], ['30', '30 Tage']].map(([k, l]) => `<button class="chip ${S.preset === k ? 'on' : ''}" data-act="preset" data-v="${k}">${l}</button>`).join('')}</div>
+          <div style="display:flex;gap:6px;align-items:center"><input id="from" class="input" type="date" data-in="from" value="${S.from}" aria-label="Von" style="flex:1"><span class="muted">–</span><input id="to" class="input" type="date" data-in="to" value="${S.to}" aria-label="Bis" style="flex:1"></div></div>
+        ${S.q || S.from || S.to || pf !== 'all' ? `<div class="small muted" style="display:flex;gap:8px;align-items:center">Filter aktiv<span class="spacer"></span><button class="btn ghost small" data-act="reset-all">Alle Filter zurücksetzen</button></div>` : ''}</div>
         <div class="scroll" style="flex:1">${left || '<div class="empty">Keine Treffer.</div>'}</div></aside>
       <main class="c-thread">${thread}</main></div>
     <footer class="c-status"><span class="conn"><span class="ok" style="width:8px;height:8px;border-radius:50%;background:var(--live)"></span> fritz.box verbunden</span>${syncInfo()}${refreshBtn()}<span class="spacer"></span><button class="btn ghost" data-act="modal-backup">${I.archive} Sicherung &amp; Import</button></footer>
@@ -718,6 +721,7 @@ document.addEventListener('click', ev => {
     case 'ckey': S.cKey = d.k; byKey(d.k).forEach(e => e.seen = true); break;
     case 'cmode': S.cMode = d.v; break;
     case 'cfilter': S.cFilter = d.v; break;
+    case 'reset-all': S.q = ''; S.cFilter = 'all'; setPreset('all'); break;
     case 'seen-all': entries.forEach(e => e.seen = true); toast('Alle Einträge als gesehen markiert'); break;
     case 'play': {
       const e = entries.find(x => x.id === id); e.seen = true;
@@ -746,7 +750,7 @@ document.addEventListener('click', ev => {
       const dr = S.draft; dr.numbers = dr.numbers.filter(n => n.n.trim());
       if (!dr.name.trim()) { toast('Bitte einen Namen eingeben'); return; }
       if (dr.id) Object.assign(contacts.find(c => c.id === dr.id), dr); else { dr.id = ++nextId; contacts.push(dr); }
-      toast(dr.book === 'Nur lokal' ? `„${dr.name}“ gespeichert` : `„${dr.name}“ gespeichert und ins Fritz!Box-Telefonbuch geschrieben`);
+      toast(`„${dr.name}“ gespeichert`);
       S.modal = null; if (S.variant === 'a') S.draft = editDraft(dr); else S.draft = null;
       if (S.variant === 'c') S.cKey = 'c' + dr.id;
       break;
@@ -756,7 +760,7 @@ document.addEventListener('click', ev => {
     case 'del-no': S.confirmDel = null; break;
     case 'del-yes': {
       const i = contacts.findIndex(c => c.id === S.confirmDel); const c = contacts[i]; contacts.splice(i, 1);
-      toast(`„${c.name}“ gelöscht${S.alsoBox ? ' (auch in der Fritz!Box)' : ''}`);
+      toast(`„${c.name}“ gelöscht`);
       if (S.draft?.id === c.id) { S.draft = null; S.modal = null; }
       if (S.cKey === 'c' + c.id) S.cKey = null; if (S.selKey === 'c' + c.id) S.selKey = null;
       S.confirmDel = null; break;
