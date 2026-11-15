@@ -54,3 +54,17 @@ Strict layering, each layer only talks to the one below it:
 
 - TR-064 access must be enabled: *Heimnetz > Netzwerk > Netzwerkeinstellungen > "Zugriff für Anwendungen zulässig"*.
 - The configured Fritz!Box user needs the right *"Sprachnachrichten, Fax, Anrufliste und FRITZ!App Fon"* — without it, login succeeds but `GetCallList` fails (`FritzBoxPermissionError`).
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in the self-hosted Forgejo repo `projects/Fritz.CallMonitor` (the `origin` remote), accessed via the `forgejo` MCP tools. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
