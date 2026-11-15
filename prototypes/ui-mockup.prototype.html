@@ -475,6 +475,12 @@ function renderOverlay() {
       ${c.book !== 'Nur lokal' ? `<p class="small muted" style="margin:0">Der Eintrag im Fritz!Box-Telefonbuch „${esc(c.book)}“ bleibt bestehen. Beim nächsten Import würde er wieder übernommen.</p>` : ''}
       <div class="row-actions"><button class="btn primary" style="background:var(--missed);border-color:var(--missed);color:#fff" data-act="del-yes">${I.trash} Löschen</button><button class="btn" data-act="del-no">Abbrechen</button></div></div></div></div>`;
   }
+  if (S.confirmVm) {
+    const e = entries.find(x => x.id === S.confirmVm);
+    h += `<div class="modal-back"><div class="modal" role="alertdialog" aria-modal="true"><header><h2>Nachricht löschen?</h2></header><div class="body" style="display:grid;gap:14px">
+      <p style="margin:0">Die Nachricht von ${esc(nameOf(e))} vom ${fmtWhen(e.ts)} wird <b>auf der Fritz!Box</b> und in dieser App gelöscht. Das lässt sich nicht rückgängig machen.</p>
+      <div class="row-actions"><button class="btn primary" style="background:var(--missed);border-color:var(--missed);color:#fff" data-act="vm-del-yes">${I.trash} Endgültig löschen</button><button class="btn" data-act="vm-del-no">Abbrechen</button></div></div></div></div>`;
+  }
   if (S.ring) {
     const c = contactOf(S.ring.number);
     h += `<div class="ring" role="alert"><div class="head"><div class="ico">${I.phone}</div><div style="min-width:0">
@@ -496,6 +502,8 @@ function syncInfo() {
   return S.syncing ? `<span class="small muted">Synchronisiere …</span>` : `<span class="small muted">Stand ${fmtTime(S.lastSync)}</span>`;
 }
 const refreshBtn = (label = true) => `<button class="${label ? 'btn' : 'icon-btn'}" data-act="refresh" ${S.syncing ? 'disabled' : ''} title="Daten jetzt von der Fritz!Box abrufen"><span class="${S.syncing ? 'spin' : ''}" style="display:inline-flex">${I.refresh}</span>${label ? ' Aktualisieren' : ''}</button>`;
+// Wählhilfe: die Box ruft die Nummer an und lässt das eigene Telefon klingeln. One button per number.
+const callBtns = (c, n) => c ? c.numbers.map(x => `<button class="btn primary" data-act="dial" data-n="${esc(x.n)}">${I.phone} ${c.numbers.length > 1 ? x.type + ' anrufen' : 'Anrufen'}</button>`).join('') : n && n !== ANON ? `<button class="btn primary" data-act="dial" data-n="${esc(n)}">${I.phone} Anrufen</button>` : '';
 const liveName = () => esc(contactOf(S.live.number)?.name || numLabel(S.live.number));
 
 /* ───────── Variant A: three panes (mail-client style) ───────── */
@@ -533,8 +541,8 @@ function renderA() {
       detail = `<div class="a-pers"><div class="avatar lg">${esc(initials(name))}</div><div style="min-width:0;flex:1"><h2>${esc(name)}</h2>
           <div class="small muted">${c ? c.numbers.map(n => `<span class="num">${esc(n.n)}</span> (${n.type})`).join(' · ') : numLabel(key.slice(1))}</div>
           ${c?.note ? `<div class="small" style="margin-top:4px">${esc(c.note)}</div>` : ''}</div>
-          ${c ? `<button class="btn" data-act="goto-contact" data-id="${c.id}">${I.edit} Bearbeiten</button>` : key.slice(1) !== ANON ? `<button class="btn" data-act="new-from" data-n="${esc(key.slice(1))}">${I.plus} Als Kontakt speichern</button>` : ''}</div>
-        ${sel && sel.type === 'vm' ? `<div class="panel"><div class="sec-title">Nachricht vom ${fmtWhen(sel.ts)}</div>${player(sel)}</div>` : ''}
+          <div class="row-actions">${callBtns(c, key.slice(1))}</div>${c ? `<button class="btn" data-act="goto-contact" data-id="${c.id}">${I.edit} Bearbeiten</button>` : key.slice(1) !== ANON ? `<button class="btn" data-act="new-from" data-n="${esc(key.slice(1))}">${I.plus} Als Kontakt speichern</button>` : ''}</div>
+        ${sel && sel.type === 'vm' ? `<div class="panel"><div class="sec-title">Nachricht vom ${fmtWhen(sel.ts)}</div>${player(sel)}<div class="small muted">Abspielen markiert die Nachricht auch auf der Fritz!Box als gelesen. Sie bleibt gespeichert, bis du sie löschst.</div><div class="row-actions"><button class="btn danger" data-act="vm-del" data-id="${sel.id}">${I.trash} Auf der Fritz!Box löschen</button></div></div>` : ''}
         ${sel && sel.type !== 'vm' ? `<div class="panel"><div class="sec-title">Ausgewählter Anruf</div><div style="display:flex;gap:10px;align-items:center">${typeIco(sel.type)} <b>${TYPES[sel.type].label}</b> · ${fmtWhen(sel.ts)} · Dauer <span class="num">${fmtDur(sel.dur)}</span></div><div class="small muted">${esc(sel.device)} · Leitung ${sel.line} · <span class="num">${esc(numLabel(sel.number))}</span></div></div>` : ''}
         <div><div class="sec-title">Verlauf mit ${esc(name)} (${hist.length})</div><div class="a-hist">
           ${hist.map(e => `<div class="h" style="${e.seen ? '' : 'font-weight:700'}">${typeIco(e.type)}<span>${TYPES[e.type].label}${e.type === 'vm' ? ` <button class="btn ghost small" data-act="selentry" data-id="${e.id}">${I.play} anhören</button>` : ''}</span><span class="num muted">${fmtWhen(e.ts)} · ${fmtDur(e.dur)}</span></div>`).join('')}</div></div>`;
@@ -644,13 +652,13 @@ function renderC() {
       const d = dayLabel(e.ts); if (d !== ld) { msgs += `<div class="c-sep">${d}</div>`; ld = d; }
       const un = e.seen ? '' : 'unseen';
       if (e.type === 'missed' || e.type === 'rejected') msgs += `<div class="sys ${e.type === 'rejected' ? 'rej' : ''} ${un}">${I[e.type]} ${TYPES[e.type].label}er Anruf · ${fmtTime(e.ts)}${c && c.numbers.length > 1 ? ' · ' + numTypeOf(e) : ''}</div>`;
-      else if (e.type === 'vm') msgs += `<div class="bub vm ${un}"><div class="meta t-vm">${I.vm} Nachricht auf dem Anrufbeantworter</div>${player(e)}<div class="meta">${fmtTime(e.ts)}</div></div>`;
+      else if (e.type === 'vm') msgs += `<div class="bub vm ${un}"><div class="meta t-vm">${I.vm} Nachricht auf dem Anrufbeantworter</div>${player(e)}<div class="meta">${fmtTime(e.ts)}<span class="spacer"></span><button class="btn ghost small danger" data-act="vm-del" data-id="${e.id}">${I.trash} Löschen</button></div></div>`;
       else msgs += `<div class="bub ${e.type} ${un}"><div style="display:flex;gap:8px;align-items:center">${typeIco(e.type)}<b>${e.type === 'in' ? 'Anruf angenommen' : 'Du hast angerufen'}</b></div><div class="meta"><span class="num">${fmtDur(e.dur)}</span> · ${fmtTime(e.ts)} · ${esc(e.device)}${c && c.numbers.length > 1 ? ' · ' + numTypeOf(e) : ''}</div></div>`;
     }
     if (S.live && keyOf(S.live) === k) msgs += `<div class="bub in" style="border-color:var(--live)"><div style="display:flex;gap:8px;align-items:center"><span class="live-dot"></span><b>Gespräch läuft</b></div><div class="meta num" data-live-timer></div></div>`;
     thread = `<div class="c-head"><div class="avatar lg">${esc(initials(name))}</div><div style="flex:1;min-width:0"><h2>${esc(name)}</h2>
         <div class="small muted">${c ? c.numbers.map(n => `${n.type} <span class="num">${esc(n.n)}</span>`).join(' · ') + ` · <span class="tag">${esc(c.book)}</span>` : numLabel(k.slice(1))}</div>${c?.note ? `<div class="small">${esc(c.note)}</div>` : ''}</div>
-        ${c ? `<button class="btn" data-act="edit-contact" data-id="${c.id}">${I.edit} Bearbeiten</button><button class="icon-btn" data-act="del" data-id="${c.id}" aria-label="Löschen">${I.trash}</button>` : k.slice(1) !== ANON ? `<button class="btn primary" data-act="new-from" data-n="${esc(k.slice(1))}">${I.plus} Als Kontakt speichern</button>` : ''}</div>
+        ${callBtns(c, k.slice(1))}${c ? `<button class="btn" data-act="edit-contact" data-id="${c.id}">${I.edit} Bearbeiten</button><button class="icon-btn" data-act="del" data-id="${c.id}" aria-label="Löschen">${I.trash}</button>` : k.slice(1) !== ANON ? `<button class="btn primary" data-act="new-from" data-n="${esc(k.slice(1))}">${I.plus} Als Kontakt speichern</button>` : ''}</div>
       <div class="c-filter">${S.from || S.to ? `Gefiltert: ${rangeLabel()} <button class="btn ghost small" data-act="preset" data-v="all">Filter zurücksetzen</button>` : 'Gesamter Verlauf'}<span class="spacer"></span>${hist.length} Einträge</div>
       <div class="c-msgs" id="c-msgs">${msgs || '<div class="empty">Keine Einträge im gewählten Zeitraum.</div>'}</div>`;
   } else thread = `<div class="empty" style="margin:auto">Person links auswählen.</div>`;
@@ -758,6 +766,14 @@ document.addEventListener('click', ev => {
     case 'cancel': S.draft = null; S.modal = null; break;
     case 'del': S.confirmDel = id; S.alsoBox = false; break;
     case 'del-no': S.confirmDel = null; break;
+    case 'dial': toast(`Fritz!Box wählt ${d.n}, dein Telefon klingelt gleich`); return;
+    case 'vm-del': S.confirmVm = id; break;
+    case 'vm-del-no': S.confirmVm = null; break;
+    case 'vm-del-yes': {
+      const i = entries.findIndex(x => x.id === S.confirmVm); entries.splice(i, 1);
+      if (S.play?.id === S.confirmVm) S.play = null; if (S.selEntry === S.confirmVm) S.selEntry = null;
+      S.confirmVm = null; toast('Nachricht auf der Fritz!Box gelöscht'); break;
+    }
     case 'del-yes': {
       const i = contacts.findIndex(c => c.id === S.confirmDel); const c = contacts[i]; contacts.splice(i, 1);
       toast(`„${c.name}“ gelöscht`);
@@ -808,7 +824,7 @@ document.addEventListener('keydown', ev => {
   if (ev.target.closest('input, textarea, select, [contenteditable]')) return;
   if (ev.key === 'ArrowLeft') setVariant(VARIANTS[(VARIANTS.indexOf(S.variant) + 2) % 3]);
   if (ev.key === 'ArrowRight') setVariant(VARIANTS[(VARIANTS.indexOf(S.variant) + 1) % 3]);
-  if (ev.key === 'Escape') { S.modal = null; S.drawer = false; S.confirmDel = null; if (S.variant !== 'a') S.draft = null; render(); }
+  if (ev.key === 'Escape') { S.modal = null; S.drawer = false; S.confirmDel = null; S.confirmVm = null; if (S.variant !== 'a') S.draft = null; render(); }
 });
 function fromHash() { const v = location.hash.slice(1); setVariant(VARIANTS.includes(v) ? v : 'a'); }
 window.addEventListener('hashchange', fromHash);
