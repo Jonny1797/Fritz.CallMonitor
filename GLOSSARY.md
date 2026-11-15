@@ -23,3 +23,7 @@ _Avoid_: Box phonebook cache, Box contacts
 **Caller directory**:
 The one place that answers "who is behind this number?" for a Caller.
 _Avoid_: name resolver, lookup
+
+**Box gateway**:
+The app's one way to act on the Fritz!Box with the stored login: sync, dial, Box Telefonbuch import, Anrufbeantworter actions, credentials check.
+_Avoid_: Box session, client, closure
