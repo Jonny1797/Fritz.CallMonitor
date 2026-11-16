@@ -20,7 +20,7 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.fritz.call_types import counterparty_number, is_missed
 from fritz_callhistory.fritz.call_types import display as call_type_display
-from fritz_callhistory.gui.live_calls import LiveCall, LiveCallState
+from fritz_callhistory.gui.live_calls import LiveCall
 from fritz_callhistory.sync.caller_directory import CallerIdentity
 from fritz_callhistory.sync.normalize import format_number_display, normalize_number
 
@@ -109,13 +109,6 @@ def _call_number_sort_key(call: CallRecord) -> str:
 
 AllCallsRow = CallWithContact | LiveCall
 
-_LIVE_STATE_ORDER = {
-    LiveCallState.CONNECTED: 0,
-    LiveCallState.RINGING: 1,
-    LiveCallState.ENDED: 2,
-}
-
-
 def _all_calls_name(row: AllCallsRow) -> str:
     if isinstance(row, LiveCall):
         identity = row.identity
@@ -129,14 +122,6 @@ def _all_calls_name(row: AllCallsRow) -> str:
     )
 
 
-def _all_calls_date_raw(row: AllCallsRow) -> str:
-    return row.started_at if isinstance(row, LiveCall) else row.call_date
-
-
-def _all_calls_date(row: AllCallsRow) -> str:
-    return _format_call_date(_all_calls_date_raw(row))
-
-
 def _all_calls_direction(row: AllCallsRow) -> str:
     if isinstance(row, LiveCall):
         return row.display()
@@ -144,27 +129,14 @@ def _all_calls_direction(row: AllCallsRow) -> str:
 
 
 def _all_calls_direction_key(row: AllCallsRow) -> tuple[int, int]:
-    """Live-Anrufe sortieren vor allen Box-Codes."""
     if isinstance(row, LiveCall):
-        return (0, _LIVE_STATE_ORDER[row.state])
+        return row.direction_sort_key
     return (1, row.call_type)
 
 
-def _all_calls_duration_seconds(row: AllCallsRow) -> int | None:
-    return None if isinstance(row, LiveCall) else row.duration_seconds
-
-
-def _all_calls_duration(row: AllCallsRow) -> str:
-    return _format_duration(_all_calls_duration_seconds(row))
-
-
-def _all_calls_port_device(row: AllCallsRow) -> str:
-    if isinstance(row, LiveCall):
-        return port_device_display(None, None)
-    return port_device_display(row.device, row.port)
-
-
-def _call_columns(number: Column) -> tuple[Column, ...]:
+def _call_columns(direction: Column, number: Column) -> tuple[Column, ...]:
+    """Spalten der Anruftabellen; Datum, Dauer und Port/Gerät lesen nur Felder, die
+    CallRecord und LiveCall gemeinsam haben."""
     return (
         Column(
             "date",
@@ -173,7 +145,7 @@ def _call_columns(number: Column) -> tuple[Column, ...]:
             lambda c: c.call_date,
             _MINUTE_PRECISION_TOOLTIPS["Datum"],
         ),
-        Column("direction", "Richtung", lambda c: call_type_display(c.call_type), lambda c: c.call_type),
+        direction,
         number,
         Column(
             "duration",
@@ -218,27 +190,13 @@ PHONEBOOK_COLUMNS = (
 )
 
 CALL_COLUMNS = _call_columns(
-    Column("number", "Nummer", _call_number_display, _call_number_sort_key)
+    Column("direction", "Richtung", lambda c: call_type_display(c.call_type), lambda c: c.call_type),
+    Column("number", "Nummer", _call_number_display, _call_number_sort_key),
 )
 
-ALL_CALLS_COLUMNS = (
-    Column(
-        "date",
-        "Datum",
-        _all_calls_date,
-        _all_calls_date_raw,
-        _MINUTE_PRECISION_TOOLTIPS["Datum"],
-    ),
+ALL_CALLS_COLUMNS = _call_columns(
     Column("direction", "Richtung", _all_calls_direction, _all_calls_direction_key),
     Column("name_number", "Name/Nummer", _all_calls_name, lambda r: _all_calls_name(r).lower()),
-    Column(
-        "duration",
-        "Dauer",
-        _all_calls_duration,
-        _all_calls_duration_seconds,
-        _MINUTE_PRECISION_TOOLTIPS["Dauer"],
-    ),
-    Column("port_device", "Port/Gerät", _all_calls_port_device),
 )
 
 

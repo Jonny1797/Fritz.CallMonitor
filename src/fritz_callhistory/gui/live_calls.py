@@ -18,6 +18,13 @@ class LiveCallState(Enum):
     ENDED = "ended"
 
 
+# Reihenfolge in der Spalte "Richtung": laufende zuerst, beendete zuletzt.
+_STATE_ORDER = {
+    LiveCallState.CONNECTED: 0,
+    LiveCallState.RINGING: 1,
+    LiveCallState.ENDED: 2,
+}
+
 _RUNNING_DISPLAY = {
     LiveCallState.RINGING: "🔔 Klingelt …",
     LiveCallState.CONNECTED: "📞 Verbunden …",
@@ -38,6 +45,29 @@ class LiveCall:
         """Anzeige eines beendeten Anrufs (wie der echte Eintrag nach dem Sync): angenommene
         "Eingehend", nie angenommene "Verpasst". Der CallMonitor verfolgt nur eingehende."""
         return CallType.INCOMING if self.answered else CallType.MISSED
+
+    # Gleiche Lesefelder wie CallRecord, damit "Alle Anrufe" Datum, Dauer und
+    # Port/Gerät für beide Zeilenarten mit denselben Spalten anzeigt.
+    @property
+    def call_date(self) -> str:
+        return self.started_at
+
+    @property
+    def duration_seconds(self) -> None:
+        return None
+
+    @property
+    def port(self) -> None:
+        return None
+
+    @property
+    def device(self) -> None:
+        return None
+
+    @property
+    def direction_sort_key(self) -> tuple[int, int]:
+        """Live-Anrufe sortieren vor allen Box-Codes (die als (1, call_type) sortieren)."""
+        return (0, _STATE_ORDER[self.state])
 
     def display(self) -> str:
         """Icon und Label für die Spalte "Richtung"."""
