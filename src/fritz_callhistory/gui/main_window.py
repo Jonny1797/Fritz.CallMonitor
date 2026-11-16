@@ -547,7 +547,10 @@ class MainWindow(QMainWindow):
             "Bitte Zugangsdaten prüfen.",
         )
         dialog = CredentialsDialog(
-            config_module.load(), test_connection_fn=self._test_credentials_fn, parent=self
+            config_module.load(),
+            self.background_tasks,
+            test_connection_fn=self._test_credentials_fn,
+            parent=self,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_config = dialog.save(config_module.load())
@@ -562,7 +565,10 @@ class MainWindow(QMainWindow):
 
     def _open_credentials_dialog(self) -> None:
         dialog = CredentialsDialog(
-            config_module.load(), test_connection_fn=self._test_credentials_fn, parent=self
+            config_module.load(),
+            self.background_tasks,
+            test_connection_fn=self._test_credentials_fn,
+            parent=self,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_config = dialog.save(config_module.load())

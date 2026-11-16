@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication, QDialog
 
 from fritz_callhistory import config as config_module
@@ -21,6 +21,7 @@ from fritz_callhistory.db.repository import (
     VoicemailRepository,
 )
 from fritz_callhistory.fritz.client import FritzBoxClient
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 from fritz_callhistory.gui.icon import app_icon
 from fritz_callhistory.gui.main_window import MainWindow
@@ -348,6 +349,22 @@ def _handle_sigint(*_args) -> None:
     os._exit(130)  # 128 + SIGINT, übliche Exitcode-Konvention
 
 
+def _run_first_start_dialog(cfg, test_credentials_fn: TestCredentialsFn):
+    """Zugangsdaten-Dialog vor dem Hauptfenster, mit eigener kurzlebiger BackgroundTasks-Instanz."""
+    tasks = BackgroundTasks()
+    dialog = CredentialsDialog(cfg, tasks, test_connection_fn=test_credentials_fn)
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+        cfg = dialog.save(cfg)
+    if not tasks.is_idle():
+        # Abbruch während der Prüfung: den laufenden Thread zu Ende laufen lassen,
+        # bevor die Instanz verworfen wird (sonst "QThread destroyed while running").
+        loop = QEventLoop()
+        tasks.all_finished.connect(loop.quit)
+        tasks.begin_quit()
+        loop.exec()
+    return cfg
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setWindowIcon(app_icon())
@@ -361,9 +378,7 @@ def main() -> int:
     test_credentials_fn = _build_test_credentials_fn()
 
     if not cfg.username or not credentials.get_password(cfg.username):
-        dialog = CredentialsDialog(cfg, test_connection_fn=test_credentials_fn)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            cfg = dialog.save(cfg)
+        cfg = _run_first_start_dialog(cfg, test_credentials_fn)
 
     credentials_ref = _CredentialsRef(cfg)
 

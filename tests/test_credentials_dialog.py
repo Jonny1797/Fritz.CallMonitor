@@ -1,5 +1,6 @@
-from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QDialog, QLineEdit
+import threading
+
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLineEdit
 
 from fritz_callhistory.config import Config
 from fritz_callhistory.fritz.exceptions import (
@@ -7,6 +8,7 @@ from fritz_callhistory.fritz.exceptions import (
     FritzBoxConnectionError,
     FritzBoxPermissionError,
 )
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 
 
@@ -15,7 +17,7 @@ def test_save_persists_config_and_password(qtbot, mocker):
     mock_set_password = mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.set_password")
     mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.get_password", return_value=None)
 
-    dialog = CredentialsDialog(Config())
+    dialog = CredentialsDialog(Config(), BackgroundTasks())
     qtbot.addWidget(dialog)
     dialog._address_edit.setText("192.168.178.1")
     dialog._username_edit.setText("admin")
@@ -37,7 +39,7 @@ def test_save_without_password_input_keeps_stored_password(qtbot, mocker):
     mock_set_password = mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.set_password")
     mocker.patch("fritz_callhistory.gui.credentials_dialog.config_module.save")
 
-    dialog = CredentialsDialog(Config(username="admin"))
+    dialog = CredentialsDialog(Config(username="admin"), BackgroundTasks())
     qtbot.addWidget(dialog)
     # Passwortfeld bleibt bewusst leer
 
@@ -49,7 +51,7 @@ def test_save_without_password_input_keeps_stored_password(qtbot, mocker):
 def test_show_password_checkbox_toggles_echo_mode(qtbot, mocker):
     mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.get_password", return_value=None)
 
-    dialog = CredentialsDialog(Config())
+    dialog = CredentialsDialog(Config(), BackgroundTasks())
     qtbot.addWidget(dialog)
 
     assert dialog._password_edit.echoMode() == QLineEdit.EchoMode.Password
@@ -64,7 +66,7 @@ def test_show_password_checkbox_toggles_echo_mode(qtbot, mocker):
 def test_accept_without_test_connection_fn_accepts_immediately(qtbot, mocker):
     mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.get_password", return_value=None)
 
-    dialog = CredentialsDialog(Config())
+    dialog = CredentialsDialog(Config(), BackgroundTasks())
     qtbot.addWidget(dialog)
 
     dialog._on_accept_clicked()
@@ -76,7 +78,7 @@ def test_accept_runs_connection_test_and_accepts_on_success(qtbot, mocker):
     mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.get_password", return_value=None)
     test_fn = mocker.Mock(return_value=None)
 
-    dialog = CredentialsDialog(Config(), test_connection_fn=test_fn)
+    dialog = CredentialsDialog(Config(), BackgroundTasks(), test_connection_fn=test_fn)
     qtbot.addWidget(dialog)
     dialog._address_edit.setText("192.168.178.1")
     dialog._username_edit.setText("admin")
@@ -95,7 +97,7 @@ def test_accept_stays_open_and_shows_error_on_auth_failure(qtbot, mocker):
     def failing_test_fn(address, username, password):
         raise FritzBoxAuthError("401 Unauthorized")
 
-    dialog = CredentialsDialog(Config(), test_connection_fn=failing_test_fn)
+    dialog = CredentialsDialog(Config(), BackgroundTasks(), test_connection_fn=failing_test_fn)
     qtbot.addWidget(dialog)
     dialog._address_edit.setText("192.168.178.1")
     dialog._username_edit.setText("admin")
@@ -116,7 +118,7 @@ def test_accept_stays_open_and_shows_error_on_connection_failure(qtbot, mocker):
     def failing_test_fn(address, username, password):
         raise FritzBoxConnectionError("Box nicht erreichbar")
 
-    dialog = CredentialsDialog(Config(), test_connection_fn=failing_test_fn)
+    dialog = CredentialsDialog(Config(), BackgroundTasks(), test_connection_fn=failing_test_fn)
     qtbot.addWidget(dialog)
     dialog._address_edit.setText("192.168.178.1")
     dialog._username_edit.setText("admin")
@@ -141,7 +143,7 @@ def test_accept_stays_open_and_shows_error_on_permission_denied(qtbot, mocker):
     def test_fn(address, username, password):
         raise FritzBoxPermissionError("fehlendes Recht")
 
-    dialog = CredentialsDialog(Config(), test_connection_fn=test_fn)
+    dialog = CredentialsDialog(Config(), BackgroundTasks(), test_connection_fn=test_fn)
     qtbot.addWidget(dialog)
     dialog._address_edit.setText("192.168.178.1")
     dialog._username_edit.setText("admin")
@@ -158,7 +160,7 @@ def test_accept_with_empty_fields_shows_error_without_calling_test_fn(qtbot, moc
     mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.get_password", return_value=None)
     test_fn = mocker.Mock()
 
-    dialog = CredentialsDialog(Config(), test_connection_fn=test_fn)
+    dialog = CredentialsDialog(Config(), BackgroundTasks(), test_connection_fn=test_fn)
     qtbot.addWidget(dialog)
     dialog._address_edit.setText("")
     dialog._username_edit.setText("")
@@ -176,7 +178,7 @@ def test_accept_falls_back_to_stored_password_when_field_left_blank(qtbot, mocke
     )
     test_fn = mocker.Mock(return_value=None)
 
-    dialog = CredentialsDialog(Config(username="admin"), test_connection_fn=test_fn)
+    dialog = CredentialsDialog(Config(username="admin"), BackgroundTasks(), test_connection_fn=test_fn)
     qtbot.addWidget(dialog)
     dialog._address_edit.setText("192.168.178.1")
     # Passwortfeld bleibt bewusst leer
@@ -187,14 +189,34 @@ def test_accept_falls_back_to_stored_password_when_field_left_blank(qtbot, mocke
     test_fn.assert_called_once_with("192.168.178.1", "admin", "already-stored")
 
 
-def test_close_event_ignored_while_connection_test_is_running(qtbot, mocker):
+def test_cancel_stays_usable_while_check_runs_and_late_result_is_dropped(qtbot, mocker):
     mocker.patch("fritz_callhistory.gui.credentials_dialog.credentials.get_password", return_value=None)
+    release = threading.Event()
 
-    dialog = CredentialsDialog(Config(), test_connection_fn=mocker.Mock())
+    def slow_failing_fn(address, username, password):
+        release.wait(5)
+        raise FritzBoxAuthError("401")
+
+    tasks = BackgroundTasks()
+    dialog = CredentialsDialog(Config(), tasks, test_connection_fn=slow_failing_fn)
     qtbot.addWidget(dialog)
-    dialog._set_busy(True)
+    dialog._address_edit.setText("192.168.178.1")
+    dialog._username_edit.setText("admin")
+    dialog._password_edit.setText("secret")
+    dialog.show()
 
-    event = QCloseEvent()
-    dialog.closeEvent(event)
+    dialog._on_accept_clicked()
+    assert tasks.is_running("credentials-test")
+    assert not dialog._address_edit.isEnabled()
+    assert not dialog._buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled()
+    cancel = dialog._buttons.button(QDialogButtonBox.StandardButton.Cancel)
+    assert cancel.isEnabled()
 
-    assert not event.isAccepted()
+    cancel.click()
+    assert dialog.result() == QDialog.DialogCode.Rejected
+
+    with qtbot.waitSignal(tasks.all_finished, timeout=3000):
+        release.set()
+
+    assert dialog.result() == QDialog.DialogCode.Rejected
+    assert "Anmeldung fehlgeschlagen" not in dialog._status_label.text()
