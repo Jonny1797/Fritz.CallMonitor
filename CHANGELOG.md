@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A live call that ended without ever being answered now shows as "Verpasst" (highlighted
+  like a new missed call) instead of "Eingehend" until the next sync.
 - Credentials entered after cancelling the startup dialog now enable sync, dialing, Box
   import and Anrufbeantworter actions without a restart.
 - Searching by number now also finds calls that are ringing or in progress (same
@@ -23,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Sorting now follows what a column shows: Telefonbuch → Nummern sorts by the first
+  displayed number (normalized), Alle Anrufe → Name/Nummer and Kontakte → Name sort by
+  the displayed label, case-insensitive (anonymous rows sort under "Anonym /
+  unterdrückt" instead of jumping to the top), and the contact detail → Nummer column
+  sorts by the normalized number.
+- Duplicate numbers in imported Telefonbuch contacts (e.g. a vCard listing the same TEL
+  twice) are no longer stored twice, and Telefonbuch imports (file and Box) are now
+  all-or-nothing: if one fails halfway, nothing from it is stored.
+- A file import now skips a contact as a duplicate whenever any Telefonbuch contact has
+  exactly the same numbers. Before, it was imported anyway if two or more contacts had
+  that number set.
 - The Anrufbeantworter shows names from the local Telefonbuch, the same as the
   call list.
 - Caller names are now resolved in one place (the Caller directory): the

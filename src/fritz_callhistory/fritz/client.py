@@ -11,7 +11,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TypeVar
 
 import requests
@@ -21,6 +21,7 @@ from fritzconnection.core.utils import get_xml_root
 from fritzconnection.lib.fritzcall import Call, FritzCall
 from fritzconnection.lib.fritzphonebook import FritzPhonebook
 
+from fritz_callhistory.fritz.call_types import counterparty_number
 from fritz_callhistory.fritz.exceptions import (
     FritzBoxAuthError,
     FritzBoxConnectionError,
@@ -139,6 +140,55 @@ class VoicemailMessage:
     is_new: bool
 
 
+@dataclass
+class FritzCallListEntry:
+    """Ein Eintrag der Box-Anrufliste, übersetzt aus fritzconnection's Call."""
+
+    box_call_id: int | None
+    call_type: int  # roher Box-Code, siehe fritz/call_types.py
+    caller_number: str | None
+    called_number: str | None
+    port: str | None
+    device: str | None  # None, wenn die Box "-1" (kein Gerät) oder nichts sendet
+    call_date: str  # ISO8601
+    duration_seconds: int | None
+    name: str | None
+
+    @property
+    def counterparty_number(self) -> str | None:
+        return counterparty_number(self.call_type, self.caller_number, self.called_number)
+
+
+def _call_duration_seconds(call: Call) -> int | None:
+    duration = call.duration
+    if isinstance(duration, timedelta):
+        return int(duration.total_seconds())
+    return None
+
+
+def _call_date_iso(call: Call) -> str:
+    date = call.date
+    if isinstance(date, datetime):
+        return date.isoformat()
+    return str(call.Date)
+
+
+def _to_call_list_entry(call: Call) -> FritzCallListEntry:
+    return FritzCallListEntry(
+        box_call_id=call.id,
+        call_type=call.type,
+        caller_number=call.CallerNumber or call.Caller,
+        called_number=call.CalledNumber or call.Called,
+        port=call.Port,
+        # Die Box sendet "-1" im <Device>-Feld, wenn kein Gerät zutrifft
+        # (z.B. abgelehnte/nicht angenommene Anrufe) - als None übernehmen.
+        device=call.Device if call.Device not in (None, "-1") else None,
+        call_date=_call_date_iso(call),
+        duration_seconds=_call_duration_seconds(call),
+        name=call.Name,
+    )
+
+
 def _parse_duration_seconds(duration: str | None) -> int | None:
     """Box liefert die Nachrichtendauer bereits als "M:SS"-String (verifiziert gegen
     eine echte Box) - anders als bei regulären Anrufen ("H:MM", siehe fritzconnection's
@@ -238,8 +288,11 @@ class FritzBoxClient:
         )
 
     @_translate_errors(_VOICEMAIL_PERMISSION_MESSAGE)
-    def get_calls(self, *, num: int | None = None, days: int | None = None) -> list[Call]:
-        return _retry_network(self._call.get_calls, num=num, days=days)
+    def get_calls(
+        self, *, num: int | None = None, days: int | None = None
+    ) -> list[FritzCallListEntry]:
+        calls = _retry_network(self._call.get_calls, num=num, days=days)
+        return [_to_call_list_entry(call) for call in calls]
 
     @_translate_errors("Fehlendes Fritz!Box-Benutzerrecht für die Wählhilfe (X_AVM-DE_DialNumber)")
     def dial_number(self, number: str) -> None:

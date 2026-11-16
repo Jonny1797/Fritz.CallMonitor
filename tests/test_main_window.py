@@ -1400,3 +1400,15 @@ def test_unchanged_interval_keeps_auto_sync_countdown(qtbot, connection, mocker)
 
     start_spy.assert_not_called()
     assert window._auto_sync_timer.isActive()
+
+
+def test_focus_search_shortcut_on_voicemail_tab_does_nothing_and_does_not_raise(qtbot, connection):
+    window = _make_window(connection)
+    qtbot.addWidget(window)
+    _activate(qtbot, window)
+    window._tabs.setCurrentWidget(window._voicemail_view)
+
+    window._focus_search_shortcut.activated.emit()
+    window._focus_search_shortcut_ctrl_f.activated.emit()
+
+    assert not window._calls_tab.all_calls_view._search_edit.hasFocus()

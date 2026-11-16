@@ -15,7 +15,6 @@ import sqlite3
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QHeaderView,
     QLineEdit,
     QSplitter,
     QTableView,
@@ -26,18 +25,16 @@ from PySide6.QtWidgets import (
 from fritz_callhistory.db.repository import ContactRepository
 from fritz_callhistory.gui.contact_detail import ContactDetailWidget
 from fritz_callhistory.gui.models import (
+    CONTACT_COLUMNS,
+    configure_table,
     ContactListModel,
-    DataclassSortProxy,
+    ColumnSortProxy,
     focus_search_edit,
     install_call_context_menu,
     install_debounced_search,
-    install_tristate_sorting,
     selected_source_row,
     set_search_text_silently,
 )
-
-_CONTACT_NAME_COLUMN = 0
-
 
 class GroupedContactsView(QWidget):
     call_requested = Signal(str)
@@ -54,25 +51,16 @@ class GroupedContactsView(QWidget):
         self._search_timer = install_debounced_search(self._search_edit, self.reload_contacts)
         self._search_edit.textChanged.connect(self.search_changed.emit)
 
-        self._contact_proxy = DataclassSortProxy(
+        self._contact_proxy = ColumnSortProxy(
             row_getter=self._contact_model.contact_at,
-            key_fns={
-                0: lambda c: (c.display_name or "").lower(),
-                1: lambda c: c.last_call_date,
-                2: lambda c: c.call_count,
-            },
+            columns=CONTACT_COLUMNS,
         )
         self._contact_proxy.setSourceModel(self._contact_model)
 
         self._table = QTableView()
-        self._table.setModel(self._contact_proxy)
-        self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
+        configure_table(self._table, self._contact_proxy)
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self._table.doubleClicked.connect(self._on_contact_table_double_clicked)
-        install_tristate_sorting(self._table, self._contact_proxy)
         install_call_context_menu(
             self._table, self._contact_proxy, self._contact_number_for_row, self.call_requested.emit
         )
@@ -133,7 +121,7 @@ class GroupedContactsView(QWidget):
             self._table.selectRow(proxy_row)
 
     def _on_contact_table_double_clicked(self, index) -> None:
-        if index.column() != _CONTACT_NAME_COLUMN:
+        if self._contact_model.column_id(index.column()) != "name":
             return
         source_row = self._contact_proxy.mapToSource(index).row()
         contact = self._contact_model.contact_at(source_row)

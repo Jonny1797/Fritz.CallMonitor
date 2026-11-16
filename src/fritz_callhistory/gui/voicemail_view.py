@@ -12,7 +12,6 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -32,9 +31,9 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.gui.models import (
-    DataclassSortProxy,
+    configure_table,
+    ColumnSortProxy,
     VoicemailListModel,
-    install_tristate_sorting,
 )
 
 _AUDIO_KEY = "voicemail-audio"
@@ -93,26 +92,16 @@ class VoicemailView(QWidget):
         self._player.playbackStateChanged.connect(self._on_playback_state_changed)
 
         self._model = VoicemailListModel()
-        self._proxy = DataclassSortProxy(
+        self._proxy = ColumnSortProxy(
             row_getter=self._model.message_at,
-            key_fns={
-                0: lambda m: m.message_date,
-                1: lambda m: self._model.caller_label(m).lower(),
-                2: lambda m: m.duration_seconds,
-            },
+            columns=self._model.columns,
         )
         self._proxy.setSourceModel(self._model)
 
         self._table = QTableView()
-        self._table.setModel(self._proxy)
-        self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        configure_table(self._table, self._proxy)
         self._table.doubleClicked.connect(self._on_row_double_clicked)
         self._table.selectionModel().selectionChanged.connect(self._update_action_buttons)
-        install_tristate_sorting(self._table, self._proxy)
 
         self._play_button = QPushButton("Abspielen")
         self._play_button.setEnabled(False)
@@ -178,9 +167,6 @@ class VoicemailView(QWidget):
         if not rows:
             return None
         return self._model.message_at(self._proxy.mapToSource(rows[0]).row())
-
-    def focus_search(self) -> None:
-        pass  # kein Suchfeld in diesem Tab - Stub für die einheitliche MainWindow-Dispatch-Schnittstelle
 
     def dial_selected(self) -> None:
         self._on_call_button_clicked()

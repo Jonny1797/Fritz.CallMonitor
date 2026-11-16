@@ -10,15 +10,24 @@ from fritz_callhistory.db.repository import (
     PhonebookNumber,
     VoicemailMessageRecord,
 )
+from fritz_callhistory.gui.live_calls import LiveCall, LiveCallState
+from fritz_callhistory.sync.caller_directory import CallerIdentity
+from fritz_callhistory.sync.normalize import format_number_display
 from fritz_callhistory.gui.models import (
     AllCallsListModel,
     CallListModel,
     ContactListModel,
-    DataclassSortProxy,
+    ALL_CALLS_COLUMNS,
+    CALL_COLUMNS,
+    CONTACT_COLUMNS,
+    PHONEBOOK_COLUMNS,
+    ColumnSortProxy,
     PhonebookContactListModel,
     VoicemailListModel,
     _format_call_date,
     default_or_first_number,
+    voicemail_columns,
+    voicemail_caller_display,
     install_call_context_menu,
     install_phonebook_call_context_menu,
     install_tristate_sorting,
@@ -290,7 +299,7 @@ def test_dataclass_sort_proxy_sorts_duration_numerically_not_lexicographically(q
     long_call = _call_record(call_type=1)
     long_call.duration_seconds = 605
     model = CallListModel([long_call, short_call])
-    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={3: lambda c: c.duration_seconds})
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
 
     proxy.sort(3, Qt.SortOrder.AscendingOrder)
@@ -305,7 +314,7 @@ def test_dataclass_sort_proxy_none_keys_sort_first(qtbot):
     without_duration = _call_record(call_type=2)
     without_duration.duration_seconds = None
     model = CallListModel([with_duration, without_duration])
-    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={3: lambda c: c.duration_seconds})
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
 
     proxy.sort(3, Qt.SortOrder.AscendingOrder)
@@ -319,7 +328,7 @@ def test_install_tristate_sorting_cycles_ascending_descending_unsorted(qtbot):
     second = _call_record(call_type=1)
     second.call_date = "2026-06-02T10:00:00"
     model = CallListModel([first, second])
-    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={0: lambda c: c.call_date})
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
     table = QTableView()
     table.setModel(proxy)
@@ -403,9 +412,9 @@ def _capture_fake_menus(mocker) -> list[_FakeMenu]:
     return created
 
 
-def _table_with_one_row(qtbot) -> tuple[QTableView, DataclassSortProxy]:
+def _table_with_one_row(qtbot) -> tuple[QTableView, ColumnSortProxy]:
     model = CallListModel([_call_record(call_type=1)])
-    proxy = DataclassSortProxy(row_getter=model.call_at, key_fns={})
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
     table = QTableView()
     table.setModel(proxy)
@@ -442,9 +451,9 @@ def test_install_call_context_menu_shows_no_menu_when_number_missing(qtbot, mock
 
 def _phonebook_table_with_contacts(
     qtbot, contacts: list[LocalPhonebookContact]
-) -> tuple[QTableView, DataclassSortProxy]:
+) -> tuple[QTableView, ColumnSortProxy]:
     model = PhonebookContactListModel(contacts)
-    proxy = DataclassSortProxy(row_getter=model.contact_at, key_fns={})
+    proxy = ColumnSortProxy(row_getter=model.contact_at, columns=PHONEBOOK_COLUMNS)
     proxy.setSourceModel(model)
     table = QTableView()
     table.setModel(proxy)
@@ -708,3 +717,204 @@ def test_default_or_first_number_prefers_the_default_number():
     assert default_or_first_number(contact) == "+492222222"
 
 
+
+
+# --- Column-Spezifikationen -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("columns", "headers"),
+    [
+        (CONTACT_COLUMNS, ["Name", "Letzter Kontakt", "Anrufe"]),
+        (PHONEBOOK_COLUMNS, ["Name", "Nummern", "Notizen"]),
+        (CALL_COLUMNS, ["Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät"]),
+        (ALL_CALLS_COLUMNS, ["Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät"]),
+        (voicemail_columns(voicemail_caller_display), ["Datum", "Anrufer", "Dauer"]),
+    ],
+)
+def test_column_spec_has_headers_unique_ids_and_display_functions(columns, headers):
+    assert [c.header for c in columns] == headers
+    assert len({c.id for c in columns}) == len(columns)
+    assert all(callable(c.display) for c in columns)
+
+
+def _sorted_texts(model, row_getter, columns, column: int) -> list[str]:
+    proxy = ColumnSortProxy(row_getter=row_getter, columns=columns)
+    proxy.setSourceModel(model)
+    proxy.sort(column, Qt.SortOrder.AscendingOrder)
+    return [proxy.data(proxy.index(r, column)) for r in range(proxy.rowCount())]
+
+
+def _contact(name, anonymous=False) -> Contact:
+    return Contact(
+        id=1,
+        primary_number="anonymous" if anonymous else "+491",
+        display_name=name,
+        is_anonymous=anonymous,
+        last_call_date=None,
+        call_count=1,
+    )
+
+
+def test_contacts_sort_anonymous_under_displayed_label_not_first(qtbot):
+    # Alter Schlüssel (leerer Name) hätte "Anonym / unterdrückt" vor "Alpha" gestellt.
+    model = ContactListModel(
+        [_contact("Zoe"), _contact(None, anonymous=True), _contact("Bert"), _contact("Alpha")]
+    )
+
+    texts = _sorted_texts(model, model.contact_at, CONTACT_COLUMNS, 0)
+
+    assert texts == ["Alpha", "Anonym / unterdrückt", "Bert", "Zoe"]
+
+
+def test_contacts_name_sort_is_case_insensitive(qtbot):
+    model = ContactListModel([_contact("bert"), _contact("Anna"), _contact("Carl")])
+
+    assert _sorted_texts(model, model.contact_at, CONTACT_COLUMNS, 0) == ["Anna", "bert", "Carl"]
+
+
+def _pb_contact(name, *numbers) -> LocalPhonebookContact:
+    return LocalPhonebookContact(
+        id=1,
+        display_name=name,
+        notes=None,
+        box_uniqueid=None,
+        numbers=[
+            PhonebookNumber(
+                id=i, number_raw=raw, number_normalized=norm, number_type="home", is_default=False
+            )
+            for i, (raw, norm) in enumerate(numbers)
+        ],
+    )
+
+
+def test_phonebook_numbers_column_sorts_by_first_normalized_number(qtbot):
+    # Roh sortiert "+49 89 111" vor "030 222" ("+" < "0"); normalisiert ist es umgekehrt.
+    later = _pb_contact("A", ("+49 89 111", "+4989111"))
+    earlier = _pb_contact("B", ("030 222", "+4930222"))
+    model = PhonebookContactListModel([later, earlier])
+
+    texts = _sorted_texts(model, model.contact_at, PHONEBOOK_COLUMNS, 1)
+
+    assert texts[0].startswith("+49 30 222")
+    assert texts[1].startswith("+49 89 111")
+
+
+def test_all_calls_name_number_sorts_by_displayed_label_case_insensitive(qtbot):
+    named = _call_with_contact(1)
+    named.contact_display_name = "zeta"
+    anonymous = _call_with_contact(1)
+    anonymous.contact_is_anonymous = True
+    other = _call_with_contact(1)
+    other.contact_display_name = "Alpha"
+    # Der anonyme Kontakt trägt noch den Namen "Max Mustermann": der alte Schlüssel
+    # (gespeicherter Name) hätte ihn hinter "Bert" sortiert.
+    bert = _call_with_contact(1)
+    bert.contact_display_name = "Bert"
+    model = AllCallsListModel([named, anonymous, other, bert])
+
+    texts = _sorted_texts(model, model.call_at, ALL_CALLS_COLUMNS, 2)
+
+    assert texts == ["Alpha", "Anonym / unterdrückt", "Bert", "zeta"]
+
+
+def test_all_calls_name_number_without_name_sorts_by_formatted_number(qtbot):
+    unnamed = _call_with_contact(1)
+    unnamed.contact_display_name = None
+    unnamed.contact_primary_number = "+4930222"
+    named = _call_with_contact(1)
+    named.contact_display_name = "Zeta"
+    model = AllCallsListModel([named, unnamed])
+
+    texts = _sorted_texts(model, model.call_at, ALL_CALLS_COLUMNS, 2)
+
+    assert texts == ["+49 30 222", "Zeta"]
+
+
+def test_detail_number_column_sorts_by_normalized_number(qtbot):
+    # Roh sortiert "0 30 99" (Leerzeichen) vor "03088"; normalisiert ist +493088 kleiner.
+    spaced = _call_record(call_type=1)
+    spaced.caller_number = "0 30 99"
+    plain = _call_record(call_type=1)
+    plain.caller_number = "03088"
+    model = CallListModel([spaced, plain])
+
+    texts = _sorted_texts(model, model.call_at, CALL_COLUMNS, 2)
+
+    assert texts == [format_number_display("03088"), format_number_display("0 30 99")]
+
+
+def test_duration_ten_minutes_sorts_after_nine_minutes(qtbot):
+    nine = _call_record(call_type=1)
+    nine.duration_seconds = 9 * 60
+    ten = _call_record(call_type=1)
+    ten.duration_seconds = 10 * 60
+    model = CallListModel([ten, nine])
+
+    assert _sorted_texts(model, model.call_at, CALL_COLUMNS, 3) == ["9:00", "10:00"]
+
+
+def test_contact_call_count_sorts_numerically(qtbot):
+    many = _contact("A")
+    many.call_count = 10
+    few = _contact("B")
+    few.call_count = 9
+    model = ContactListModel([many, few])
+
+    assert _sorted_texts(model, model.contact_at, CONTACT_COLUMNS, 2) == ["9", "10"]
+
+
+def test_header_tooltips_come_from_the_column_spec(qtbot):
+    model = CallListModel()
+    tooltip = model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole)
+
+    assert "Minutengenauigkeit" in tooltip
+    assert model.headerData(2, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole) is None
+
+
+def test_voicemail_new_messages_are_bold_and_red_old_ones_are_not(qtbot):
+    model = VoicemailListModel(
+        [_voicemail_message(is_new=True), _voicemail_message(is_new=False)]
+    )
+
+    assert model.data(model.index(0, 0), Qt.ItemDataRole.FontRole).bold()
+    assert model.data(model.index(0, 0), Qt.ItemDataRole.ForegroundRole) is not None
+    assert model.data(model.index(1, 0), Qt.ItemDataRole.FontRole) is None
+    assert model.data(model.index(1, 0), Qt.ItemDataRole.ForegroundRole) is None
+
+
+def _live_call(state, answered=False):
+    identity = CallerIdentity("+49301234567", False, None, None, None)
+    return LiveCall("030 1234567", "069987654", identity, "2026-06-05T09:00:00", state, answered)
+
+
+@pytest.mark.parametrize("column", range(5))
+def test_all_calls_mixed_stored_and_live_rows_sort_by_every_column(qtbot, column):
+    rows = [
+        _call_with_contact(2),
+        _live_call(LiveCallState.RINGING),
+        _call_with_contact(1),
+        _live_call(LiveCallState.ENDED),
+    ]
+    model = AllCallsListModel(rows)
+    proxy = ColumnSortProxy(model.call_at, ALL_CALLS_COLUMNS)
+    proxy.setSourceModel(model)
+
+    for order in (Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder):
+        proxy.sort(column, order)
+        assert proxy.rowCount() == 4
+
+
+def test_all_calls_direction_column_sorts_live_calls_before_box_codes(qtbot):
+    rows = [
+        _call_with_contact(1),
+        _live_call(LiveCallState.RINGING),
+        _call_with_contact(10),
+        _live_call(LiveCallState.CONNECTED, answered=True),
+    ]
+    model = AllCallsListModel(rows)
+
+    texts = _sorted_texts(model, model.call_at, ALL_CALLS_COLUMNS, 1)
+
+    assert [t.split(" ", 1)[1] for t in texts[:2]] == ["Verbunden …", "Klingelt …"]
+    assert texts[2:] == ["↘ Eingehend", "⊘ Abgelehnt"]

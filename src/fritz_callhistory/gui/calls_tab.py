@@ -13,6 +13,7 @@ from datetime import date, datetime
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QStackedWidget, QStyle, QVBoxLayout, QWidget
 
+from fritz_callhistory.gui.models import focus_search_if_supported
 from fritz_callhistory.gui.all_calls_view import AllCallsView
 from fritz_callhistory.gui.contacts_view import GroupedContactsView
 
@@ -108,7 +109,7 @@ class CallsTab(QWidget):
             self.all_calls_view.reload()
 
     def focus_search(self) -> None:
-        self._stack.currentWidget().focus_search()
+        focus_search_if_supported(self._stack.currentWidget())
 
     def dial_selected(self) -> None:
         self._stack.currentWidget().dial_selected()

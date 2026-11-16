@@ -325,7 +325,7 @@ def test_adding_local_contact_renames_matching_call_history_contact(qtbot, conne
     window = MainWindow(connection, Config(address=""), FakeGateway(has_credentials=False))
     qtbot.addWidget(window)
 
-    window._phonebook_tab._repo.create(
+    LocalPhonebookRepository(connection).create(
         display_name="Neu Erkannt",
         notes=None,
         numbers=[("0171 2345678", "+491234567", "mobile", False)],

@@ -84,12 +84,68 @@ def test_get_calls_translates_connection_error_after_retry(mocker):
     assert fake_call.get_calls.call_count == 2
 
 
-def test_get_calls_returns_result_on_success(mocker):
-    fake_call = mocker.Mock()
-    fake_call.get_calls.return_value = ["call-1"]
-    client = _make_client(call=fake_call)
+def _fc_call(**fields):
+    from fritzconnection.lib.fritzcall import Call
 
-    assert client.get_calls() == ["call-1"]
+    call = Call()
+    defaults = {
+        "Id": "7",
+        "Type": "1",
+        "Caller": "030 111",
+        "Called": "030 222",
+        "Port": "1",
+        "Device": "Fritz!Fon",
+        "Date": "01.06.26 10:05",
+        "Duration": "0:07",
+        "Name": "Max",
+    }
+    for key, value in {**defaults, **fields}.items():
+        setattr(call, key, value)
+    return call
+
+
+def _get_entries(mocker, *calls):
+    fake_call = mocker.Mock()
+    fake_call.get_calls.return_value = list(calls)
+    return _make_client(call=fake_call).get_calls()
+
+
+def test_get_calls_translates_to_call_list_entries(mocker):
+    (entry,) = _get_entries(mocker, _fc_call())
+
+    assert entry.box_call_id == 7
+    assert entry.call_type == 1
+    assert entry.port == "1"
+    assert entry.device == "Fritz!Fon"
+    assert entry.call_date == "2026-06-01T10:05:00"
+    assert entry.duration_seconds == 7 * 60  # Box-Dauer "0:07" = 0 Stunden 7 Minuten
+    assert entry.name == "Max"
+
+
+def test_get_calls_device_placeholder_becomes_none(mocker):
+    (entry,) = _get_entries(mocker, _fc_call(Device="-1"))
+    assert entry.device is None
+
+
+def test_get_calls_empty_duration_is_none(mocker):
+    (entry,) = _get_entries(mocker, _fc_call(Duration=""))
+    assert entry.duration_seconds is None
+
+
+def test_get_calls_prefers_number_fields_and_falls_back(mocker):
+    with_numbers, without = _get_entries(
+        mocker,
+        _fc_call(CallerNumber="0301", CalledNumber="0302"),
+        _fc_call(CallerNumber=None, CalledNumber=None),
+    )
+    assert (with_numbers.caller_number, with_numbers.called_number) == ("0301", "0302")
+    assert (without.caller_number, without.called_number) == ("030 111", "030 222")
+
+
+def test_get_calls_counterparty_number_per_direction(mocker):
+    incoming, outgoing = _get_entries(mocker, _fc_call(Type="1"), _fc_call(Type="3"))
+    assert incoming.counterparty_number == "030 111"
+    assert outgoing.counterparty_number == "030 222"
 
 
 def test_dial_number_passes_number_through_on_success(mocker):

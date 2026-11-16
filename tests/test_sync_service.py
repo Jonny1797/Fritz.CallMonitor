@@ -1,7 +1,5 @@
 import sqlite3
 
-from fritzconnection.lib.fritzcall import Call
-
 from fritz_callhistory.db.repository import (
     CallRepository,
     ContactRepository,
@@ -10,7 +8,7 @@ from fritz_callhistory.db.repository import (
     VoicemailRepository,
 )
 from fritz_callhistory.db.schema import migrate
-from fritz_callhistory.fritz.client import VoicemailMessage
+from fritz_callhistory.fritz.client import FritzCallListEntry, VoicemailMessage
 from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.sync.service import SyncService
 
@@ -33,24 +31,22 @@ def _make_call(
     call_type: int,
     caller_number: str | None = None,
     called_number: str | None = None,
-    date: str = "01.06.26 10:00",
-    duration: str = "0:05",
+    date: str = "2026-06-01T10:00:00",
+    duration: int | None = 5,
     name: str | None = None,
     call_id: int | None = None,
-) -> Call:
-    call = Call()
-    call.Id = call_id
-    call.Type = call_type
-    call.CallerNumber = caller_number
-    call.CalledNumber = called_number
-    call.Caller = caller_number
-    call.Called = called_number
-    call.Date = date
-    call.Duration = duration
-    call.Name = name
-    call.Port = "1"
-    call.Device = "Fritz!Fon"
-    return call
+) -> FritzCallListEntry:
+    return FritzCallListEntry(
+        box_call_id=call_id,
+        call_type=call_type,
+        caller_number=caller_number,
+        called_number=called_number,
+        port="1",
+        device="Fritz!Fon",
+        call_date=date,
+        duration_seconds=duration,
+        name=name,
+    )
 
 
 def _service(connection, calls=None, phonebooks=None, voicemail_messages=None):
@@ -114,7 +110,7 @@ def test_sync_incoming_call_groups_by_caller_number(connection):
 
 
 def test_sync_missed_call_without_duration(connection):
-    call = _make_call(call_type=2, caller_number="030 1234567", duration="")
+    call = _make_call(call_type=2, caller_number="030 1234567", duration=None)
     service = _service(connection, [call])
 
     service.sync_calls()
@@ -154,9 +150,9 @@ def test_sync_calls_commits_once_for_the_whole_batch():
     migrate(connection)
     try:
         calls = [
-            _make_call(call_type=1, caller_number="030 1234567", date="01.06.26 10:00", call_id=1),
-            _make_call(call_type=1, caller_number="030 7654321", date="01.06.26 10:05", call_id=2),
-            _make_call(call_type=1, caller_number="030 1234567", date="01.06.26 10:10", call_id=3),
+            _make_call(call_type=1, caller_number="030 1234567", date="2026-06-01T10:00:00", call_id=1),
+            _make_call(call_type=1, caller_number="030 7654321", date="2026-06-01T10:05:00", call_id=2),
+            _make_call(call_type=1, caller_number="030 1234567", date="2026-06-01T10:10:00", call_id=3),
         ]
         service = _service(connection, calls)
         commits_before = connection.commit_count
@@ -171,8 +167,8 @@ def test_sync_calls_commits_once_for_the_whole_batch():
 
 def test_sync_two_calls_same_contact_are_grouped(connection):
     calls = [
-        _make_call(call_type=1, caller_number="030 1234567", date="01.06.26 10:00"),
-        _make_call(call_type=1, caller_number="+49 30 1234567", date="02.06.26 10:00"),
+        _make_call(call_type=1, caller_number="030 1234567", date="2026-06-01T10:00:00"),
+        _make_call(call_type=1, caller_number="+49 30 1234567", date="2026-06-02T10:00:00"),
     ]
     service = _service(connection, calls)
 
@@ -244,28 +240,16 @@ def test_sync_calls_stores_box_call_id_for_ordering_tiebreak(connection):
     assert records[0].box_call_id == 42
 
 
-def test_sync_calls_replaces_placeholder_device_with_none(connection):
-    call = _make_call(call_type=10, caller_number="030 1234567")
-    call.Device = "-1"
-    service = _service(connection, [call])
-    service.sync_calls()
-
-    contact = ContactRepository(connection).search("")[0]
-    records = CallRepository(connection).for_contact(contact.id)
-
-    assert records[0].device is None
-
-
 def test_sync_calls_keeps_real_device_value(connection):
     call = _make_call(call_type=1, caller_number="030 1234567")
-    call.Device = "Fritz!Fon"
+    call.device = "Fritz!Fon C6"
     service = _service(connection, [call])
     service.sync_calls()
 
     contact = ContactRepository(connection).search("")[0]
     records = CallRepository(connection).for_contact(contact.id)
 
-    assert records[0].device == "Fritz!Fon"
+    assert records[0].device == "Fritz!Fon C6"
 
 
 def test_refresh_names_prefers_local_phonebook_over_box_cache(connection):

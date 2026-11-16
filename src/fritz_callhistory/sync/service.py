@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
 import sqlite3
-
-from fritzconnection.lib.fritzcall import ACTIVE_OUT_CALL_TYPE, OUT_CALL_TYPE, Call
 
 from fritz_callhistory.db.repository import (
     CallRepository,
@@ -17,29 +14,6 @@ from fritz_callhistory.db.repository import (
 from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.sync.normalize import normalize_number
-
-_OUTGOING_TYPES = {OUT_CALL_TYPE, ACTIVE_OUT_CALL_TYPE}
-
-
-def _counterparty_number(call: Call) -> str | None:
-    """Nummer der Gegenseite - bei ausgehenden Anrufen die angerufene, sonst die anrufende."""
-    if call.type in _OUTGOING_TYPES:
-        return call.CalledNumber or call.Called
-    return call.CallerNumber or call.Caller
-
-
-def _duration_seconds(call: Call) -> int | None:
-    duration = call.duration
-    if isinstance(duration, datetime.timedelta):
-        return int(duration.total_seconds())
-    return None
-
-
-def _call_date_iso(call: Call) -> str:
-    date = call.date
-    if isinstance(date, datetime.datetime):
-        return date.isoformat()
-    return str(call.Date)
 
 
 class SyncService:
@@ -70,24 +44,22 @@ class SyncService:
         remote_calls = self._client.get_calls(days=days)
         inserted = 0
         for call in remote_calls:
-            normalized_number, is_anonymous = normalize_number(_counterparty_number(call))
+            normalized_number, is_anonymous = normalize_number(call.counterparty_number)
             contact_id = self._contacts.upsert(
                 normalized_number, is_anonymous=is_anonymous, commit=False
             )
 
             was_inserted = self._calls.insert(
                 contact_id=contact_id,
-                call_type=call.type,
-                caller_number=call.CallerNumber or call.Caller,
-                called_number=call.CalledNumber or call.Called,
-                port=call.Port,
-                # Die Box sendet "-1" im <Device>-Feld, wenn kein Gerät zutrifft
-                # (z.B. abgelehnte/nicht angenommene Anrufe) - als NULL speichern.
-                device=call.Device if call.Device not in (None, "-1") else None,
-                call_date=_call_date_iso(call),
-                duration_seconds=_duration_seconds(call),
-                raw_name=call.Name,
-                box_call_id=call.id,
+                call_type=call.call_type,
+                caller_number=call.caller_number,
+                called_number=call.called_number,
+                port=call.port,
+                device=call.device,
+                call_date=call.call_date,
+                duration_seconds=call.duration_seconds,
+                raw_name=call.name,
+                box_call_id=call.box_call_id,
                 commit=False,
             )
             if was_inserted:

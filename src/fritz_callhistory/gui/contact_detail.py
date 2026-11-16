@@ -5,22 +5,19 @@ from __future__ import annotations
 import sqlite3
 
 from PySide6.QtCore import QModelIndex, Signal
-from PySide6.QtWidgets import QHeaderView, QLabel, QTableView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QTableView, QVBoxLayout, QWidget
 
 from fritz_callhistory.db.repository import CallRepository, Contact
 from fritz_callhistory.gui.models import (
+    CALL_COLUMNS,
+    configure_table,
     CallListModel,
-    DataclassSortProxy,
+    ColumnSortProxy,
     call_number,
     contact_display_label,
     install_call_context_menu,
-    install_tristate_sorting,
-    port_device_display,
 )
 from fritz_callhistory.sync.normalize import ANONYMOUS_NUMBER, format_number_display
-
-_NUMBER_COLUMN = 2
-
 
 class ContactDetailWidget(QWidget):
     number_double_clicked = Signal(str)
@@ -43,26 +40,17 @@ class ContactDetailWidget(QWidget):
         self._subtitle_label = QLabel()
 
         self._call_model = CallListModel()
-        self._call_proxy = DataclassSortProxy(
+        self._call_proxy = ColumnSortProxy(
             row_getter=self._call_model.call_at,
-            key_fns={
-                0: lambda c: c.call_date,
-                1: lambda c: c.call_type,
-                2: call_number,
-                3: lambda c: c.duration_seconds,
-                4: lambda c: port_device_display(c.device, c.port),
-            },
+            columns=CALL_COLUMNS,
         )
         self._call_proxy.setSourceModel(self._call_model)
 
         self._call_table = QTableView()
-        self._call_table.setModel(self._call_proxy)
-        self._call_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._call_table.verticalHeader().setVisible(False)
-        self._call_table.setSelectionMode(QTableView.SelectionMode.NoSelection)
-        self._call_table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        configure_table(
+            self._call_table, self._call_proxy, QTableView.SelectionMode.NoSelection
+        )
         self._call_table.doubleClicked.connect(self._on_call_table_double_clicked)
-        install_tristate_sorting(self._call_table, self._call_proxy)
         install_call_context_menu(
             self._call_table, self._call_proxy, self._number_for_row, self.call_requested.emit
         )
@@ -102,7 +90,7 @@ class ContactDetailWidget(QWidget):
         self._call_model.set_calls(self._calls_repo.for_contact(contact.id))
 
     def _on_call_table_double_clicked(self, index: QModelIndex) -> None:
-        if index.column() != _NUMBER_COLUMN:
+        if self._call_model.column_id(index.column()) != "number":
             return
         source_row = self._call_proxy.mapToSource(index).row()
         call = self._call_model.call_at(source_row)
