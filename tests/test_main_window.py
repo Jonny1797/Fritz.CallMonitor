@@ -1,25 +1,76 @@
 import threading
 
+import pytest
+
 from PySide6.QtGui import QKeySequence
-from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QSystemTrayIcon
 
 from fritz_callhistory.config import Config
-from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
-from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxConnectionError
+from fritz_callhistory.db.repository import (
+    CallRepository,
+    ContactRepository,
+    LocalPhonebookRepository,
+    SyncStateRepository,
+    VoicemailRepository,
+)
+from fritz_callhistory.fritz.exceptions import (
+    FritzBoxAuthError,
+    FritzBoxConnectionError,
+    FritzBoxError,
+)
 from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
 from fritz_callhistory.gui.main_window import MainWindow
+from fritz_callhistory.gui.phonebook_picker_dialog import PhonebookPickerDialog
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
+from fritz_callhistory.gui.settings_dialog import SettingsDialog
+from tests.fakes import FakeGateway
+
+
+def _make_window(
+    connection,
+    *,
+    sync=None,
+    dial=None,
+    import_from_box=None,
+    list_phonebooks=None,
+    config=None,
+    fritzbox_address=None,
+    auto_sync_interval_minutes=None,
+    show_incoming_call_popup=None,
+    gateway=None,
+):
+    """Baut ein MainWindow mit FakeGateway. Die Schlüsselwörter sync/dial/import_from_box/
+    list_phonebooks ersetzen die gleichnamige Gateway-Operation; ohne jede davon hat das Gateway keine Zugangsdaten. Ohne explizite
+    Angabe gibt es keine Adresse (kein CallMonitor) und kein Auto-Sync-Intervall."""
+    handlers = {
+        name: fn
+        for name, fn in (
+            ("sync", sync),
+            ("dial", dial),
+            ("import_from_box", import_from_box),
+            ("list_phonebooks", list_phonebooks),
+        )
+        if fn is not None
+    }
+    config = config or Config(
+        address=fritzbox_address or "",
+        sync_interval_minutes=auto_sync_interval_minutes or 0,
+        **({} if show_incoming_call_popup is None else {"show_incoming_call_popup": show_incoming_call_popup}),
+    )
+    if gateway is None:
+        gateway = FakeGateway(config, handlers=handlers, has_credentials=bool(handlers))
+    return MainWindow(connection, config, gateway)
 
 
 def test_sync_action_disabled_without_sync_fn(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     assert not window._sync_action.isEnabled()
 
 
 def test_sync_action_updates_status_bar_and_reloads_on_success(qtbot, connection):
-    window = MainWindow(connection, sync_fn=lambda: (2, 1))
+    window = _make_window(connection, sync=lambda: (2, 1))
     qtbot.addWidget(window)
     assert window._sync_action.isEnabled()
 
@@ -33,7 +84,7 @@ def test_sync_action_updates_status_bar_and_reloads_on_success(qtbot, connection
 
 
 def test_sync_runs_automatically_on_startup(qtbot, connection):
-    window = MainWindow(connection, sync_fn=lambda: (2, 1))
+    window = _make_window(connection, sync=lambda: (2, 1))
     qtbot.addWidget(window)
 
     qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
@@ -42,7 +93,7 @@ def test_sync_runs_automatically_on_startup(qtbot, connection):
 
 
 def test_sync_finished_clears_ended_live_calls(qtbot, connection):
-    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    window = _make_window(connection, sync=lambda: (0, 0))
     qtbot.addWidget(window)
     window._calls_tab.on_live_ring("1", "030 1234567", "069987654")
     window._calls_tab.on_live_disconnected("1")
@@ -58,7 +109,7 @@ def test_sync_action_shows_error_on_failure(qtbot, connection):
     def failing_sync():
         raise FritzBoxConnectionError("Box nicht erreichbar")
 
-    window = MainWindow(connection, sync_fn=failing_sync)
+    window = _make_window(connection, sync=failing_sync)
     qtbot.addWidget(window)
 
     window._sync_action.trigger()
@@ -78,7 +129,7 @@ def test_sync_action_auth_failure_manual_reprompts_and_retries(qtbot, connection
         return (1, 0)
 
     # Der Start-Sync (QTimer.singleShot(0, ...)) würde sonst mit dem manuellen
-    # Trigger um denselben sync_fn-Aufruf konkurrieren, sobald der Event-Loop
+    # Trigger um denselben sync-Aufruf konkurrieren, sobald der Event-Loop
     # während qtbot.waitUntil() läuft - hier deaktiviert, damit call_count
     # deterministisch nur den manuellen Trigger + dessen Retry zählt.
     mocker.patch("fritz_callhistory.gui.main_window.QTimer.singleShot")
@@ -90,9 +141,10 @@ def test_sync_action_auth_failure_manual_reprompts_and_retries(qtbot, connection
     )
     new_config = Config(username="admin2")
     mocker.patch("fritz_callhistory.gui.main_window.CredentialsDialog.save", return_value=new_config)
-    updated_configs = []
+    gateway = FakeGateway(handlers={"sync": flaky_sync})
+    updated_configs = gateway.applied_configs
 
-    window = MainWindow(connection, sync_fn=flaky_sync, update_credentials_fn=updated_configs.append)
+    window = _make_window(connection, gateway=gateway)
     qtbot.addWidget(window)
 
     window._sync_action.trigger()
@@ -114,7 +166,7 @@ def test_on_sync_auth_failed_manual_decline_sets_declined_flag(qtbot, connection
         return_value=QDialog.DialogCode.Rejected,
     )
 
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     window._last_sync_user_initiated = True
 
@@ -131,7 +183,7 @@ def test_on_sync_auth_failed_automatic_suppressed_after_decline(qtbot, connectio
     mocker.patch("fritz_callhistory.gui.main_window.QMessageBox.warning")
     mock_exec = mocker.patch("fritz_callhistory.gui.main_window.CredentialsDialog.exec")
 
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     window._sync_auth_declined = True
     window._last_sync_user_initiated = False
@@ -150,9 +202,10 @@ def test_open_credentials_dialog_saves_and_updates_credentials_ref(qtbot, connec
     )
     new_config = Config(username="admin2")
     mocker.patch("fritz_callhistory.gui.main_window.CredentialsDialog.save", return_value=new_config)
-    updated_configs = []
+    gateway = FakeGateway(has_credentials=False)
+    updated_configs = gateway.applied_configs
 
-    window = MainWindow(connection, update_credentials_fn=updated_configs.append)
+    window = _make_window(connection, gateway=gateway)
     qtbot.addWidget(window)
     window._sync_auth_declined = True
 
@@ -165,7 +218,7 @@ def test_open_credentials_dialog_saves_and_updates_credentials_ref(qtbot, connec
 
 
 def test_datei_menu_has_credentials_action(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     file_action = next(a for a in window.menuBar().actions() if a.text() == "Datei")
@@ -174,107 +227,87 @@ def test_datei_menu_has_credentials_action(qtbot, connection):
     assert "Zugangsdaten ändern…" in action_texts
 
 
-def test_close_while_sync_running_defers_until_sync_finishes(qtbot, connection):
-    # Regression test: sync_fn (SyncWorker) is a single blocking network call
-    # with no cancellation point. closeEvent() used to just wait(2000) and then
-    # proceed regardless - if the sync (auto-triggered on startup) was still
-    # running past that timeout, the still-running QThread got destroyed and
-    # Qt aborted the process with SIGABRT. closeEvent() must instead hide the
-    # window and defer the real close until the thread finishes on its own.
+def test_close_while_task_running_hides_and_finishes_closing_when_task_ends(qtbot, connection):
+    # Ein laufender Sync darf das Schliessen nur aufschieben: Fenster sofort
+    # verstecken, echtes Schliessen erst, wenn BackgroundTasks idle meldet.
     release_sync = threading.Event()
 
     def slow_sync():
         release_sync.wait(5)
         return (0, 0)
 
-    window = MainWindow(connection, sync_fn=slow_sync)
+    window = _make_window(connection, sync=slow_sync)
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(
-        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("sync"), timeout=2000)
 
-    closed = window.close()
+    try:
+        closed = window.close()
 
-    assert closed is False  # close event was ignored, not accepted
-    assert not window.isVisible()  # hidden immediately so it looks closed
-    assert window._sync_thread.isRunning()  # thread left running untouched, not destroyed
+        assert closed is False  # close event was ignored, not accepted
+        assert not window.isVisible()  # hidden immediately so it looks closed
+        assert window.background_tasks.is_running("sync")  # task left untouched
+    finally:
+        release_sync.set()
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("sync"), timeout=2000)
+    qtbot.wait(50)  # let the queued all_finished-triggered close() run
 
-    release_sync.set()
-    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
-    qtbot.wait(50)  # let the queued finished-signal-triggered close() run
-
-    # Thread is done now - a subsequent close attempt goes through immediately.
     assert window.close() is True
 
 
-def test_shutdown_failsafe_force_exits_if_worker_still_busy(qtbot, connection, mocker):
-    # Regression test: fritz/client.py's request timeout doesn't cover every
-    # possible hang (e.g. a blocking DNS lookup, which socket.getaddrinfo()
-    # has no timeout for) - closeEvent()'s hide-and-wait-for-finished
-    # mechanism must not be able to block forever if a worker thread never
-    # returns. The failsafe timer (normally _SHUTDOWN_FAILSAFE_MS after the
-    # first close attempt) must force an exit once it fires while still busy.
+def test_finished_sync_while_quitting_does_not_touch_ui(qtbot, connection):
     release_sync = threading.Event()
 
     def slow_sync():
         release_sync.wait(5)
-        return (0, 0)
+        return (1, 1)
 
-    window = MainWindow(connection, sync_fn=slow_sync)
+    window = _make_window(connection, sync=slow_sync)
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(
-        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("sync"), timeout=2000)
     window.close()
-    assert window._shutdown_failsafe_timer is not None
+    release_sync.set()
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("sync"), timeout=2000)
 
-    force_exit = mocker.patch("fritz_callhistory.gui.main_window.os._exit")
-    window._force_exit_if_still_busy()
-    force_exit.assert_called_once_with(1)
-
-    release_sync.set()  # cleanup: let the thread actually finish
-    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
+    assert "abgeschlossen" not in window.statusBar().currentMessage()
 
 
-def test_shutdown_failsafe_does_nothing_once_worker_already_finished(qtbot, connection, mocker):
-    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+def test_auth_error_in_sync_reprompts_via_sync_error_handler(qtbot, connection, mocker):
+    window = _make_window(connection, sync=lambda: (_ for _ in ()).throw(FritzBoxAuthError("x")))
     qtbot.addWidget(window)
-    window.show()
-    qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
+    reprompt = mocker.patch.object(window, "_on_sync_auth_failed")
 
-    force_exit = mocker.patch("fritz_callhistory.gui.main_window.os._exit")
-    window._force_exit_if_still_busy()
+    qtbot.waitUntil(lambda: reprompt.called, timeout=3000)
 
-    force_exit.assert_not_called()
+    reprompt.assert_called_once_with("x")
 
 
 def test_close_before_startup_sync_fires_prevents_new_sync_thread(qtbot, connection):
     # Regression test: the auto-sync at startup is queued via
     # QTimer.singleShot(0, self._trigger_sync), which only runs on a later
     # event-loop iteration. Closing the window before that fires must prevent
-    # _trigger_sync() from starting a brand-new, untracked SyncWorker
+    # _trigger_sync() from starting a brand-new, untracked sync task
     # afterwards - otherwise it becomes a QThread nobody waits for at
     # interpreter shutdown (the same crash/hang class, just with different
     # timing - reproduced within the app's very first instant instead of a
     # few seconds in).
-    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    window = _make_window(connection, sync=lambda: (0, 0))
     qtbot.addWidget(window)
     window.show()
 
-    assert window._sync_thread is None
+    assert not window.background_tasks.is_running("sync")
     closed = window.close()
     assert closed is True  # nothing was running yet, closes immediately
 
     qtbot.wait(100)  # let the queued singleShot(0, _trigger_sync) fire, if it still would
 
-    assert window._sync_thread is None
+    assert not window.background_tasks.is_running("sync")
 
 
 def test_close_while_box_import_running_defers_until_import_finishes(qtbot, connection, mocker):
     # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
-    # but for ImportFromBoxWorker (the "Von Box importieren" menu entry) - it is
+    # but for the Box import task (the "Von Box importieren" menu entry) - it is
     # the same single-blocking-network-call-with-no-cancellation-point pattern,
     # just user-triggered instead of started automatically on startup.
     release_import = threading.Event()
@@ -285,24 +318,22 @@ def test_close_while_box_import_running_defers_until_import_finishes(qtbot, conn
 
     mocker.patch("fritz_callhistory.gui.phonebook_view.QMessageBox.information")
 
-    window = MainWindow(connection, import_from_box_fn=slow_import)
+    window = _make_window(connection, import_from_box=slow_import)
     qtbot.addWidget(window)
     window.show()
     window._phonebook_tab.import_from_box([0])
     qtbot.waitUntil(
-        lambda: window._phonebook_tab.import_thread is not None
-        and window._phonebook_tab.import_thread.isRunning(),
-        timeout=2000,
+        lambda: window.background_tasks.is_running("box-import"), timeout=2000
     )
 
     closed = window.close()
 
     assert closed is False
     assert not window.isVisible()
-    assert window._phonebook_tab.import_thread.isRunning()
+    assert window.background_tasks.is_running("box-import")
 
     release_import.set()
-    qtbot.waitUntil(lambda: not window._phonebook_tab.import_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("box-import"), timeout=2000)
     qtbot.wait(50)
 
     assert window.close() is True
@@ -312,7 +343,7 @@ def test_close_while_settings_phonebook_list_running_defers_until_finished(
     qtbot, connection, mocker
 ):
     # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
-    # but for the PhonebookListWorker started by _open_settings_dialog() - it is
+    # but for the phonebook list task started by _open_settings_dialog() - it is
     # deliberately parented to MainWindow (not the dialog) so a slow fetch
     # survives the dialog being closed, which means closeEvent() must know
     # about it too.
@@ -326,24 +357,20 @@ def test_close_while_settings_phonebook_list_running_defers_until_finished(
         release_list.wait(5)
         return [(0, "Telefonbuch")]
 
-    window = MainWindow(connection, list_phonebooks_fn=slow_list_phonebooks)
+    window = _make_window(connection, list_phonebooks=slow_list_phonebooks)
     qtbot.addWidget(window)
     window.show()
     window._open_settings_dialog()
-    qtbot.waitUntil(
-        lambda: window._phonebook_list_thread is not None
-        and window._phonebook_list_thread.isRunning(),
-        timeout=2000,
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("phonebook-list-settings"))
 
     closed = window.close()
 
     assert closed is False
     assert not window.isVisible()
-    assert window._phonebook_list_thread.isRunning()
+    assert window.background_tasks.is_running("phonebook-list-settings")
 
     release_list.set()
-    qtbot.waitUntil(lambda: not window._phonebook_list_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("phonebook-list-settings"), timeout=2000)
     qtbot.wait(50)
 
     assert window.close() is True
@@ -352,9 +379,9 @@ def test_close_while_settings_phonebook_list_running_defers_until_finished(
 def test_close_while_phonebook_import_list_running_defers_until_finished(
     qtbot, connection, mocker
 ):
-    # Same bug class as above, but for the second PhonebookListWorker instance -
+    # Same bug class as above, but for the second phonebook list task -
     # the one started by _open_phonebook_import_dialog() and held separately as
-    # self._phonebook_import_list_thread so both dialogs can fetch independently.
+    # its own key so both dialogs can fetch independently.
     mocker.patch(
         "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
         return_value=QDialog.DialogCode.Rejected,
@@ -365,24 +392,20 @@ def test_close_while_phonebook_import_list_running_defers_until_finished(
         release_list.wait(5)
         return [(0, "Telefonbuch")]
 
-    window = MainWindow(connection, list_phonebooks_fn=slow_list_phonebooks)
+    window = _make_window(connection, list_phonebooks=slow_list_phonebooks)
     qtbot.addWidget(window)
     window.show()
     window._open_phonebook_import_dialog()
-    qtbot.waitUntil(
-        lambda: window._phonebook_import_list_thread is not None
-        and window._phonebook_import_list_thread.isRunning(),
-        timeout=2000,
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("phonebook-list-import"))
 
     closed = window.close()
 
     assert closed is False
     assert not window.isVisible()
-    assert window._phonebook_import_list_thread.isRunning()
+    assert window.background_tasks.is_running("phonebook-list-import")
 
     release_list.set()
-    qtbot.waitUntil(lambda: not window._phonebook_import_list_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("phonebook-list-import"), timeout=2000)
     qtbot.wait(50)
 
     assert window.close() is True
@@ -396,7 +419,7 @@ def test_close_without_busy_workers_quits_application_explicitly(qtbot, connecti
     # depending on platform/compositor). closeEvent() must explicitly call
     # QApplication.quit() itself once nothing is left running, instead of
     # just accepting the close event and hoping Qt notices.
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     window.show()
 
@@ -411,7 +434,7 @@ def test_close_minimizes_to_tray_when_setting_enabled(qtbot, connection, mocker)
     mock_thread_cls = mocker.patch("fritz_callhistory.gui.main_window.CallMonitorThread")
     mock_thread = mock_thread_cls.return_value
 
-    window = MainWindow(
+    window = _make_window(
         connection,
         fritzbox_address="192.168.178.1",
         config=Config(minimize_to_tray_on_close=True),
@@ -430,7 +453,7 @@ def test_close_minimizes_to_tray_when_setting_enabled(qtbot, connection, mocker)
 
 
 def test_close_quits_when_minimize_setting_disabled(qtbot, connection, mocker):
-    window = MainWindow(connection, config=Config(minimize_to_tray_on_close=False))
+    window = _make_window(connection, config=Config(minimize_to_tray_on_close=False))
     qtbot.addWidget(window)
     window.show()
 
@@ -441,7 +464,7 @@ def test_close_quits_when_minimize_setting_disabled(qtbot, connection, mocker):
 
 
 def test_tray_quit_action_quits_even_when_minimize_to_tray_enabled(qtbot, connection, mocker):
-    window = MainWindow(connection, config=Config(minimize_to_tray_on_close=True))
+    window = _make_window(connection, config=Config(minimize_to_tray_on_close=True))
     qtbot.addWidget(window)
     window.show()
 
@@ -460,32 +483,30 @@ def test_tray_quit_action_defers_while_worker_busy_then_quits(qtbot, connection,
         release_sync.wait(5)
         return (0, 0)
 
-    window = MainWindow(
-        connection, sync_fn=slow_sync, config=Config(minimize_to_tray_on_close=True)
+    window = _make_window(
+        connection, sync=slow_sync, config=Config(minimize_to_tray_on_close=True)
     )
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(
-        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("sync"), timeout=2000)
 
     quit_spy = mocker.patch.object(QApplication.instance(), "quit")
 
     window._tray_quit_action.trigger()
 
     assert not window.isVisible()
-    assert window._sync_thread.isRunning()  # deferred, not force-closed
+    assert window.background_tasks.is_running("sync")  # deferred, not force-closed
     quit_spy.assert_not_called()
 
     release_sync.set()
-    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("sync"), timeout=2000)
     qtbot.wait(50)  # let the queued finished-signal-triggered close() run
 
     quit_spy.assert_called_once()
 
 
 def test_tray_icon_has_context_menu_with_show_and_quit_actions(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     menu = window._tray_icon.contextMenu()
@@ -496,7 +517,7 @@ def test_tray_icon_has_context_menu_with_show_and_quit_actions(qtbot, connection
 
 
 def test_tray_icon_activated_trigger_restores_window(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     window.show()
     window.hide()
@@ -507,7 +528,7 @@ def test_tray_icon_activated_trigger_restores_window(qtbot, connection):
 
 
 def test_tray_show_action_restores_window(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     window.show()
     window.hide()
@@ -518,7 +539,7 @@ def test_tray_show_action_restores_window(qtbot, connection):
 
 
 def test_no_call_monitor_started_without_address(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     assert window._call_monitor is None
@@ -526,10 +547,14 @@ def test_no_call_monitor_started_without_address(qtbot, connection):
 
 def test_on_ring_shows_known_contact_name(qtbot, connection, mocker):
     contacts = ContactRepository(connection)
-    contact_id = contacts.upsert("+49301234567")
-    contacts.set_display_name(contact_id, "Max Mustermann")
+    contacts.upsert("+49301234567")
+    LocalPhonebookRepository(connection).create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
 
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     show_message = mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -544,8 +569,27 @@ def test_on_ring_shows_known_contact_name(qtbot, connection, mocker):
     assert popup.connection_id == "0"
 
 
+def test_on_ring_popup_shows_telefonbuch_contact_notes(qtbot, connection, mocker):
+    # Notizen kommen über das Caller directory aus dem Telefonbuch-Kontakt.
+    LocalPhonebookRepository(connection).create(
+        display_name="Max Mustermann",
+        notes="Ruft wegen der Heizung an",
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
+    window = _make_window(connection)
+    qtbot.addWidget(window)
+    mocker.patch.object(window._tray_icon, "showMessage")
+
+    window._on_ring("0", "030 1234567", "069987654")
+
+    popup = window._incoming_call_popups["0"]
+    texts = [label.text() for label in popup.findChildren(QLabel)]
+    assert "Max Mustermann" in texts
+    assert "Ruft wegen der Heizung an" in texts
+
+
 def test_on_ring_shows_number_for_unknown_contact(qtbot, connection, mocker):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     show_message = mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -556,7 +600,7 @@ def test_on_ring_shows_number_for_unknown_contact(qtbot, connection, mocker):
 
 
 def test_on_ring_shows_anonymous_for_suppressed_number(qtbot, connection, mocker):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     show_message = mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -567,7 +611,7 @@ def test_on_ring_shows_anonymous_for_suppressed_number(qtbot, connection, mocker
 
 
 def test_on_ring_popup_disabled_via_config_flag(qtbot, connection, mocker):
-    window = MainWindow(connection, show_incoming_call_popup=False)
+    window = _make_window(connection, show_incoming_call_popup=False)
     qtbot.addWidget(window)
     mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -577,7 +621,7 @@ def test_on_ring_popup_disabled_via_config_flag(qtbot, connection, mocker):
 
 
 def test_on_ring_popup_has_no_contact_action_for_anonymous_caller(qtbot, connection, mocker):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -590,7 +634,7 @@ def test_on_ring_popup_has_no_contact_action_for_anonymous_caller(qtbot, connect
 
 
 def test_connected_signal_closes_matching_popup(qtbot, connection, mocker):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -603,7 +647,7 @@ def test_connected_signal_closes_matching_popup(qtbot, connection, mocker):
 
 
 def test_disconnected_signal_closes_matching_popup(qtbot, connection, mocker):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -614,14 +658,14 @@ def test_disconnected_signal_closes_matching_popup(qtbot, connection, mocker):
 
 
 def test_close_incoming_call_popup_ignores_unknown_connection_id(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     window._close_incoming_call_popup("does-not-exist")  # muss nicht (mit KeyError) crashen
 
 
 def test_two_simultaneous_calls_get_independent_popups(qtbot, connection, mocker):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -640,7 +684,7 @@ def test_open_contact_requested_navigates_to_contact(qtbot, connection, mocker):
     contact_id = contacts.upsert("+49301234567")
     contacts.set_display_name(contact_id, "Max Mustermann")
 
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     mocker.patch.object(window._tray_icon, "showMessage")
 
@@ -656,7 +700,7 @@ def test_open_contact_requested_navigates_to_contact(qtbot, connection, mocker):
 
 
 def test_call_monitor_connection_lost_message_shown_only_once(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     window._on_call_monitor_connection_lost("Connection refused")
@@ -668,7 +712,7 @@ def test_call_monitor_connection_lost_message_shown_only_once(qtbot, connection)
 
 
 def test_main_window_has_three_tabs(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     assert window._tabs.count() == 3
@@ -694,14 +738,14 @@ def test_all_calls_tab_label_shows_new_missed_count_on_startup(qtbot, connection
         raw_name=None,
     )
 
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     assert window._tabs.tabText(0) == "Alle Anrufe (1 neu verpasst)"
 
 
 def test_all_calls_tab_label_stays_plain_when_no_new_missed_calls(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     assert window._tabs.tabText(0) == "Alle Anrufe"
@@ -709,7 +753,7 @@ def test_all_calls_tab_label_stays_plain_when_no_new_missed_calls(qtbot, connect
 
 def test_all_calls_tab_label_updates_after_manual_reload(qtbot, connection):
     SyncStateRepository(connection).set(_LAST_SEEN_KEY, "2026-06-01T00:00:00")
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     assert window._tabs.tabText(0) == "Alle Anrufe"
 
@@ -733,7 +777,7 @@ def test_all_calls_tab_label_updates_after_manual_reload(qtbot, connection):
 
 
 def test_live_call_ended_triggers_sync(qtbot, connection):
-    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    window = _make_window(connection, sync=lambda: (0, 0))
     qtbot.addWidget(window)
 
     window._calls_tab.live_call_ended.emit()
@@ -745,7 +789,7 @@ def test_call_monitor_signals_wired_to_calls_tab(qtbot, connection, mocker):
     mock_thread_cls = mocker.patch("fritz_callhistory.gui.main_window.CallMonitorThread")
     mock_thread = mock_thread_cls.return_value
 
-    window = MainWindow(connection, fritzbox_address="192.168.178.1")
+    window = _make_window(connection, fritzbox_address="192.168.178.1")
     qtbot.addWidget(window)
 
     assert window._call_monitor is mock_thread
@@ -782,7 +826,7 @@ def _activate(qtbot, window) -> None:
 # eigentlich interessante Logik (richtige Taste verbunden mit der richtigen
 # Dispatch-Methode), ohne von Qt's Fenstermanager-Simulation abzuhängen.
 def test_focus_search_shortcuts_are_wired_to_active_tab(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     assert window._focus_search_shortcut.key() == QKeySequence("/")
     assert window._focus_search_shortcut_ctrl_f.key() == QKeySequence("Ctrl+F")
@@ -797,7 +841,7 @@ def test_focus_search_shortcuts_are_wired_to_active_tab(qtbot, connection):
 
 
 def test_tab_shortcuts_are_wired_to_correct_indices(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     assert [sc.key() for sc in window._tab_shortcuts] == [
         QKeySequence("Ctrl+1"),
@@ -829,7 +873,7 @@ def test_ctrl_d_shortcut_is_wired_to_dial_selected_row_in_active_tab(qtbot, conn
         duration_seconds=30,
         raw_name=None,
     )
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     assert window._dial_selected_shortcut.key() == QKeySequence("Ctrl+D")
     window._calls_tab.all_calls_view.reload()
@@ -843,7 +887,7 @@ def test_ctrl_d_shortcut_is_wired_to_dial_selected_row_in_active_tab(qtbot, conn
 
 
 def test_ctrl_d_shortcut_does_nothing_without_selection(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
     received = []
     window._calls_tab.call_requested.connect(received.append)
@@ -854,18 +898,20 @@ def test_ctrl_d_shortcut_does_nothing_without_selection(qtbot, connection):
 
 
 def test_dial_number_shows_unavailable_message_without_dial_fn(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     window._dial_number("+491234567")
 
     assert "nicht verfügbar" in window.statusBar().currentMessage()
-    assert window._dial_thread is None
+    assert not window.background_tasks.is_running("dial")
 
 
-def test_dial_number_shows_success_message_and_calls_dial_fn(qtbot, connection):
+def test_dial_number_shows_success_message_and_calls_dial_fn(qtbot, connection, mocker):
+    # Der Start-Sync würde sonst die Statusmeldung des Anrufs überschreiben.
+    mocker.patch("fritz_callhistory.gui.main_window.QTimer.singleShot")
     dialed = []
-    window = MainWindow(connection, dial_fn=dialed.append)
+    window = _make_window(connection, dial=dialed.append)
     qtbot.addWidget(window)
 
     window._dial_number("+491234567")
@@ -877,7 +923,7 @@ def test_dial_number_shows_success_message_and_calls_dial_fn(qtbot, connection):
 
 def test_phonebook_tab_call_requested_is_wired_to_dial_number(qtbot, connection):
     dialed = []
-    window = MainWindow(connection, dial_fn=dialed.append)
+    window = _make_window(connection, dial=dialed.append)
     qtbot.addWidget(window)
 
     window._phonebook_tab.call_requested.emit("+491234567")
@@ -885,11 +931,13 @@ def test_phonebook_tab_call_requested_is_wired_to_dial_number(qtbot, connection)
     qtbot.waitUntil(lambda: dialed == ["+491234567"], timeout=2000)
 
 
-def test_dial_number_shows_error_on_failure(qtbot, connection):
+def test_dial_number_shows_error_on_failure(qtbot, connection, mocker):
+    # Der Start-Sync würde sonst die Statusmeldung des Anrufs überschreiben.
+    mocker.patch("fritz_callhistory.gui.main_window.QTimer.singleShot")
     def failing_dial_fn(number):
         raise FritzBoxConnectionError("Box nicht erreichbar")
 
-    window = MainWindow(connection, dial_fn=failing_dial_fn)
+    window = _make_window(connection, dial=failing_dial_fn)
     qtbot.addWidget(window)
 
     window._dial_number("+491234567")
@@ -900,7 +948,7 @@ def test_dial_number_shows_error_on_failure(qtbot, connection):
 
 def test_dial_number_ignores_second_call_while_one_in_flight(qtbot, connection):
     # release_dial.set() must run even if an assertion below fails - otherwise
-    # the DialWorker is still blocked in its network call when qtbot tears the
+    # the dial task is still blocked in its network call when qtbot tears the
     # window down at test end, and Qt aborts the process (SIGABRT) trying to
     # destroy a still-running QThread (same bug class as
     # test_close_while_sync_running_defers_until_sync_finishes, just in test code).
@@ -911,7 +959,7 @@ def test_dial_number_ignores_second_call_while_one_in_flight(qtbot, connection):
         calls.append(number)
         release_dial.wait(5)
 
-    window = MainWindow(connection, dial_fn=slow_dial)
+    window = _make_window(connection, dial=slow_dial)
     qtbot.addWidget(window)
 
     try:
@@ -925,44 +973,24 @@ def test_dial_number_ignores_second_call_while_one_in_flight(qtbot, connection):
         assert "läuft bereits" in window.statusBar().currentMessage()
     finally:
         release_dial.set()
-        qtbot.waitUntil(
-            lambda: window._dial_thread is None or not window._dial_thread.isRunning(), timeout=2000
-        )
+        qtbot.waitUntil(lambda: not window.background_tasks.is_running("dial"), timeout=2000)
 
 
-def test_close_while_dial_running_defers_until_dial_finishes(qtbot, connection):
-    # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
-    # but for DialWorker - a right-click "Anrufen" triggers exactly the same
-    # single-blocking-network-call-with-no-cancellation-point pattern.
-    release_dial = threading.Event()
-
-    def slow_dial(number):
-        release_dial.wait(5)
-
-    window = MainWindow(connection, dial_fn=slow_dial)
+def test_dial_while_quitting_shows_no_message_and_starts_nothing(qtbot, connection):
+    dialed = []
+    window = _make_window(connection, dial=dialed.append)
     qtbot.addWidget(window)
-    window.show()
-    try:
-        window._dial_number("+491234567")
-        qtbot.waitUntil(
-            lambda: window._dial_thread is not None and window._dial_thread.isRunning(), timeout=2000
-        )
+    window.background_tasks.begin_quit()
 
-        closed = window.close()
-
-        assert closed is False
-        assert not window.isVisible()
-        assert window._dial_thread.isRunning()
-    finally:
-        release_dial.set()
-        qtbot.waitUntil(lambda: not window._dial_thread.isRunning(), timeout=2000)
+    window._dial_number("+491234567")
     qtbot.wait(50)
 
-    assert window.close() is True
+    assert dialed == []
+    assert window.statusBar().currentMessage() == ""
 
 
 def test_datei_menu_has_settings_action(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     # .menu() muss ausserhalb des Generators gebunden werden - sonst hat sich
@@ -977,7 +1005,7 @@ def test_datei_menu_has_settings_action(qtbot, connection):
 
 
 def test_telefonbuch_menu_has_import_export_actions(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     phonebook_action = next(
@@ -991,11 +1019,11 @@ def test_telefonbuch_menu_has_import_export_actions(qtbot, connection):
 
 
 def test_telefonbuch_menu_import_from_box_action_reflects_availability(qtbot, connection):
-    window = MainWindow(connection, import_from_box_fn=None)
+    window = _make_window(connection, import_from_box=None)
     qtbot.addWidget(window)
     assert window._phonebook_import_from_box_action.isEnabled() is False
 
-    window2 = MainWindow(connection, import_from_box_fn=lambda phonebook_ids: 0)
+    window2 = _make_window(connection, import_from_box=lambda phonebook_ids: 0)
     qtbot.addWidget(window2)
     assert window2._phonebook_import_from_box_action.isEnabled() is True
 
@@ -1007,11 +1035,10 @@ def test_open_settings_dialog_saves_config_and_applies_live(qtbot, connection, m
     )
     new_config = Config(sync_interval_minutes=99, show_incoming_call_popup=False)
     mocker.patch("fritz_callhistory.gui.main_window.SettingsDialog.save", return_value=new_config)
-    updated_configs = []
+    gateway = FakeGateway(has_credentials=False)
+    updated_configs = gateway.applied_configs
 
-    window = MainWindow(
-        connection, list_phonebooks_fn=None, update_credentials_fn=updated_configs.append
-    )
+    window = _make_window(connection, gateway=gateway)
     qtbot.addWidget(window)
 
     window._open_settings_dialog()
@@ -1024,7 +1051,7 @@ def test_open_settings_dialog_saves_config_and_applies_live(qtbot, connection, m
 
 
 def test_apply_settings_change_creates_timer_if_not_created_at_startup(qtbot, connection):
-    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+    window = _make_window(connection, sync=lambda: (0, 0))
     qtbot.addWidget(window)
     assert window._auto_sync_timer is None
 
@@ -1036,7 +1063,7 @@ def test_apply_settings_change_creates_timer_if_not_created_at_startup(qtbot, co
 
 
 def test_apply_settings_change_restarts_existing_timer_with_new_interval(qtbot, connection):
-    window = MainWindow(connection, sync_fn=lambda: (0, 0), auto_sync_interval_minutes=30)
+    window = _make_window(connection, sync=lambda: (0, 0), auto_sync_interval_minutes=30)
     qtbot.addWidget(window)
     original_timer = window._auto_sync_timer
 
@@ -1048,7 +1075,7 @@ def test_apply_settings_change_restarts_existing_timer_with_new_interval(qtbot, 
 
 
 def test_apply_settings_change_skips_timer_without_sync_fn(qtbot, connection):
-    window = MainWindow(connection)
+    window = _make_window(connection)
     qtbot.addWidget(window)
 
     window._apply_settings_change(Config(sync_interval_minutes=5))
@@ -1064,33 +1091,42 @@ def test_open_settings_dialog_without_list_phonebooks_fn_marks_unavailable(qtbot
     mock_set_unavailable = mocker.patch(
         "fritz_callhistory.gui.main_window.SettingsDialog.set_phonebooks_unavailable"
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-
-    window = MainWindow(connection, list_phonebooks_fn=None)
+    window = _make_window(connection, list_phonebooks=None)
     qtbot.addWidget(window)
 
     window._open_settings_dialog()
 
     mock_set_unavailable.assert_called_once()
-    mock_worker_cls.assert_not_called()
+    assert not window.background_tasks.is_running("phonebook-list-settings")
+    assert not window.background_tasks.is_running("phonebook-list-import")
+
+
+def _exec_until(qtbot, condition):
+    """Ersatz für QDialog.exec(): kehrt erst zurück, wenn *condition* erfüllt ist."""
+
+    def fake_exec(self):
+        qtbot.waitUntil(condition, timeout=2000)
+        return QDialog.DialogCode.Rejected
+
+    return fake_exec
 
 
 def test_open_settings_dialog_starts_phonebook_list_worker_when_available(qtbot, connection, mocker):
-    mocker.patch(
-        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
-        return_value=QDialog.DialogCode.Rejected,
+    mock_set = mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.set_phonebooks"
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-    mock_worker = mock_worker_cls.return_value
+    # Wie im echten exec(): der Dialog ist offen, bis das Ergebnis da ist.
+    mocker.patch.object(
+        SettingsDialog, "exec", _exec_until(qtbot, lambda: mock_set.called)
+    )
 
-    list_phonebooks_fn = mocker.Mock(return_value=[(0, "Telefonbuch")])
-    window = MainWindow(connection, list_phonebooks_fn=list_phonebooks_fn)
+    window = _make_window(connection, list_phonebooks=lambda: [(0, "Telefonbuch")])
     qtbot.addWidget(window)
 
     window._open_settings_dialog()
 
-    mock_worker_cls.assert_called_once_with(list_phonebooks_fn, parent=window)
-    mock_worker.start.assert_called_once()
+    qtbot.waitUntil(lambda: mock_set.called, timeout=2000)
+    mock_set.assert_called_once_with([(0, "Telefonbuch")])
 
 
 def test_open_phonebook_import_dialog_without_list_phonebooks_fn_marks_unavailable(
@@ -1103,35 +1139,120 @@ def test_open_phonebook_import_dialog_without_list_phonebooks_fn_marks_unavailab
     mock_set_unavailable = mocker.patch(
         "fritz_callhistory.gui.main_window.PhonebookPickerDialog.set_phonebooks_unavailable"
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-
-    window = MainWindow(connection, list_phonebooks_fn=None)
+    window = _make_window(connection, list_phonebooks=None)
     qtbot.addWidget(window)
 
     window._open_phonebook_import_dialog()
 
     mock_set_unavailable.assert_called_once()
-    mock_worker_cls.assert_not_called()
+    assert not window.background_tasks.is_running("phonebook-list-settings")
+    assert not window.background_tasks.is_running("phonebook-list-import")
 
 
 def test_open_phonebook_import_dialog_starts_phonebook_list_worker_when_available(
     qtbot, connection, mocker
 ):
-    mocker.patch(
-        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
-        return_value=QDialog.DialogCode.Rejected,
+    mock_set = mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.set_phonebooks"
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-    mock_worker = mock_worker_cls.return_value
+    # Wie im echten exec(): der Dialog ist offen, bis das Ergebnis da ist.
+    mocker.patch.object(
+        PhonebookPickerDialog, "exec", _exec_until(qtbot, lambda: mock_set.called)
+    )
 
-    list_phonebooks_fn = mocker.Mock(return_value=[(0, "Telefonbuch")])
-    window = MainWindow(connection, list_phonebooks_fn=list_phonebooks_fn)
+    window = _make_window(connection, list_phonebooks=lambda: [(0, "Telefonbuch")])
     qtbot.addWidget(window)
 
     window._open_phonebook_import_dialog()
 
-    mock_worker_cls.assert_called_once_with(list_phonebooks_fn, parent=window)
-    mock_worker.start.assert_called_once()
+    qtbot.waitUntil(lambda: mock_set.called, timeout=2000)
+    mock_set.assert_called_once_with([(0, "Telefonbuch")])
+
+
+def test_phonebook_list_error_marks_dialog_unavailable(qtbot, connection, mocker):
+    mock_unavailable = mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.set_phonebooks_unavailable"
+    )
+    # Wie im echten exec(): der Dialog ist offen, bis das Ergebnis da ist.
+    mocker.patch.object(
+        SettingsDialog, "exec", _exec_until(qtbot, lambda: mock_unavailable.called)
+    )
+
+    def failing_list():
+        raise FritzBoxError("Box nicht erreichbar")
+
+    window = _make_window(connection, list_phonebooks=failing_list)
+    qtbot.addWidget(window)
+
+    window._open_settings_dialog()
+
+    qtbot.waitUntil(lambda: mock_unavailable.called, timeout=2000)
+    mock_unavailable.assert_called_once_with("Box nicht erreichbar")
+
+
+def test_settings_and_import_phonebook_lists_load_independently(qtbot, connection, mocker):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    release = threading.Event()
+
+    def slow_list():
+        release.wait(5)
+        return [(0, "Telefonbuch")]
+
+    window = _make_window(connection, list_phonebooks=slow_list)
+    qtbot.addWidget(window)
+
+    window._open_settings_dialog()
+    window._open_phonebook_import_dialog()
+
+    assert window.background_tasks.is_running("phonebook-list-settings")
+    assert window.background_tasks.is_running("phonebook-list-import")
+    release.set()
+    qtbot.waitUntil(
+        lambda: not window.background_tasks.is_running("phonebook-list-settings")
+        and not window.background_tasks.is_running("phonebook-list-import"),
+        timeout=2000,
+    )
+
+
+@pytest.mark.parametrize(
+    ("dialog_cls", "open_method", "key"),
+    [
+        (SettingsDialog, "_open_settings_dialog", "phonebook-list-settings"),
+        (PhonebookPickerDialog, "_open_phonebook_import_dialog", "phonebook-list-import"),
+    ],
+)
+def test_closing_dialog_while_phonebook_list_loads_drops_late_result(
+    qtbot, connection, mocker, dialog_cls, open_method, key
+):
+    # Der Dialog wird nach exec() vom MainWindow selbst gelöscht - ein spätes
+    # Ergebnis darf den geschlossenen Dialog nicht mehr erreichen.
+    mocker.patch.object(dialog_cls, "exec", return_value=QDialog.DialogCode.Rejected)
+    late_results = []
+    mocker.patch.object(dialog_cls, "set_phonebooks", lambda self, books: late_results.append(books))
+    release = threading.Event()
+
+    def slow_list():
+        release.wait(5)
+        return [(0, "Telefonbuch")]
+
+    window = _make_window(connection, list_phonebooks=slow_list)
+    qtbot.addWidget(window)
+
+    getattr(window, open_method)()
+    qtbot.waitUntil(lambda: not window.findChildren(dialog_cls), timeout=2000)
+    release.set()
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running(key), timeout=2000)
+    qtbot.wait(50)
+
+    assert late_results == []
+    assert window.isEnabled()
 
 
 def test_open_phonebook_import_dialog_calls_import_from_box_with_selected_ids_on_accept(
@@ -1147,9 +1268,135 @@ def test_open_phonebook_import_dialog_calls_import_from_box_with_selected_ids_on
     )
     mock_import_from_box = mocker.patch.object(PhonebookTab, "import_from_box")
 
-    window = MainWindow(connection, list_phonebooks_fn=None)
+    window = _make_window(connection, list_phonebooks=None)
     qtbot.addWidget(window)
 
     window._open_phonebook_import_dialog()
 
     mock_import_from_box.assert_called_once_with([0, 2])
+
+
+def _accept_credentials(mocker, gateway, new_config):
+    """Der Dialog gilt als angenommen; das Speichern lässt die Zugangsdaten gültig werden."""
+    mocker.patch("fritz_callhistory.gui.main_window.config_module.load", return_value=Config())
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.CredentialsDialog.exec",
+        return_value=QDialog.DialogCode.Accepted,
+    )
+
+    def save(*_args):
+        gateway.has_credentials = True
+        return new_config
+
+    mocker.patch("fritz_callhistory.gui.main_window.CredentialsDialog.save", side_effect=save)
+
+
+def test_credentials_saved_after_start_without_them_enable_all_box_features(
+    qtbot, connection, mocker
+):
+    # Regression #20: Start ohne Passwort, später Zugangsdaten speichern - ohne Neustart.
+    mocker.patch("fritz_callhistory.gui.main_window.QTimer.singleShot")
+    mocker.patch("fritz_callhistory.gui.phonebook_view.QMessageBox.information")
+    gateway = FakeGateway(has_credentials=False)
+    config = Config(address="", sync_interval_minutes=30)
+    window = MainWindow(connection, config, gateway)
+    qtbot.addWidget(window)
+    assert not window._sync_action.isEnabled()
+    assert window._auto_sync_timer is None
+    assert not window._phonebook_import_from_box_action.isEnabled()
+
+    _accept_credentials(mocker, gateway, Config(address="", username="admin"))
+    window._open_credentials_dialog()
+
+    assert window._sync_action.isEnabled()
+    assert window._auto_sync_timer is not None and window._auto_sync_timer.isActive()
+    assert window._phonebook_import_from_box_action.isEnabled()
+
+    window._sync_action.trigger()
+    qtbot.waitUntil(lambda: gateway.count("sync") == 1, timeout=3000)
+
+    window._dial_number("+491234567")
+    qtbot.waitUntil(lambda: ("dial", "+491234567") in gateway.calls, timeout=3000)
+
+    window._phonebook_tab.import_from_box([1])
+    qtbot.waitUntil(lambda: ("import_from_box", [1]) in gateway.calls, timeout=3000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("box-import"), timeout=3000)
+
+
+def test_voicemail_actions_start_after_credentials_become_available(qtbot, connection):
+    gateway = FakeGateway(has_credentials=False)
+    view_window = MainWindow(connection, Config(address=""), gateway)
+    qtbot.addWidget(view_window)
+    VoicemailRepository(connection).insert_or_update(
+        tam_index=0,
+        box_path="/p",
+        caller_number="+491712345678",
+        called_number="+4969123456",
+        message_date="2026-06-01T10:00:00",
+        duration_seconds=4,
+        raw_name=None,
+        is_new=True,
+    )
+    view_window._voicemail_view.reload()
+    message = view_window._voicemail_view._model.message_at(0)
+
+    view_window._voicemail_view._mark_read(message)
+    assert gateway.count("voicemail_mark_read") == 0
+
+    gateway.has_credentials = True
+    view_window._voicemail_view._mark_read(message)
+
+    qtbot.waitUntil(lambda: gateway.count("voicemail_mark_read") == 1, timeout=3000)
+
+
+def test_removed_credentials_disable_sync_and_stop_auto_sync(qtbot, connection, mocker):
+    mocker.patch("fritz_callhistory.gui.main_window.QTimer.singleShot")
+    gateway = FakeGateway(has_credentials=True)
+    window = MainWindow(connection, Config(address="", sync_interval_minutes=30), gateway)
+    qtbot.addWidget(window)
+    assert window._sync_action.isEnabled()
+    assert window._auto_sync_timer.isActive()
+
+    gateway.has_credentials = False
+    window._apply_settings_change(Config(address="", sync_interval_minutes=30))
+
+    assert not window._sync_action.isEnabled()
+    assert not window._auto_sync_timer.isActive()
+
+
+def test_settings_change_reaches_gateway_and_restarts_timer(qtbot, connection):
+    gateway = FakeGateway(has_credentials=True)
+    window = MainWindow(connection, Config(address="", sync_interval_minutes=30), gateway)
+    qtbot.addWidget(window)
+    new_config = Config(address="", sync_interval_minutes=5, phonebook_ids=[2])
+
+    window._apply_settings_change(new_config)
+
+    assert gateway.applied_configs == [new_config]
+    assert window._auto_sync_timer.interval() == 5 * 60 * 1000
+
+
+
+def test_finished_sync_does_not_restart_auto_sync_countdown(qtbot, connection, mocker):
+    gateway = FakeGateway(has_credentials=True)
+    window = MainWindow(connection, Config(address="", sync_interval_minutes=1), gateway)
+    qtbot.addWidget(window)
+    start_spy = mocker.spy(window._auto_sync_timer, "start")
+
+    window._on_sync_finished(0, 0)
+    window._on_sync_failed("Box nicht erreichbar")
+
+    start_spy.assert_not_called()
+    assert window._auto_sync_timer.isActive()
+
+
+def test_unchanged_interval_keeps_auto_sync_countdown(qtbot, connection, mocker):
+    gateway = FakeGateway(has_credentials=True)
+    window = MainWindow(connection, Config(address="", sync_interval_minutes=1), gateway)
+    qtbot.addWidget(window)
+    start_spy = mocker.spy(window._auto_sync_timer, "start")
+
+    window._apply_settings_change(Config(address="", sync_interval_minutes=1, phonebook_ids=[2]))
+
+    start_spy.assert_not_called()
+    assert window._auto_sync_timer.isActive()

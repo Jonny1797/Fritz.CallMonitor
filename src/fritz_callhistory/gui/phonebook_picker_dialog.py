@@ -3,8 +3,8 @@ welche Telefonbücher gerade auf der Box existieren, statt (wie zuvor) die
 Einstellungen-Auswahl mitzubenutzen, die nur die Namensauflösung im Hintergrund
 steuert (siehe settings_dialog.py).
 
-Kennt bewusst weder FritzBoxClient noch Worker-Threads - MainWindow holt die
-Telefonbuchliste selbst (PhonebookListWorker) und reicht das Ergebnis über
+Kennt bewusst weder FritzBoxClient noch Hintergrundaufgaben - MainWindow holt die
+Telefonbuchliste selbst (BackgroundTasks) und reicht das Ergebnis über
 set_phonebooks()/set_phonebooks_unavailable() synchron herein (siehe
 _open_phonebook_import_dialog()). Anders als SettingsDialog gibt es hier keinen
 manuellen ID-Fallback: ohne Box-Verbindung lässt sich ohnehin nichts importieren,
@@ -74,7 +74,7 @@ class PhonebookPickerDialog(QDialog):
         self._ok_button.setEnabled(True)
 
     def set_phonebooks_unavailable(self, message: str) -> None:
-        """Kein list_phonebooks_fn (keine Zugangsdaten) oder Ladefehler - ohne
+        """Keine Zugangsdaten oder Ladefehler - ohne
         Box-Verbindung gibt es nichts auszuwählen, OK bleibt deaktiviert und nur
         Abbrechen führt weiter."""
         self._status_label.setText(message)

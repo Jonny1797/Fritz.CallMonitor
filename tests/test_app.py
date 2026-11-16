@@ -1,404 +1,4 @@
-from fritz_callhistory.app import (
-    _build_dial_fn,
-    _build_import_from_box_fn,
-    _build_sync_fn,
-    _build_test_credentials_fn,
-    _build_voicemail_audio_fn,
-    _build_voicemail_delete_fn,
-    _build_voicemail_mark_read_fn,
-    _CredentialsRef,
-    _handle_sigint,
-)
-from fritz_callhistory.config import Config
-from fritz_callhistory.db.connection import connect
-from fritz_callhistory.db.repository import LocalPhonebookRepository, VoicemailMessageRecord
-from fritz_callhistory.fritz.client import (
-    FritzPhonebookContact,
-    FritzPhonebookNumber,
-    VoicemailMessage,
-)
-from fritz_callhistory.gui.workers import ImportFromBoxWorker, SyncWorker
-
-
-def test_build_sync_fn_runs_in_real_worker_thread_without_connection_errors(qtbot, tmp_path, mocker):
-    """sync_fn läuft im SyncWorker-QThread, nicht im Test-/GUI-Thread. sqlite3-Connections
-    dürfen nicht threadübergreifend verwendet werden - dieser Test reproduziert also die
-    echten Thread-Grenzen, statt sync_fn direkt (im Test-Thread) aufzurufen."""
-    db_path = tmp_path / "callhistory.sqlite3"
-    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-
-    fake_client = mocker.Mock()
-    fake_client.get_calls.return_value = []
-    fake_client.phonebook_ids.return_value = []
-    fake_client.voicemail_tam_indices.return_value = []
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    sync_fn = _build_sync_fn(cfg)
-    assert sync_fn is not None
-
-    worker = SyncWorker(sync_fn)
-    failures = []
-    worker.sync_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_sync, timeout=3000, raising=True) as blocker:
-        worker.start()
-
-    assert failures == []
-    assert blocker.args == [0, 0]
-
-
-def test_build_sync_fn_reads_updated_credentials_ref_on_retry(qtbot, tmp_path, mocker):
-    """Nach einer im laufenden Betrieb korrigierten CredentialsDialog-Eingabe
-    (MainWindow._on_sync_auth_failed) muss der bereits gebaute sync_fn-Closure
-    beim nächsten Aufruf die neue Adresse/den neuen Benutzernamen verwenden,
-    ohne neu gebaut zu werden - siehe _CredentialsRef."""
-    db_path = tmp_path / "callhistory.sqlite3"
-    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-
-    fake_client = mocker.Mock()
-    fake_client.get_calls.return_value = []
-    fake_client.phonebook_ids.return_value = []
-    fake_client.voicemail_tam_indices.return_value = []
-    fake_client_cls = mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    ref = _CredentialsRef(cfg)
-    sync_fn = _build_sync_fn(cfg, ref)
-    assert sync_fn is not None
-
-    worker = SyncWorker(sync_fn)
-    with qtbot.waitSignal(worker.finished_sync, timeout=3000, raising=True):
-        worker.start()
-    fake_client_cls.assert_called_with("192.168.178.1", "admin", "secret")
-
-    ref.cfg = Config(address="192.168.178.2", username="admin2")
-    worker2 = SyncWorker(sync_fn)
-    with qtbot.waitSignal(worker2.finished_sync, timeout=3000, raising=True):
-        worker2.start()
-    fake_client_cls.assert_called_with("192.168.178.2", "admin2", "secret")
-
-
-def test_build_test_credentials_fn_verifies_login_via_get_calls(mocker):
-    """Reines FritzBoxClient(...)-Konstruieren reicht nicht, um ein falsches Passwort
-    zu erkennen (fritzconnection prüft den Login erst beim ersten authentifizierten
-    Aufruf) - _build_test_credentials_fn muss deshalb zusätzlich get_calls() rufen."""
-    fake_client = mocker.Mock()
-    fake_client_cls = mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    test_fn = _build_test_credentials_fn()
-    test_fn("192.168.178.1", "admin", "secret")
-
-    fake_client_cls.assert_called_once_with("192.168.178.1", "admin", "secret")
-    fake_client.get_calls.assert_called_once_with(num=1)
-
-
-def test_build_dial_fn_reads_updated_credentials_ref_on_next_call(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-    fake_client = mocker.Mock()
-    fake_client_cls = mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    ref = _CredentialsRef(cfg)
-    dial_fn = _build_dial_fn(cfg, ref)
-    assert dial_fn is not None
-
-    dial_fn("+491234567")
-    fake_client_cls.assert_called_with("192.168.178.1", "admin", "secret")
-
-    ref.cfg = Config(address="192.168.178.2", username="admin2")
-    dial_fn("+491234567")
-    fake_client_cls.assert_called_with("192.168.178.2", "admin2", "secret")
-
-
-def test_build_import_from_box_fn_runs_in_real_worker_thread_and_creates_contact(
-    qtbot, tmp_path, mocker
-):
-    db_path = tmp_path / "callhistory.sqlite3"
-    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-
-    fake_client = mocker.Mock()
-    fake_client.phonebook_contacts_detailed.return_value = [
-        FritzPhonebookContact(
-            uniqueid="7",
-            name="Max Mustermann",
-            category="0",
-            numbers=[FritzPhonebookNumber(value="0171 2345678", type="mobile")],
-        )
-    ]
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    import_fn = _build_import_from_box_fn(cfg)
-    assert import_fn is not None
-
-    worker = ImportFromBoxWorker(import_fn, [0])
-    failures = []
-    worker.import_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True) as blocker:
-        worker.start()
-
-    assert failures == []
-    assert blocker.args == [1]
-
-    connection = connect(db_path)
-    contacts = LocalPhonebookRepository(connection).list_all()
-    connection.close()
-    assert len(contacts) == 1
-    assert contacts[0].display_name == "Max Mustermann"
-    assert contacts[0].box_uniqueid == "7"
-
-
-def test_build_import_from_box_fn_preserves_default_number_across_reimport(
-    qtbot, tmp_path, mocker
-):
-    # Regression test: die Box kennt kein "Standardnummer"-Konzept, und
-    # LocalPhonebookRepository.update() ersetzt bei jedem Re-Import alle
-    # Nummern-Zeilen komplett - ohne explizites Matching per number_normalized
-    # würde eine zuvor lokal gesetzte Standardnummer beim nächsten
-    # "Von Box importieren" stillschweigend verloren gehen (siehe app.py's
-    # _build_import_from_box_fn).
-    db_path = tmp_path / "callhistory.sqlite3"
-    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-
-    connection = connect(db_path)
-    local_repo = LocalPhonebookRepository(connection)
-    contact_id = local_repo.create(
-        display_name="Max Mustermann",
-        notes=None,
-        numbers=[
-            ("0171 2345678", "+491712345678", "mobile", False),
-            ("030 1234567", "+49301234567", "home", True),
-        ],
-        box_uniqueid="7",
-    )
-    connection.close()
-
-    fake_client = mocker.Mock()
-    fake_client.phonebook_contacts_detailed.return_value = [
-        FritzPhonebookContact(
-            uniqueid="7",
-            name="Max Mustermann",
-            category="0",
-            numbers=[
-                FritzPhonebookNumber(value="0171 2345678", type="mobile"),
-                FritzPhonebookNumber(value="030 1234567", type="home"),
-            ],
-        )
-    ]
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    import_fn = _build_import_from_box_fn(cfg)
-    assert import_fn is not None
-
-    worker = ImportFromBoxWorker(import_fn, [0])
-    failures = []
-    worker.import_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True):
-        worker.start()
-
-    assert failures == []
-
-    connection = connect(db_path)
-    contact = LocalPhonebookRepository(connection).get(contact_id)
-    connection.close()
-    assert {n.number_normalized: n.is_default for n in contact.numbers} == {
-        "+491712345678": False,
-        "+49301234567": True,
-    }
-
-
-def test_build_import_from_box_fn_only_queries_selected_phonebook_ids(qtbot, tmp_path, mocker):
-    # Regression guard for the "picker chooses ids at import time" split: the
-    # closure must use exactly the ids ImportFromBoxWorker passes it, not fall
-    # back to every phonebook the box has (that fallback was removed together
-    # with the config-driven "Von Box importieren" selection).
-    db_path = tmp_path / "callhistory.sqlite3"
-    mocker.patch("fritz_callhistory.app.database_file", return_value=db_path)
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-
-    fake_client = mocker.Mock()
-    fake_client.phonebook_contacts_detailed.return_value = []
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    import_fn = _build_import_from_box_fn(cfg)
-    assert import_fn is not None
-
-    worker = ImportFromBoxWorker(import_fn, [2])
-    failures = []
-    worker.import_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True):
-        worker.start()
-
-    assert failures == []
-    fake_client.phonebook_contacts_detailed.assert_called_once_with(2)
-
-
-def test_build_import_from_box_fn_returns_none_without_stored_password(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value=None)
-    cfg = Config(address="192.168.178.1", username="admin")
-
-    assert _build_import_from_box_fn(cfg) is None
-
-
-def test_build_voicemail_audio_fn_returns_none_without_stored_password(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value=None)
-    cfg = Config(address="192.168.178.1", username="admin")
-
-    assert _build_voicemail_audio_fn(cfg) is None
-
-
-def test_build_voicemail_audio_fn_fetches_audio_and_marks_read(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-
-    fake_client = mocker.Mock()
-    fake_client.voicemail_audio.return_value = b"RIFF..."
-    matching_message = VoicemailMessage(
-        tam_index=0,
-        box_index=3,
-        caller_number="0171 2345678",
-        called_number="06898123456",
-        date="2026-06-01T10:00:00",
-        duration_seconds=4,
-        name=None,
-        path="/download.lua?path=/data/tam/rec/rec.0.003",
-        is_new=True,
-    )
-    fake_client.voicemail_messages.return_value = [matching_message]
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    audio_fn = _build_voicemail_audio_fn(cfg)
-    assert audio_fn is not None
-
-    record = VoicemailMessageRecord(
-        id=1,
-        tam_index=0,
-        box_path="/download.lua?path=/data/tam/rec/rec.0.003",
-        caller_number="0171 2345678",
-        called_number="06898123456",
-        message_date="2026-06-01T10:00:00",
-        duration_seconds=4,
-        raw_name=None,
-        is_new=True,
-    )
-
-    audio = audio_fn(record)
-
-    assert audio == b"RIFF..."
-    fake_client.voicemail_audio.assert_called_once_with(record.box_path)
-    fake_client.voicemail_mark_read.assert_called_once_with(0, 3)
-
-
-def _matching_voicemail_message() -> VoicemailMessage:
-    return VoicemailMessage(
-        tam_index=0,
-        box_index=3,
-        caller_number="0171 2345678",
-        called_number="06898123456",
-        date="2026-06-01T10:00:00",
-        duration_seconds=4,
-        name=None,
-        path="/download.lua?path=/data/tam/rec/rec.0.003",
-        is_new=True,
-    )
-
-
-def _voicemail_record() -> VoicemailMessageRecord:
-    return VoicemailMessageRecord(
-        id=1,
-        tam_index=0,
-        box_path="/download.lua?path=/data/tam/rec/rec.0.003",
-        caller_number="0171 2345678",
-        called_number="06898123456",
-        message_date="2026-06-01T10:00:00",
-        duration_seconds=4,
-        raw_name=None,
-        is_new=True,
-    )
-
-
-def test_build_voicemail_mark_read_fn_returns_none_without_stored_password(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value=None)
-    cfg = Config(address="192.168.178.1", username="admin")
-
-    assert _build_voicemail_mark_read_fn(cfg) is None
-
-
-def test_build_voicemail_mark_read_fn_resolves_box_index_and_marks_read(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-    fake_client = mocker.Mock()
-    fake_client.voicemail_messages.return_value = [_matching_voicemail_message()]
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    mark_read_fn = _build_voicemail_mark_read_fn(cfg)
-    assert mark_read_fn is not None
-
-    mark_read_fn(_voicemail_record())
-
-    fake_client.voicemail_mark_read.assert_called_once_with(0, 3)
-
-
-def test_build_voicemail_mark_read_fn_does_nothing_when_message_gone_from_box(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-    fake_client = mocker.Mock()
-    fake_client.voicemail_messages.return_value = []
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    mark_read_fn = _build_voicemail_mark_read_fn(cfg)
-    assert mark_read_fn is not None
-
-    mark_read_fn(_voicemail_record())
-
-    fake_client.voicemail_mark_read.assert_not_called()
-
-
-def test_build_voicemail_delete_fn_returns_none_without_stored_password(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value=None)
-    cfg = Config(address="192.168.178.1", username="admin")
-
-    assert _build_voicemail_delete_fn(cfg) is None
-
-
-def test_build_voicemail_delete_fn_resolves_box_index_and_deletes(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-    fake_client = mocker.Mock()
-    fake_client.voicemail_messages.return_value = [_matching_voicemail_message()]
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    delete_fn = _build_voicemail_delete_fn(cfg)
-    assert delete_fn is not None
-
-    delete_fn(_voicemail_record())
-
-    fake_client.voicemail_delete.assert_called_once_with(0, 3)
-
-
-def test_build_voicemail_delete_fn_does_nothing_when_message_gone_from_box(mocker):
-    mocker.patch("fritz_callhistory.app.credentials.get_password", return_value="secret")
-    fake_client = mocker.Mock()
-    fake_client.voicemail_messages.return_value = []
-    mocker.patch("fritz_callhistory.app.FritzBoxClient", return_value=fake_client)
-
-    cfg = Config(address="192.168.178.1", username="admin")
-    delete_fn = _build_voicemail_delete_fn(cfg)
-    assert delete_fn is not None
-
-    delete_fn(_voicemail_record())
-
-    fake_client.voicemail_delete.assert_not_called()
+from fritz_callhistory.app import _handle_sigint
 
 
 def test_sigint_handler_forces_immediate_exit_unconditionally(mocker):
@@ -412,3 +12,50 @@ def test_sigint_handler_forces_immediate_exit_unconditionally(mocker):
     _handle_sigint()
 
     force_exit.assert_called_once_with(130)
+
+
+def test_first_start_cancel_during_slow_check_waits_without_forced_exit(qtbot, mocker):
+    # Abbruch während einer langsamen Prüfung beim ersten Start: Es wird auf die
+    # laufende Prüfung gewartet, aber die App darf dabei nicht per Failsafe
+    # (os._exit) beendet werden - der Nutzer will ja ohne Zugangsdaten weiter.
+    import threading
+
+    from PySide6.QtWidgets import QDialog
+
+    from fritz_callhistory import app as app_module
+    from fritz_callhistory.config import Config
+    from fritz_callhistory.gui.background_tasks import BackgroundTasks
+
+    exits = []
+    created = []
+
+    def tasks_factory():
+        tasks = BackgroundTasks(exit_fn=lambda: exits.append(1), failsafe_timeout_s=0.05)
+        created.append(tasks)
+        return tasks
+
+    release = threading.Event()
+
+    class SlowCheckDialog:
+        def __init__(self, cfg, tasks, gateway):
+            self._tasks = tasks
+
+        def exec(self):
+            from PySide6.QtCore import QObject
+
+            self._context = QObject()
+            self._tasks.start(
+                lambda: release.wait(5), self._context, lambda _r: None, lambda _e: None
+            )
+            # Prüfung läuft länger als der Failsafe; Nutzer bricht sofort ab.
+            threading.Timer(0.3, release.set).start()
+            return QDialog.DialogCode.Rejected
+
+    mocker.patch.object(app_module, "BackgroundTasks", side_effect=tasks_factory)
+    mocker.patch.object(app_module, "CredentialsDialog", SlowCheckDialog)
+
+    cfg = Config()
+    assert app_module._run_first_start_dialog(cfg, gateway=None) is cfg
+
+    assert created[0].is_idle()
+    assert exits == []

@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Credentials entered after cancelling the startup dialog now enable sync, dialing, Box
+  import and Anrufbeantworter actions without a restart.
+- Searching by number now also finds calls that are ringing or in progress (same
+  matching rules as stored calls).
+- Deleting a Telefonbuch contact no longer leaves its name on the call history:
+  the name is cleared (or falls back to the Box Telefonbuch name) right away.
+- Anrufbeantworter and Telefonbuch actions can no longer start while the app is
+  quitting.
+- No message boxes appear while the app is quitting.
+- The settings and Box-import dialogs are freed when closed; a phonebook list that
+  arrives after closing is dropped instead of reaching the hidden dialog.
+
 ### Changed
 
+- The Anrufbeantworter shows names from the local Telefonbuch, the same as the
+  call list.
+- Caller names are now resolved in one place (the Caller directory): the
+  incoming-call popup and the name refresh after syncs and Telefonbuch changes
+  use the same rules.
+- Cancel is available while credentials are being checked.
 - `SyncService.sync_calls()`/`sync_voicemail()` now commit once per full sync
   instead of once per synced call/voicemail message. Sync is idempotent and
   safely re-runnable, so a batch left uncommitted by a hard kill mid-sync is

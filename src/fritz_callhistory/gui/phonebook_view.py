@@ -41,7 +41,9 @@ from fritz_callhistory.gui.models import (
     install_tristate_sorting,
     selected_source_row,
 )
-from fritz_callhistory.gui.workers import ImportFromBoxFn, ImportFromBoxWorker
+from fritz_callhistory.fritz.exceptions import FritzBoxError
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
+from fritz_callhistory.sync.box_gateway import BoxGateway
 from fritz_callhistory.sync.phonebook_io import (
     ImportedContact,
     ImportedNumber,
@@ -55,12 +57,15 @@ from fritz_callhistory.sync.phonebook_io import (
     write_xml,
 )
 from fritz_callhistory.sync.normalize import normalize_number
-from fritz_callhistory.sync.service import resolve_contact_names
+from fritz_callhistory.sync.caller_directory import CallerDirectory
 
 _IMPORT_FILTER = "Fritz!Box-Telefonbuch (*.xml);;CSV (*.csv);;vCard (*.vcf)"
 _EXPORT_FILTER = "Fritz!Box-Telefonbuch (*.xml);;CSV (*.csv);;vCard (*.vcf)"
 _PARSERS = {".xml": parse_xml, ".csv": parse_csv, ".vcf": parse_vcard}
 _WRITERS = {".xml": write_xml, ".csv": write_csv, ".vcf": write_vcard}
+
+
+_IMPORT_KEY = "box-import"
 
 
 class PhonebookTab(QWidget):
@@ -71,7 +76,8 @@ class PhonebookTab(QWidget):
     def __init__(
         self,
         connection: sqlite3.Connection,
-        import_from_box_fn: ImportFromBoxFn | None = None,
+        background_tasks: BackgroundTasks,
+        gateway: BoxGateway,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -79,11 +85,8 @@ class PhonebookTab(QWidget):
         self._repo = LocalPhonebookRepository(connection)
         self._contacts_repo = ContactRepository(connection)
         self._phonebook_repo = PhonebookRepository(connection)
-        self._import_from_box_fn = import_from_box_fn
-        self._import_thread: ImportFromBoxWorker | None = None
-        # Wird von MainWindow.closeEvent() gelesen, um das Fenster nicht zu
-        # schliessen, während dieser Thread noch in seinem blockierenden
-        # Netzwerkaufruf steckt (gleicher Grund wie bei SyncWorker).
+        self._gateway = gateway
+        self._background_tasks = background_tasks
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Suche nach Name …")
@@ -134,12 +137,8 @@ class PhonebookTab(QWidget):
         self._reload()
 
     @property
-    def import_thread(self) -> ImportFromBoxWorker | None:
-        return self._import_thread
-
-    @property
     def can_import_from_box(self) -> bool:
-        return self._import_from_box_fn is not None
+        return self._gateway.has_credentials and not self._background_tasks.is_running(_IMPORT_KEY)
 
     def _reload(self) -> None:
         self._model.set_contacts(self._repo.list_all(self._search_edit.text()))
@@ -164,7 +163,8 @@ class PhonebookTab(QWidget):
 
     def _after_local_change(self) -> None:
         self._reload()
-        updated = resolve_contact_names(self._contacts_repo, self._phonebook_repo, self._repo)
+        directory = CallerDirectory(self._contacts_repo, self._phonebook_repo, self._repo)
+        updated = directory.refresh_names()
         if updated:
             self.contacts_changed.emit()
 
@@ -222,7 +222,7 @@ class PhonebookTab(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._repo.delete(contact_id)
-        self._reload()
+        self._after_local_change()
 
     def import_from_file(self) -> None:
         path_str, _selected_filter = QFileDialog.getOpenFileName(
@@ -282,26 +282,26 @@ class PhonebookTab(QWidget):
         """*phonebook_ids* kommt aus MainWindow._open_phonebook_import_dialog()'s
         PhonebookPickerDialog - die Auswahl dort dient bereits als Bestätigung,
         daher kein zusätzlicher QMessageBox.question() mehr hier."""
-        if self._import_from_box_fn is None or (
-            self._import_thread is not None and self._import_thread.isRunning()
-        ):
+        if not self._gateway.has_credentials or self._background_tasks.is_running(_IMPORT_KEY):
             return
 
-        self.import_from_box_availability_changed.emit(False)
-        self._import_thread = ImportFromBoxWorker(
-            self._import_from_box_fn, phonebook_ids, parent=self
+        started = self._background_tasks.start(
+            lambda: self._gateway.import_from_box(phonebook_ids),
+            self,
+            self._on_import_from_box_finished,
+            self._on_import_from_box_failed,
+            key=_IMPORT_KEY,
         )
-        self._import_thread.finished_import.connect(self._on_import_from_box_finished)
-        self._import_thread.import_failed.connect(self._on_import_from_box_failed)
-        self._import_thread.start()
+        if started:
+            self.import_from_box_availability_changed.emit(False)
 
-    def _on_import_from_box_finished(self, imported: int) -> None:
+    def _on_import_from_box_finished(self, imported: object) -> None:
         self.import_from_box_availability_changed.emit(self.can_import_from_box)
         QMessageBox.information(
             self, "Import abgeschlossen", f"{imported} Kontakt(e) von der Box importiert/aktualisiert."
         )
         self._after_local_change()
 
-    def _on_import_from_box_failed(self, message: str) -> None:
+    def _on_import_from_box_failed(self, error: FritzBoxError) -> None:
         self.import_from_box_availability_changed.emit(self.can_import_from_box)
-        QMessageBox.critical(self, "Import fehlgeschlagen", message)
+        QMessageBox.critical(self, "Import fehlgeschlagen", str(error))

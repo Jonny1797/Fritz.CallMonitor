@@ -16,3 +16,10 @@ def connection():
     migrate(conn)
     yield conn
     conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_call_monitor(mocker):
+    """MainWindow startet den CallMonitor, sobald die Config eine Adresse hat - in Tests
+    darf dabei keine echte Verbindung aufgebaut werden (Tests können erneut patchen)."""
+    mocker.patch("fritz_callhistory.gui.main_window.CallMonitorThread")

@@ -15,20 +15,26 @@ _NUMBER_SEARCH_SEPARATORS = str.maketrans("", "", " -()/")
 _NUMBER_SEARCH_PATTERN = re.compile(r"\+?[0-9]+")
 
 
-def _number_search_patterns(query: str) -> list[str]:
-    """Zusätzliche LIKE-Muster, damit z.B. "0176" auch in E.164-normalisierten
-    Nummern wie "+49176123456" gefunden wird - die DB speichert stets E.164,
+def number_search_spellings(query: str) -> list[str]:
+    """Teilstrings, nach denen eine Nummernsuche sucht (einzige Definition, genutzt von
+    der SQL-Suche und von CallerDirectory.matches), damit z.B. "0176" auch in
+    E.164-normalisierten Nummern wie "+49176123456" gefunden wird - die DB speichert stets E.164,
     aber ein Suchfeld bekommt naheliegenderweise oft die Nummer in nationaler
     (oder international mit führenden Nullen statt "+") Schreibweise."""
-    patterns = [f"%{query}%"]
+    patterns = [query]
     cleaned = query.translate(_NUMBER_SEARCH_SEPARATORS)
     if not _NUMBER_SEARCH_PATTERN.fullmatch(cleaned or ""):
         return patterns
     if cleaned.startswith("00") and len(cleaned) > 4:
-        patterns.append(f"%+{cleaned[2:]}%")
+        patterns.append(f"+{cleaned[2:]}")
     elif cleaned.startswith("0") and len(cleaned) > 3:
-        patterns.append(f"%+49{cleaned[1:]}%")
+        patterns.append(f"+49{cleaned[1:]}")
     return patterns
+
+
+def _number_search_patterns(query: str) -> list[str]:
+    """LIKE-Muster zu den Schreibweisen aus number_search_spellings."""
+    return [f"%{spelling}%" for spelling in number_search_spellings(query)]
 
 
 @dataclass
@@ -100,7 +106,7 @@ class ContactRepository:
         )
         self._conn.commit()
 
-    def set_display_names(self, updates: dict[int, str]) -> None:
+    def set_display_names(self, updates: dict[int, str | None]) -> None:
         """Batched Variante von set_display_name für viele Kontakte in einer Transaktion."""
         if not updates:
             return
@@ -134,6 +140,20 @@ class ContactRepository:
         # primary_number ist UNIQUE: WHERE liefert höchstens eine Zeile.
         rows = self._query("c.primary_number = ?", (primary_number,))
         return rows[0] if rows else None
+
+    def ids_for_numbers(self, numbers: list[str]) -> dict[str, int]:
+        """primary_number -> id für die vorhandenen Nummern (in Blöcken, wegen des
+        SQLite-Variablenlimits)."""
+        found: dict[str, int] = {}
+        for start in range(0, len(numbers), 500):
+            chunk = numbers[start : start + 500]
+            placeholders = ", ".join("?" * len(chunk))
+            rows = self._conn.execute(
+                f"SELECT id, primary_number FROM contacts WHERE primary_number IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            found.update({row["primary_number"]: row["id"] for row in rows})
+        return found
 
     def search(self, query: str = "") -> list[Contact]:
         name_pattern = f"%{query}%"
@@ -344,8 +364,7 @@ class PhonebookRepository:
     def all_names(self) -> dict[str, str]:
         """number_normalized -> name für alle Einträge. Bei mehreren Telefonbüchern mit
         derselben Nummer gewinnt die niedrigste phonebook_id (ORDER BY ASC + first-wins
-        via setdefault) - dieselbe Priorität, die die frühere lookup_name-Einzelabfrage
-        per ORDER BY phonebook_id LIMIT 1 pro Nummer hatte."""
+        via setdefault)."""
         names: dict[str, str] = {}
         rows = self._conn.execute(
             "SELECT number_normalized, name FROM phonebook_entries ORDER BY phonebook_id"
@@ -484,38 +503,25 @@ class LocalPhonebookRepository:
         self._conn.execute("DELETE FROM phonebook_contacts WHERE id = ?", (contact_id,))
         self._conn.commit()
 
-    def lookup_name(self, number_normalized: str) -> str | None:
-        row = self._conn.execute(
-            """
-            SELECT pc.display_name AS display_name
-            FROM phonebook_contact_numbers pcn
-            JOIN phonebook_contacts pc ON pc.id = pcn.phonebook_contact_id
-            WHERE pcn.number_normalized = ?
-            ORDER BY pc.id LIMIT 1
-            """,
-            (number_normalized,),
-        ).fetchone()
-        return row["display_name"] if row else None
-
-    def all_names(self) -> dict[str, str]:
-        """number_normalized -> display_name für alle Kontakte. Bei mehreren Kontakten mit
-        derselben Nummer gewinnt die niedrigste phonebook_contact_id - dieselbe Priorität,
-        die die frühere lookup_name-Einzelabfrage per ORDER BY pc.id LIMIT 1 pro Nummer hatte."""
-        names: dict[str, str] = {}
+    def all_entries(self) -> dict[str, tuple[str, str | None]]:
+        """number_normalized -> (display_name, notes) für alle Kontakte. Bei mehreren
+        Kontakten mit derselben Nummer gewinnt die niedrigste phonebook_contact_id."""
+        entries: dict[str, tuple[str, str | None]] = {}
         rows = self._conn.execute(
             """
-            SELECT pcn.number_normalized AS number_normalized, pc.display_name AS display_name
+            SELECT pcn.number_normalized AS number_normalized,
+                   pc.display_name AS display_name, pc.notes AS notes
             FROM phonebook_contact_numbers pcn
             JOIN phonebook_contacts pc ON pc.id = pcn.phonebook_contact_id
             ORDER BY pc.id
             """
         ).fetchall()
         for row in rows:
-            names.setdefault(row["number_normalized"], row["display_name"])
-        return names
+            entries.setdefault(row["number_normalized"], (row["display_name"], row["notes"]))
+        return entries
 
     def find_by_number(self, number_normalized: str) -> LocalPhonebookContact | None:
-        """Wie lookup_name, aber gibt den vollen Kontakt zurück - für den
+        """Gibt den vollen Kontakt zur Nummer zurück - für den
         Doppelklick-auf-Nummer-Einstiegspunkt (gui/phonebook_view.py's
         add_or_edit_number), der entscheiden muss, ob bearbeitet oder neu
         angelegt wird."""
@@ -568,7 +574,7 @@ class LocalPhonebookRepository:
         """Wie all_numbers_belong_to_one_contact, aber nur unter Kontakten ohne
         box_uniqueid - die "Adoptieren"-Heuristik beim Box-Import: ein zuvor
         lokal angelegter Kontakt wird mit dem passenden Box-Eintrag verknüpft,
-        statt dupliziert zu werden (siehe app.py's _build_import_from_box_fn)."""
+        statt dupliziert zu werden (siehe sync/phonebook_io.py's import_from_box)."""
         if not numbers_normalized:
             return None
         rows = self._conn.execute(

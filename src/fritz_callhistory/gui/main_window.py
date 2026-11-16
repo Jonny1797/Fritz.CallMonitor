@@ -3,11 +3,9 @@ Suche, Detailansicht und Sync-Aktion im Menü (im Hintergrund-Thread)."""
 
 from __future__ import annotations
 
-import os
 import sqlite3
-from collections.abc import Callable
 
-from PySide6.QtCore import QThread, QTimer, Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,7 +21,12 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
-from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
+from fritz_callhistory.db.repository import (
+    ContactRepository,
+    LocalPhonebookRepository,
+)
+from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxError
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
@@ -32,24 +35,16 @@ from fritz_callhistory.gui.incoming_call_popup import IncomingCallPopup
 from fritz_callhistory.gui.phonebook_picker_dialog import PhonebookPickerDialog
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from fritz_callhistory.gui.settings_dialog import SettingsDialog
-from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn, VoicemailView
-from fritz_callhistory.gui.workers import (
-    DialFn,
-    DialWorker,
-    ImportFromBoxFn,
-    ListPhonebooksFn,
-    PhonebookListWorker,
-    SyncFn,
-    SyncWorker,
-    TestCredentialsFn,
-)
-from fritz_callhistory.sync.normalize import format_number_display, normalize_number
+from fritz_callhistory.gui.voicemail_view import VoicemailView
+from fritz_callhistory.sync.box_gateway import BoxGateway
+from fritz_callhistory.sync.caller_directory import CallerDirectory
+from fritz_callhistory.sync.normalize import format_number_display
 
-# Letzte Absicherung für closeEvent(): SyncWorker/ImportFromBoxWorker haben
+# Letzte Absicherung für closeEvent(): Sync und Box-Import haben
 # in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
 # hängenden DNS-Lookup ab (socket.getaddrinfo() kennt kein Timeout). Damit
 # das Beenden trotzdem nie unbegrenzt hängen bleibt, wird nach dieser Frist
-# hart abgebrochen, falls dann immer noch ein Worker-Thread läuft.
+# hart abgebrochen, falls dann immer noch eine Hintergrundaufgabe läuft.
 _SHUTDOWN_FAILSAFE_MS = 30_000
 
 
@@ -57,48 +52,30 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         connection: sqlite3.Connection,
-        sync_fn: SyncFn | None = None,
-        auto_sync_interval_minutes: int | None = None,
-        fritzbox_address: str | None = None,
-        import_from_box_fn: ImportFromBoxFn | None = None,
-        show_incoming_call_popup: bool = True,
-        dial_fn: DialFn | None = None,
-        voicemail_audio_fn: AudioFetchFn | None = None,
-        voicemail_mark_read_fn: VoicemailActionFn | None = None,
-        voicemail_delete_fn: VoicemailActionFn | None = None,
-        config: Config | None = None,
-        list_phonebooks_fn: ListPhonebooksFn | None = None,
-        update_credentials_fn: Callable[[Config], None] | None = None,
-        test_credentials_fn: TestCredentialsFn | None = None,
+        config: Config,
+        gateway: BoxGateway,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Fritz!Box Anrufhistorie")
         self.resize(900, 600)
 
-        self._sync_fn = sync_fn
-        self._sync_thread: SyncWorker | None = None
-        self._dial_fn = dial_fn
-        self._dial_thread: DialWorker | None = None
-        self._config = config or Config()
-        self._list_phonebooks_fn = list_phonebooks_fn
-        self._phonebook_list_thread: PhonebookListWorker | None = None
-        self._phonebook_import_list_thread: PhonebookListWorker | None = None
-        self._close_requested = False
+        # Besitzer aller einmaligen Hintergrundaufgaben (Sync, Wählen, Beenden-Ablauf).
+        self.background_tasks = BackgroundTasks(
+            self, failsafe_timeout_s=_SHUTDOWN_FAILSAFE_MS / 1000
+        )
+        self._gateway = gateway
+        self._config = config
         self._quit_requested = False
-        self._shutdown_failsafe_timer: QTimer | None = None
-        self._update_credentials_fn = update_credentials_fn
-        self._test_credentials_fn = test_credentials_fn
         self._sync_auth_declined = False
         self._last_sync_user_initiated = False
 
         self._contacts_repo = ContactRepository(connection)
         self._local_phonebook_repo = LocalPhonebookRepository(connection)
-        self._show_incoming_call_popup = show_incoming_call_popup
+        self._caller_directory = CallerDirectory.for_connection(connection)
+        self._show_incoming_call_popup = config.show_incoming_call_popup
         self._incoming_call_popups: dict[str, IncomingCallPopup] = {}
-        # Vorab auf None statt erst im folgenden if-Block (siehe unten) - so
-        # kann _apply_settings_change() dieses Attribut immer sicher lesen,
-        # auch wenn beim Start noch kein Timer angelegt wurde (kein sync_fn
-        # oder auto_sync_interval_minutes == 0 in der TOML).
+        # Vorab auf None: _refresh_credentials_state() legt den Timer erst an,
+        # sobald Zugangsdaten vorhanden sind und ein Intervall konfiguriert ist.
         self._auto_sync_timer: QTimer | None = None
 
         self._calls_tab = CallsTab(connection)
@@ -108,16 +85,15 @@ class MainWindow(QMainWindow):
 
         self._voicemail_view = VoicemailView(
             connection,
-            audio_fetch_fn=voicemail_audio_fn,
-            mark_read_fn=voicemail_mark_read_fn,
-            delete_fn=voicemail_delete_fn,
+            self.background_tasks,
+            gateway,
         )
         self._voicemail_view.call_requested.connect(self._dial_number)
         self._voicemail_view.new_voicemail_count_changed.connect(
             self._on_new_voicemail_count_changed
         )
 
-        self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
+        self._phonebook_tab = PhonebookTab(connection, self.background_tasks, gateway)
         self._phonebook_tab.contacts_changed.connect(self._calls_tab.reload_contacts)
         self._phonebook_tab.call_requested.connect(self._dial_number)
         self._calls_tab.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
@@ -148,7 +124,7 @@ class MainWindow(QMainWindow):
         self._sync_action = QAction("Jetzt synchronisieren", self)
         self._sync_action.setShortcut(QKeySequence("F5"))
         self._sync_action.triggered.connect(lambda: self._trigger_sync(user_initiated=True))
-        self._sync_action.setEnabled(self._sync_fn is not None)
+        self._sync_action.setEnabled(gateway.has_credentials)
 
         self._settings_action = QAction("Einstellungen…", self)
         self._settings_action.triggered.connect(self._open_settings_dialog)
@@ -196,11 +172,7 @@ class MainWindow(QMainWindow):
         for i, shortcut in enumerate(self._tab_shortcuts):
             shortcut.activated.connect(lambda index=i: self._tabs.setCurrentIndex(index))
 
-        if auto_sync_interval_minutes and self._sync_fn is not None:
-            self._auto_sync_timer = QTimer(self)
-            self._auto_sync_timer.setInterval(auto_sync_interval_minutes * 60 * 1000)
-            self._auto_sync_timer.timeout.connect(self._trigger_sync)
-            self._auto_sync_timer.start()
+        self._refresh_credentials_state()
 
         # Verzögert per singleShot(0, ...) statt direktem Aufruf: so kehrt
         # __init__ zuerst zurück und das Fenster wird sichtbar, bevor der
@@ -229,8 +201,8 @@ class MainWindow(QMainWindow):
 
         self._call_monitor: CallMonitorThread | None = None
         self._call_monitor_connection_lost_shown = False
-        if fritzbox_address:
-            self._call_monitor = CallMonitorThread(fritzbox_address, parent=self)
+        if config.address:
+            self._call_monitor = CallMonitorThread(config.address, parent=self)
             self._call_monitor.ring.connect(self._on_ring)
             self._call_monitor.ring.connect(self._calls_tab.on_live_ring)
             self._call_monitor.connected.connect(self._calls_tab.on_live_connected)
@@ -241,65 +213,27 @@ class MainWindow(QMainWindow):
             self._call_monitor.connection_lost.connect(self._calls_tab.clear_live_calls)
             self._call_monitor.start()
 
-    def _busy_worker_threads(self) -> list[QThread]:
-        """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker/
-        VoicemailActionWorker/PhonebookListWorker (beide Instanzen) führen einen
-        einzelnen blockierenden Netzwerkaufruf ohne Abbruchpunkte aus - alle
-        müssen hier erkannt werden, damit closeEvent() das Fenster nicht
-        schliesst, während einer von ihnen noch läuft (siehe closeEvent() für
-        die Begründung)."""
-        threads: list[QThread] = []
-        if self._sync_thread is not None and self._sync_thread.isRunning():
-            threads.append(self._sync_thread)
-        import_thread = self._phonebook_tab.import_thread
-        if import_thread is not None and import_thread.isRunning():
-            threads.append(import_thread)
-        if self._dial_thread is not None and self._dial_thread.isRunning():
-            threads.append(self._dial_thread)
-        audio_thread = self._voicemail_view.audio_thread
-        if audio_thread is not None and audio_thread.isRunning():
-            threads.append(audio_thread)
-        action_thread = self._voicemail_view.action_thread
-        if action_thread is not None and action_thread.isRunning():
-            threads.append(action_thread)
-        if self._phonebook_list_thread is not None and self._phonebook_list_thread.isRunning():
-            threads.append(self._phonebook_list_thread)
-        if (
-            self._phonebook_import_list_thread is not None
-            and self._phonebook_import_list_thread.isRunning()
-        ):
-            threads.append(self._phonebook_import_list_thread)
-        return threads
-
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._config.minimize_to_tray_on_close and not self._quit_requested:
             event.ignore()
             self.hide()
             return
 
-        if not self._close_requested:
-            self._close_requested = True
+        if not self.background_tasks.is_quitting:
             if self._call_monitor is not None:
                 self._call_monitor.stop()
+            # Ab jetzt starten keine Hintergrundaufgaben mehr, ihre Callbacks entfallen.
+            self.background_tasks.begin_quit()
 
-        # Ein festes wait(N) könnte ablaufen, während so ein Thread noch in
-        # seinem HTTP-Request steckt, und Qt würde ihn beim Zerstören des
-        # Fensters mit SIGABRT abbrechen. Stattdessen wird das Fenster nur
-        # versteckt (wirkt für den Nutzer bereits geschlossen); sobald der
-        # letzte betroffene Thread von selbst fertig ist, löst sein
-        # finished-Signal close() erneut aus - dann ist die Liste leer und der
-        # eigentliche Schliessvorgang läuft durch.
-        busy_threads = self._busy_worker_threads()
-        if busy_threads:
+        # Läuft noch eine Hintergrundaufgabe, wird das Fenster nur versteckt (wirkt für
+        # den Nutzer bereits geschlossen); sobald die letzte fertig ist, löst
+        # all_finished close() erneut aus. Der Failsafe liegt in BackgroundTasks.
+        if not self.background_tasks.is_idle():
             self.hide()
             event.ignore()
-            for thread in busy_threads:
-                thread.finished.connect(self.close, Qt.ConnectionType.UniqueConnection)
-            if self._shutdown_failsafe_timer is None:
-                self._shutdown_failsafe_timer = QTimer(self)
-                self._shutdown_failsafe_timer.setSingleShot(True)
-                self._shutdown_failsafe_timer.timeout.connect(self._force_exit_if_still_busy)
-                self._shutdown_failsafe_timer.start(_SHUTDOWN_FAILSAFE_MS)
+            self.background_tasks.all_finished.connect(
+                self.close, Qt.ConnectionType.UniqueConnection
+            )
             return
 
         if self._call_monitor is not None:
@@ -318,15 +252,6 @@ class MainWindow(QMainWindow):
         app_instance = QApplication.instance()
         if app_instance is not None:
             app_instance.quit()
-
-    def _force_exit_if_still_busy(self) -> None:
-        # Feuert nur, wenn ein Worker-Thread _SHUTDOWN_FAILSAFE_MS nach dem
-        # ersten Schliessversuch immer noch läuft - regulär erfolgreiche
-        # Sync-/Import-Vorgänge haben längst über ihr finished-Signal einen
-        # erneuten, diesmal erfolgreichen close() ausgelöst und diese Methode
-        # läuft dann entweder gar nicht mehr oder trifft auf eine leere Liste.
-        if self._busy_worker_threads():
-            os._exit(1)
 
     def _on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (
@@ -350,21 +275,13 @@ class MainWindow(QMainWindow):
         self.close()
 
     def _on_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
-        normalized, is_anonymous = normalize_number(caller_number)
-        contact_id = None
-        notes = None
-        if is_anonymous:
+        identity = self._caller_directory.identify(caller_number)
+        contact_id = identity.caller_id
+        notes = identity.notes
+        if identity.is_anonymous:
             message = "Unbekannte / unterdrückte Nummer"
         else:
-            contact = self._contacts_repo.find_by_number(normalized)
-            message = (
-                contact.display_name
-                if (contact and contact.display_name)
-                else format_number_display(normalized)
-            )
-            contact_id = contact.id if contact else None
-            local_contact = self._local_phonebook_repo.find_by_number(normalized)
-            notes = local_contact.notes if local_contact else None
+            message = identity.label()
         self._tray_icon.showMessage(
             "Eingehender Anruf", message, QSystemTrayIcon.MessageIcon.Information, 8000
         )
@@ -372,7 +289,7 @@ class MainWindow(QMainWindow):
             self._show_incoming_call_window(
                 connection_id,
                 message,
-                "" if is_anonymous else format_number_display(normalized),
+                "" if identity.is_anonymous else format_number_display(identity.number),
                 notes,
                 contact_id,
             )
@@ -446,90 +363,116 @@ class MainWindow(QMainWindow):
         self._tabs.currentWidget().dial_selected()
 
     def _dial_number(self, number: str) -> None:
-        # _close_requested-Check aus demselben Grund wie in _trigger_sync():
-        # ohne ihn könnte ein Rechtsklick kurz vor dem Schliessen noch einen
-        # DialWorker starten, den closeEvent() (das den Schliessvorgang schon
+        # is_quitting-Check: ohne ihn könnte ein Rechtsklick kurz vor dem Schliessen noch einen
+        # Anruf-Versuch starten, den closeEvent() (das den Schliessvorgang schon
         # eingeleitet hat) nicht mehr erwartet.
-        if self._close_requested or self._dial_fn is None:
-            if not self._close_requested:
+        if self.background_tasks.is_quitting or not self._gateway.has_credentials:
+            if not self.background_tasks.is_quitting:
                 self.statusBar().showMessage(
                     "Anrufen nicht verfügbar (keine Zugangsdaten hinterlegt)", 5000
                 )
             return
-        if self._dial_thread is not None and self._dial_thread.isRunning():
+        if self.background_tasks.is_running("dial"):
             self.statusBar().showMessage("Es läuft bereits ein Anruf-Versuch …", 5000)
             return
-        self.statusBar().showMessage(f"Rufe {format_number_display(number)} an …")
+        started = self.background_tasks.start(
+            lambda: self._gateway.dial(number),
+            self,
+            lambda _result: self._on_dial_succeeded(number),
+            lambda exc: self._on_dial_failed(str(exc)),
+            key="dial",
+        )
+        if started:
+            self.statusBar().showMessage(f"Rufe {format_number_display(number)} an …")
 
-        self._dial_thread = DialWorker(lambda: self._dial_fn(number), parent=self)
-        self._dial_thread.dial_succeeded.connect(lambda: self._on_dial_succeeded(number))
-        self._dial_thread.dial_failed.connect(self._on_dial_failed)
-        self._dial_thread.start()
-
-    def _apply_settings_change(self, new_config: Config) -> None:
-        """Wendet eine gerade im Einstellungsdialog gespeicherte Config sofort auf
-        laufenden Zustand an, statt (wie zuvor) einen Neustart zu verlangen.
-        _update_credentials_fn wird hier mitbenutzt, obwohl der Name nach
-        Zugangsdaten klingt: er schreibt tatsächlich nur die komplette Config
-        in credentials_ref.cfg (siehe app.py's _CredentialsRef), aus der
-        _build_sync_fn's Closure bei jedem Sync-Lauf frisch
-        resolved_phonebook_ids() liest - SettingsDialog.save() rührt
-        Adresse/Benutzername/Passwort ohnehin nie an, der Aufruf hier ist also
-        nur ein dritter Nutzer desselben bestehenden Anwendungsfalls."""
-        self._show_incoming_call_popup = new_config.show_incoming_call_popup
-        if self._update_credentials_fn is not None:
-            self._update_credentials_fn(new_config)
-        if self._sync_fn is not None:
+    def _refresh_credentials_state(self) -> None:
+        """Gleicht den eigenen Zustand mit dem Gateway ab (nach Zugangsdaten- oder
+        Einstellungsänderung): Sync-Aktion, Box-Import-Aktion und Auto-Sync-Timer."""
+        has_credentials = self._gateway.has_credentials
+        self._sync_action.setEnabled(
+            has_credentials and not self.background_tasks.is_running("sync")
+        )
+        self._phonebook_import_from_box_action.setEnabled(self._phonebook_tab.can_import_from_box)
+        interval = self._config.sync_interval_minutes
+        if has_credentials and interval:
             if self._auto_sync_timer is None:
                 self._auto_sync_timer = QTimer(self)
                 self._auto_sync_timer.timeout.connect(self._trigger_sync)
+            # Nur bei Änderung neu starten: sonst würde jeder fertige Sync (F5,
+            # nach Anrufende) den Countdown bis zum nächsten Auto-Sync zurücksetzen.
             # .start(msec) statt setInterval(): auf einem bereits laufenden
-            # QTimer startet das den Countdown zuverlässig neu, statt nur den
-            # künftigen Intervall-Wert zu setzen.
-            self._auto_sync_timer.start(new_config.sync_interval_minutes * 60 * 1000)
+            # QTimer startet das den Countdown zuverlässig neu.
+            interval_ms = interval * 60 * 1000
+            timer = self._auto_sync_timer
+            if not timer.isActive() or timer.interval() != interval_ms:
+                timer.start(interval_ms)
+        elif self._auto_sync_timer is not None:
+            self._auto_sync_timer.stop()
+
+    def _apply_settings_change(self, new_config: Config) -> None:
+        """Wendet eine gerade im Einstellungsdialog gespeicherte Config sofort an:
+        das Gateway nutzt sie ab der nächsten Operation (z.B. neue Telefonbuch-IDs)."""
+        self._config = new_config
+        self._show_incoming_call_popup = new_config.show_incoming_call_popup
+        self._gateway.apply_config(new_config)
+        self._refresh_credentials_state()
+
+    def _show_credentials_dialog(self) -> bool:
+        """Zeigt den Zugangsdaten-Dialog; bei Annahme wird gespeichert, ans Gateway
+        übergeben und der Fensterzustand aktualisiert. Gibt zurück, ob angenommen wurde."""
+        dialog = CredentialsDialog(
+            config_module.load(), self.background_tasks, self._gateway, parent=self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        new_config = dialog.save(config_module.load())
+        self._config = new_config
+        self._gateway.apply_config(new_config)
+        self._refresh_credentials_state()
+        return True
 
     def _open_settings_dialog(self) -> None:
         dialog = SettingsDialog(self._config, parent=self)
-        if self._list_phonebooks_fn is None:
+        if not self._gateway.has_credentials:
             dialog.set_phonebooks_unavailable("Keine Zugangsdaten hinterlegt")
         else:
-            # An MainWindow (self), nicht am Dialog gehängt: der Dialog ist nur
-            # so lange am Leben, wie exec() läuft, der Netzwerk-Fetch aber
-            # kann bis zum Timeout dauern - schliesst der Nutzer den Dialog
-            # vorher, würde ein am Dialog hängender QThread zerstört werden,
-            # während er noch läuft (SIGABRT). An MainWindow gehängt läuft er
-            # einfach im Hintergrund zu Ende; Qt trennt die Signal-Verbindung
-            # zum dann bereits zerstörten Dialog automatisch.
-            self._phonebook_list_thread = PhonebookListWorker(self._list_phonebooks_fn, parent=self)
-            self._phonebook_list_thread.finished_listing.connect(dialog.set_phonebooks)
-            self._phonebook_list_thread.listing_failed.connect(dialog.set_phonebooks_unavailable)
-            self._phonebook_list_thread.start()
+            self._load_phonebook_list(dialog, "phonebook-list-settings")
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._config = dialog.save(self._config)
-            self._apply_settings_change(self._config)
-            self.statusBar().showMessage("Einstellungen gespeichert.", 5000)
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self._apply_settings_change(dialog.save(self._config))
+                self.statusBar().showMessage("Einstellungen gespeichert.", 5000)
+        finally:
+            # Löschen statt nur verstecken: sonst sammelt sich je Öffnen ein Dialog an,
+            # und ein spätes Telefonbuchlisten-Ergebnis erreicht den geschlossenen Dialog.
+            dialog.deleteLater()
+
+    def _load_phonebook_list(self, dialog, key: str) -> None:
+        """Lädt die Telefonbuchliste über BackgroundTasks. Eigener Schlüssel je Dialog,
+        damit beide unabhängig voneinander laden; der Dialog ist Kontext - er wird nach
+        exec() gelöscht, ein spätes Ergebnis wird daher verworfen."""
+        started = self.background_tasks.start(
+            self._gateway.list_phonebooks,
+            dialog,
+            dialog.set_phonebooks,
+            lambda exc: dialog.set_phonebooks_unavailable(str(exc)),
+            key=key,
+        )
+        if not started and not self.background_tasks.is_running(key):
+            dialog.set_phonebooks_unavailable("Die App wird beendet")
 
     def _open_phonebook_import_dialog(self) -> None:
         dialog = PhonebookPickerDialog(parent=self)
-        if self._list_phonebooks_fn is None:
+        if not self._gateway.has_credentials:
             dialog.set_phonebooks_unavailable("Keine Zugangsdaten hinterlegt")
         else:
-            # Eigenes Thread-Attribut statt self._phonebook_list_thread (siehe
-            # _open_settings_dialog) - beide Dialoge können unabhängig
-            # voneinander geöffnet werden, ohne sich den laufenden Fetch
-            # gegenseitig wegzunehmen.
-            self._phonebook_import_list_thread = PhonebookListWorker(
-                self._list_phonebooks_fn, parent=self
-            )
-            self._phonebook_import_list_thread.finished_listing.connect(dialog.set_phonebooks)
-            self._phonebook_import_list_thread.listing_failed.connect(
-                dialog.set_phonebooks_unavailable
-            )
-            self._phonebook_import_list_thread.start()
+            self._load_phonebook_list(dialog, "phonebook-list-import")
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._phonebook_tab.import_from_box(dialog.selected_phonebook_ids())
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self._phonebook_tab.import_from_box(dialog.selected_phonebook_ids())
+        finally:
+            dialog.deleteLater()  # siehe _open_settings_dialog()
 
     def _on_dial_succeeded(self, number: str) -> None:
         self.statusBar().showMessage(f"Anruf ausgelöst: {format_number_display(number)}", 5000)
@@ -538,32 +481,31 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Anruf fehlgeschlagen: {message}", 8000)
 
     def _trigger_sync(self, user_initiated: bool = False) -> None:
-        # _close_requested-Check ist nötig, weil der Start-Sync per
-        # singleShot(0, ...) erst in einem späteren Event-Loop-Durchlauf
-        # feuert - schliesst der Nutzer das Fenster, bevor dieser Zero-Delay-
-        # Timer dran war, sähe closeEvent() noch keinen laufenden Thread und
-        # würde sofort schliessen; der danach doch noch feuernde Sync würde
-        # dann einen neuen, von niemandem mehr erwarteten SyncWorker starten,
-        # der beim Interpreter-Shutdown wieder als laufender QThread zerstört
-        # wird (derselbe SIGABRT/Hänger wie beim ursprünglichen Bug).
-        if (
-            self._close_requested
-            or self._sync_fn is None
-            or (self._sync_thread is not None and self._sync_thread.isRunning())
-        ):
+        # Beim Beenden lehnt BackgroundTasks den Start ab (z.B. der per singleShot(0, ...)
+        # verzögerte Start-Sync nach einem sehr frühen Schliessen).
+        if not self._gateway.has_credentials or self.background_tasks.is_running("sync"):
             return
-        self._sync_action.setEnabled(False)
-        self.statusBar().showMessage("Synchronisiere mit der Fritz!Box …")
         self._last_sync_user_initiated = user_initiated
+        started = self.background_tasks.start(
+            self._gateway.sync,
+            self,
+            lambda result: self._on_sync_finished(*result),
+            self._on_sync_error,
+            key="sync",
+        )
+        if started:
+            self._sync_action.setEnabled(False)
+            self.statusBar().showMessage("Synchronisiere mit der Fritz!Box …")
 
-        self._sync_thread = SyncWorker(self._sync_fn, parent=self)
-        self._sync_thread.finished_sync.connect(self._on_sync_finished)
-        self._sync_thread.sync_failed.connect(self._on_sync_failed)
-        self._sync_thread.auth_failed.connect(self._on_sync_auth_failed)
-        self._sync_thread.start()
+    def _on_sync_error(self, exc: FritzBoxError) -> None:
+        # Login-Fehler separat, damit gezielt zur erneuten Eingabe aufgefordert wird.
+        if isinstance(exc, FritzBoxAuthError):
+            self._on_sync_auth_failed(str(exc))
+        else:
+            self._on_sync_failed(str(exc))
 
     def _on_sync_finished(self, inserted: int, updated: int) -> None:
-        self._sync_action.setEnabled(True)
+        self._refresh_credentials_state()
         self._sync_auth_declined = False
         self.statusBar().showMessage(
             f"Sync abgeschlossen: {inserted} neue Anrufe, {updated} Kontakte aktualisiert", 5000
@@ -574,7 +516,7 @@ class MainWindow(QMainWindow):
         self._voicemail_view.reload()
 
     def _on_sync_failed(self, message: str) -> None:
-        self._sync_action.setEnabled(True)
+        self._refresh_credentials_state()
         self.statusBar().showMessage(f"Sync fehlgeschlagen: {message}", 8000)
 
     def _on_sync_auth_failed(self, message: str) -> None:
@@ -583,7 +525,7 @@ class MainWindow(QMainWindow):
         # hat, wird der Dialog erneut gezeigt - sonst würde der Auto-Sync-Timer
         # (alle sync_interval_minutes) den Dialog endlos erneut aufpoppen,
         # solange die Zugangsdaten falsch bleiben.
-        self._sync_action.setEnabled(True)
+        self._refresh_credentials_state()
         if not self._last_sync_user_initiated and self._sync_auth_declined:
             self.statusBar().showMessage(
                 f"Sync fehlgeschlagen: Zugangsdaten prüfen ({message})", 8000
@@ -596,14 +538,7 @@ class MainWindow(QMainWindow):
             "Benutzername oder Passwort für die Fritz!Box sind falsch. "
             "Bitte Zugangsdaten prüfen.",
         )
-        dialog = CredentialsDialog(
-            config_module.load(), test_connection_fn=self._test_credentials_fn, parent=self
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_config = dialog.save(config_module.load())
-            self._config = new_config
-            if self._update_credentials_fn is not None:
-                self._update_credentials_fn(new_config)
+        if self._show_credentials_dialog():
             self._sync_auth_declined = False
             self._trigger_sync(user_initiated=True)
         else:
@@ -611,13 +546,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Sync fehlgeschlagen: Zugangsdaten nicht geändert", 8000)
 
     def _open_credentials_dialog(self) -> None:
-        dialog = CredentialsDialog(
-            config_module.load(), test_connection_fn=self._test_credentials_fn, parent=self
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_config = dialog.save(config_module.load())
-            self._config = new_config
-            if self._update_credentials_fn is not None:
-                self._update_credentials_fn(new_config)
+        if self._show_credentials_dialog():
             self._sync_auth_declined = False
             self.statusBar().showMessage("Zugangsdaten gespeichert.", 5000)

@@ -11,7 +11,10 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.db.schema import migrate
 from fritz_callhistory.fritz.client import VoicemailMessage
-from fritz_callhistory.sync.service import SyncService, resolve_contact_names
+from fritz_callhistory.sync.caller_directory import CallerDirectory
+from fritz_callhistory.sync.service import SyncService
+
+from .fakes import FakeClient
 
 
 class _CountingConnection(sqlite3.Connection):
@@ -48,33 +51,6 @@ def _make_call(
     call.Port = "1"
     call.Device = "Fritz!Fon"
     return call
-
-
-class FakeClient:
-    def __init__(
-        self,
-        calls: list[Call] | None = None,
-        phonebooks: dict | None = None,
-        voicemail_messages: dict[int, list[VoicemailMessage]] | None = None,
-    ) -> None:
-        self._calls = calls or []
-        self._phonebooks = phonebooks or {}
-        self._voicemail_messages = voicemail_messages or {}
-
-    def get_calls(self, *, days=None):
-        return self._calls
-
-    def phonebook_ids(self):
-        return list(self._phonebooks.keys())
-
-    def phonebook_name_numbers(self, phonebook_id):
-        return self._phonebooks[phonebook_id]
-
-    def voicemail_tam_indices(self):
-        return list(self._voicemail_messages.keys())
-
-    def voicemail_messages(self, tam_index):
-        return self._voicemail_messages[tam_index]
 
 
 def _service(connection, calls=None, phonebooks=None, voicemail_messages=None):
@@ -292,7 +268,7 @@ def test_sync_calls_keeps_real_device_value(connection):
     assert records[0].device == "Fritz!Fon"
 
 
-def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection):
+def test_refresh_names_prefers_local_phonebook_over_box_cache(connection):
     call = _make_call(call_type=1, caller_number="030 1234567")
     service = _service(connection, [call], {0: [("Box-Name", ["030 1234567"])]})
     service.sync_calls()
@@ -305,13 +281,66 @@ def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection
         numbers=[("030 1234567", "+49301234567", "home", False)],
     )
 
-    updated = resolve_contact_names(
-        ContactRepository(connection), PhonebookRepository(connection), local_phonebook
-    )
+    updated = _resolve(connection, local_phonebook)
 
     assert updated == 1
     contact = ContactRepository(connection).search("")[0]
     assert contact.display_name == "Lokaler Name"
+
+
+def _resolve(connection, local):
+    return CallerDirectory(
+        ContactRepository(connection), PhonebookRepository(connection), local
+    ).refresh_names()
+
+
+def test_refresh_names_clears_name_after_local_contact_deleted(connection):
+    _service(connection, [_make_call(call_type=1, caller_number="030 1234567")]).sync_calls()
+    local = LocalPhonebookRepository(connection)
+    contact_id = local.create(
+        display_name="Lokaler Name",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
+    _resolve(connection, local)
+    assert ContactRepository(connection).search("")[0].display_name == "Lokaler Name"
+
+    local.delete(contact_id)
+    updated = _resolve(connection, local)
+
+    assert updated == 1
+    assert ContactRepository(connection).search("")[0].display_name is None
+
+
+def test_refresh_names_falls_back_to_box_name_after_local_contact_deleted(connection):
+    service = _service(
+        connection,
+        [_make_call(call_type=1, caller_number="030 1234567")],
+        {0: [("Box-Name", ["030 1234567"])]},
+    )
+    service.sync_calls()
+    service.sync_phonebook()
+    local = LocalPhonebookRepository(connection)
+    contact_id = local.create(
+        display_name="Lokaler Name",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
+    _resolve(connection, local)
+
+    local.delete(contact_id)
+    _resolve(connection, local)
+
+    assert ContactRepository(connection).search("")[0].display_name == "Box-Name"
+
+
+def test_refresh_names_returns_zero_when_nothing_changes(connection):
+    _service(connection, [_make_call(call_type=1, caller_number="030 1234567")]).sync_calls()
+
+    updated = _resolve(connection, LocalPhonebookRepository(connection))
+
+    assert updated == 0
+    assert ContactRepository(connection).search("")[0].display_name is None
 
 
 def test_sync_voicemail_inserts_new_messages(connection):
