@@ -32,7 +32,7 @@ _MAX_ATTEMPTS = 2
 _RETRY_DELAY_SECONDS = 1.0
 # fritzconnection/requests haben ohne dieses Limit gar kein Timeout (blockieren
 # unbegrenzt, wenn die Box verbunden ist aber nicht antwortet) - das liess
-# SyncWorker/ImportFromBoxWorker unter Umständen für immer in ihrem
+# Sync/Box-Import unter Umständen für immer in ihrem
 # Netzwerkaufruf hängen, was wiederum MainWindow.closeEvent()'s Warten auf den
 # Thread beim Beenden unbegrenzt blockierte (die App "hängte" beim Quit).
 _REQUEST_TIMEOUT_SECONDS = 15.0

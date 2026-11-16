@@ -3,7 +3,7 @@ welche Telefonbücher gerade auf der Box existieren, statt (wie zuvor) die
 Einstellungen-Auswahl mitzubenutzen, die nur die Namensauflösung im Hintergrund
 steuert (siehe settings_dialog.py).
 
-Kennt bewusst weder FritzBoxClient noch Worker-Threads - MainWindow holt die
+Kennt bewusst weder FritzBoxClient noch Hintergrundaufgaben - MainWindow holt die
 Telefonbuchliste selbst (BackgroundTasks) und reicht das Ergebnis über
 set_phonebooks()/set_phonebooks_unavailable() synchron herein (siehe
 _open_phonebook_import_dialog()). Anders als SettingsDialog gibt es hier keinen

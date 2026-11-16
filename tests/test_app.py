@@ -17,11 +17,22 @@ from fritz_callhistory.fritz.client import (
     FritzPhonebookNumber,
     VoicemailMessage,
 )
-from fritz_callhistory.gui.workers import ImportFromBoxWorker, SyncWorker
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
+
+
+def _run_task(qtbot, fn):
+    """Führt *fn* als echte Hintergrundaufgabe (eigener QThread) aus und liefert
+    (Ergebnisse, Fehler) - so bleiben die Thread-Grenzen wie in der App erhalten."""
+    tasks = BackgroundTasks()
+    results: list = []
+    failures: list = []
+    assert tasks.start(fn, tasks, results.append, failures.append, key="test")
+    qtbot.waitUntil(lambda: bool(results or failures), timeout=3000)
+    return results, failures
 
 
 def test_build_sync_fn_runs_in_real_worker_thread_without_connection_errors(qtbot, tmp_path, mocker):
-    """sync_fn läuft im SyncWorker-QThread, nicht im Test-/GUI-Thread. sqlite3-Connections
+    """sync_fn läuft im BackgroundTasks-QThread, nicht im Test-/GUI-Thread. sqlite3-Connections
     dürfen nicht threadübergreifend verwendet werden - dieser Test reproduziert also die
     echten Thread-Grenzen, statt sync_fn direkt (im Test-Thread) aufzurufen."""
     db_path = tmp_path / "callhistory.sqlite3"
@@ -38,15 +49,10 @@ def test_build_sync_fn_runs_in_real_worker_thread_without_connection_errors(qtbo
     sync_fn = _build_sync_fn(cfg)
     assert sync_fn is not None
 
-    worker = SyncWorker(sync_fn)
-    failures = []
-    worker.sync_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_sync, timeout=3000, raising=True) as blocker:
-        worker.start()
+    results, failures = _run_task(qtbot, sync_fn)
 
     assert failures == []
-    assert blocker.args == [0, 0]
+    assert results == [(0, 0)]
 
 
 def test_build_sync_fn_reads_updated_credentials_ref_on_retry(qtbot, tmp_path, mocker):
@@ -69,15 +75,11 @@ def test_build_sync_fn_reads_updated_credentials_ref_on_retry(qtbot, tmp_path, m
     sync_fn = _build_sync_fn(cfg, ref)
     assert sync_fn is not None
 
-    worker = SyncWorker(sync_fn)
-    with qtbot.waitSignal(worker.finished_sync, timeout=3000, raising=True):
-        worker.start()
+    _run_task(qtbot, sync_fn)
     fake_client_cls.assert_called_with("192.168.178.1", "admin", "secret")
 
     ref.cfg = Config(address="192.168.178.2", username="admin2")
-    worker2 = SyncWorker(sync_fn)
-    with qtbot.waitSignal(worker2.finished_sync, timeout=3000, raising=True):
-        worker2.start()
+    _run_task(qtbot, sync_fn)
     fake_client_cls.assert_called_with("192.168.178.2", "admin2", "secret")
 
 
@@ -135,15 +137,10 @@ def test_build_import_from_box_fn_runs_in_real_worker_thread_and_creates_contact
     import_fn = _build_import_from_box_fn(cfg)
     assert import_fn is not None
 
-    worker = ImportFromBoxWorker(import_fn, [0])
-    failures = []
-    worker.import_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True) as blocker:
-        worker.start()
+    results, failures = _run_task(qtbot, lambda: import_fn([0]))
 
     assert failures == []
-    assert blocker.args == [1]
+    assert results == [1]
 
     connection = connect(db_path)
     contacts = LocalPhonebookRepository(connection).list_all()
@@ -197,12 +194,7 @@ def test_build_import_from_box_fn_preserves_default_number_across_reimport(
     import_fn = _build_import_from_box_fn(cfg)
     assert import_fn is not None
 
-    worker = ImportFromBoxWorker(import_fn, [0])
-    failures = []
-    worker.import_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True):
-        worker.start()
+    results, failures = _run_task(qtbot, lambda: import_fn([0]))
 
     assert failures == []
 
@@ -217,7 +209,7 @@ def test_build_import_from_box_fn_preserves_default_number_across_reimport(
 
 def test_build_import_from_box_fn_only_queries_selected_phonebook_ids(qtbot, tmp_path, mocker):
     # Regression guard for the "picker chooses ids at import time" split: the
-    # closure must use exactly the ids ImportFromBoxWorker passes it, not fall
+    # closure must use exactly the ids the import task passes it, not fall
     # back to every phonebook the box has (that fallback was removed together
     # with the config-driven "Von Box importieren" selection).
     db_path = tmp_path / "callhistory.sqlite3"
@@ -232,12 +224,7 @@ def test_build_import_from_box_fn_only_queries_selected_phonebook_ids(qtbot, tmp
     import_fn = _build_import_from_box_fn(cfg)
     assert import_fn is not None
 
-    worker = ImportFromBoxWorker(import_fn, [2])
-    failures = []
-    worker.import_failed.connect(failures.append)
-
-    with qtbot.waitSignal(worker.finished_import, timeout=3000, raising=True):
-        worker.start()
+    results, failures = _run_task(qtbot, lambda: import_fn([2]))
 
     assert failures == []
     fake_client.phonebook_contacts_detailed.assert_called_once_with(2)

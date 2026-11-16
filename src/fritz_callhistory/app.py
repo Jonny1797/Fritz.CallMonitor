@@ -26,7 +26,7 @@ from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
 from fritz_callhistory.gui.icon import app_icon
 from fritz_callhistory.gui.main_window import MainWindow
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn
-from fritz_callhistory.gui.workers import (
+from fritz_callhistory.gui.background_tasks import (
     DialFn,
     ImportFromBoxFn,
     ListPhonebooksFn,
@@ -54,7 +54,7 @@ class _CredentialsRef:
 def _build_sync_fn(
     cfg: config_module.Config, credentials_ref: _CredentialsRef | None = None
 ) -> SyncFn | None:
-    """Baut die Sync-Funktion für den SyncWorker-Thread.
+    """Baut die Sync-Funktion für die Hintergrundaufgabe `sync`.
 
     Der FritzBoxClient wird erst innerhalb der zurückgegebenen Funktion erzeugt
     (also erst im Hintergrund-Thread), damit der Verbindungsaufbau die GUI nicht
@@ -102,7 +102,7 @@ def _build_import_from_box_fn(
     cfg: config_module.Config, credentials_ref: _CredentialsRef | None = None
 ) -> ImportFromBoxFn | None:
     """Baut die Funktion für den einmaligen "Von Box importieren"-Zug
-    (ImportFromBoxWorker) - gleiches Verbindungsaufbau-/Threading-Muster wie
+    (Hintergrundaufgabe `box-import`) - gleiches Verbindungsaufbau-/Threading-Muster wie
     _build_sync_fn (siehe dort für die Begründung, auch für *credentials_ref*).
     """
     password = credentials.get_password(cfg.username) if cfg.username else None
@@ -184,7 +184,7 @@ def _build_import_from_box_fn(
 def _build_dial_fn(
     cfg: config_module.Config, credentials_ref: _CredentialsRef | None = None
 ) -> DialFn | None:
-    """Baut die Funktion für den einmaligen Anruf-Auslöse-Klick (DialWorker) -
+    """Baut die Funktion für den einmaligen Anruf-Auslöse-Klick (Hintergrundaufgabe `dial`) -
     gleiches Verbindungsaufbau-Muster wie _build_sync_fn (siehe dort für die
     Begründung, auch für *credentials_ref*), aber ohne eigene DB-Verbindung, da
     dial_number() keine Datenbank berührt."""
@@ -207,7 +207,7 @@ def _build_list_phonebooks_fn(
     cfg: config_module.Config, credentials_ref: _CredentialsRef | None = None
 ) -> ListPhonebooksFn | None:
     """Baut die Funktion für den Telefonbuch-Picker im SettingsDialog
-    (PhonebookListWorker) - gleiches Verbindungsaufbau-Muster wie _build_dial_fn."""
+    (Hintergrundaufgabe der Telefonbuch-Liste) - gleiches Verbindungsaufbau-Muster wie _build_dial_fn."""
     password = credentials.get_password(cfg.username) if cfg.username else None
     if not cfg.username or not password:
         return None
@@ -224,7 +224,7 @@ def _build_list_phonebooks_fn(
 
 
 def _build_test_credentials_fn() -> TestCredentialsFn:
-    """Baut die Verbindungstest-Funktion für CredentialsDialog (CredentialsTestWorker).
+    """Baut die Verbindungstest-Funktion für CredentialsDialog (Hintergrundaufgabe `credentials-test`).
 
     Nur FritzBoxClient(...) zu konstruieren würde bei falschem Passwort NICHT
     zuverlässig fehlschlagen: fritzconnection lädt beim Verbindungsaufbau lediglich
@@ -257,7 +257,7 @@ def _resolve_box_index(client: FritzBoxClient, message: VoicemailMessageRecord) 
 def _build_voicemail_audio_fn(
     cfg: config_module.Config, credentials_ref: _CredentialsRef | None = None
 ) -> AudioFetchFn | None:
-    """Baut die Funktion für den einmaligen Abspiel-Klick (VoicemailAudioWorker) -
+    """Baut die Funktion für den einmaligen Abspiel-Klick (Hintergrundaufgabe `voicemail-audio`) -
     gleiches Verbindungsaufbau-Muster wie _build_dial_fn. Markiert die Nachricht
     zusätzlich auf der Box selbst als gelesen (X_AVM-DE_TAM/MarkMessage, verifiziert
     gegen eine echte Box); VoicemailView flippt den lokalen is_new-Zustand direkt im
@@ -285,7 +285,7 @@ def _build_voicemail_audio_fn(
 def _build_voicemail_mark_read_fn(
     cfg: config_module.Config, credentials_ref: _CredentialsRef | None = None
 ) -> VoicemailActionFn | None:
-    """Baut die Funktion für den expliziten "Gelesen"-Button (VoicemailActionWorker) -
+    """Baut die Funktion für den expliziten "Gelesen"-Button (Hintergrundaufgabe `voicemail-action`) -
     gleiches Verbindungsaufbau-/Index-Auflösungs-Muster wie _build_voicemail_audio_fn,
     aber ohne den Audio-Download: erlaubt, eine Nachricht als gelesen zu markieren,
     ohne sie abzuspielen."""
@@ -309,7 +309,7 @@ def _build_voicemail_mark_read_fn(
 def _build_voicemail_delete_fn(
     cfg: config_module.Config, credentials_ref: _CredentialsRef | None = None
 ) -> VoicemailActionFn | None:
-    """Baut die Funktion für den "Löschen"-Button (VoicemailActionWorker) - löscht
+    """Baut die Funktion für den "Löschen"-Button (Hintergrundaufgabe `voicemail-action`) - löscht
     die Nachricht echt auf der Box (X_AVM-DE_TAM/DeleteMessage). Die lokale Zeile wird
     nicht hier, sondern von VoicemailView nach erfolgreichem Abschluss entfernt
     (VoicemailRepository.delete), damit ein fehlgeschlagener Box-Aufruf die lokale
@@ -334,7 +334,7 @@ def _build_voicemail_delete_fn(
 def _handle_sigint(*_args) -> None:
     """Strg+C beendet den Prozess sofort und hart, statt über window.close()
     zu gehen: MainWindow.closeEvent() wartet bei einem normalen Schliessen
-    bewusst auf noch laufende Worker-Threads (Sync-/ImportFromBoxWorker) - das
+    bewusst auf noch laufende Hintergrundaufgaben (Sync, Box-Import) - das
     ist für einen Klick auf X das richtige Verhalten, aber für Strg+C
     erwartet man in einem Terminal-Programm einen sofortigen Abbruch, egal was
     gerade läuft (z.B. ein Netzwerkaufruf, der trotz Timeout in

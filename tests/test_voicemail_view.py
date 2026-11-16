@@ -124,7 +124,7 @@ def test_hung_audio_fetch_does_not_block_gui_thread(qtbot, connection):
     """Reproduces the reported "loading a message blocks the whole app" symptom
     at the unit level: a stalled audio_fetch_fn (standing in for a hung network
     call, e.g. fritz/client.py's voicemail_audio() before its missing timeout was
-    added) must not freeze the GUI event loop - only VoicemailAudioWorker itself
+    added) must not freeze the GUI event loop - only the voicemail-audio task itself
     should be stuck, confirmed here by a QTimer still firing while the fetch
     hangs, and by the app recovering cleanly once the fetch is unblocked."""
     import threading

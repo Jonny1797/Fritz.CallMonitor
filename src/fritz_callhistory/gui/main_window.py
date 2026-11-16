@@ -34,7 +34,7 @@ from fritz_callhistory.gui.phonebook_picker_dialog import PhonebookPickerDialog
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from fritz_callhistory.gui.settings_dialog import SettingsDialog
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn, VoicemailView
-from fritz_callhistory.gui.workers import (
+from fritz_callhistory.gui.background_tasks import (
     DialFn,
     ImportFromBoxFn,
     ListPhonebooksFn,
@@ -43,11 +43,11 @@ from fritz_callhistory.gui.workers import (
 )
 from fritz_callhistory.sync.normalize import format_number_display, normalize_number
 
-# Letzte Absicherung für closeEvent(): SyncWorker/ImportFromBoxWorker haben
+# Letzte Absicherung für closeEvent(): Sync und Box-Import haben
 # in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
 # hängenden DNS-Lookup ab (socket.getaddrinfo() kennt kein Timeout). Damit
 # das Beenden trotzdem nie unbegrenzt hängen bleibt, wird nach dieser Frist
-# hart abgebrochen, falls dann immer noch ein Worker-Thread läuft.
+# hart abgebrochen, falls dann immer noch eine Hintergrundaufgabe läuft.
 _SHUTDOWN_FAILSAFE_MS = 30_000
 
 
@@ -402,7 +402,7 @@ class MainWindow(QMainWindow):
     def _dial_number(self, number: str) -> None:
         # _close_requested-Check aus demselben Grund wie in _trigger_sync():
         # ohne ihn könnte ein Rechtsklick kurz vor dem Schliessen noch einen
-        # DialWorker starten, den closeEvent() (das den Schliessvorgang schon
+        # Anruf-Versuch starten, den closeEvent() (das den Schliessvorgang schon
         # eingeleitet hat) nicht mehr erwartet.
         if self._close_requested or self._dial_fn is None:
             if not self._close_requested:

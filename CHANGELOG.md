@@ -11,9 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Deleting a Telefonbuch contact no longer leaves its name on the call history:
   the name is cleared (or falls back to the Box Telefonbuch name) right away.
+- Anrufbeantworter and Telefonbuch actions can no longer start while the app is
+  quitting.
+- No message boxes appear while the app is quitting.
 
 ### Changed
 
+- Cancel is available while credentials are being checked.
 - `SyncService.sync_calls()`/`sync_voicemail()` now commit once per full sync
   instead of once per synced call/voicemail message. Sync is idempotent and
   safely re-runnable, so a batch left uncommitted by a hard kill mid-sync is

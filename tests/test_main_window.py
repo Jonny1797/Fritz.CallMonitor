@@ -239,7 +239,7 @@ def test_close_before_startup_sync_fires_prevents_new_sync_thread(qtbot, connect
     # Regression test: the auto-sync at startup is queued via
     # QTimer.singleShot(0, self._trigger_sync), which only runs on a later
     # event-loop iteration. Closing the window before that fires must prevent
-    # _trigger_sync() from starting a brand-new, untracked SyncWorker
+    # _trigger_sync() from starting a brand-new, untracked sync task
     # afterwards - otherwise it becomes a QThread nobody waits for at
     # interpreter shutdown (the same crash/hang class, just with different
     # timing - reproduced within the app's very first instant instead of a
@@ -259,7 +259,7 @@ def test_close_before_startup_sync_fires_prevents_new_sync_thread(qtbot, connect
 
 def test_close_while_box_import_running_defers_until_import_finishes(qtbot, connection, mocker):
     # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
-    # but for ImportFromBoxWorker (the "Von Box importieren" menu entry) - it is
+    # but for the Box import task (the "Von Box importieren" menu entry) - it is
     # the same single-blocking-network-call-with-no-cancellation-point pattern,
     # just user-triggered instead of started automatically on startup.
     release_import = threading.Event()
@@ -873,7 +873,7 @@ def test_dial_number_shows_error_on_failure(qtbot, connection):
 
 def test_dial_number_ignores_second_call_while_one_in_flight(qtbot, connection):
     # release_dial.set() must run even if an assertion below fails - otherwise
-    # the DialWorker is still blocked in its network call when qtbot tears the
+    # the dial task is still blocked in its network call when qtbot tears the
     # window down at test end, and Qt aborts the process (SIGABRT) trying to
     # destroy a still-running QThread (same bug class as
     # test_close_while_sync_running_defers_until_sync_finishes, just in test code).

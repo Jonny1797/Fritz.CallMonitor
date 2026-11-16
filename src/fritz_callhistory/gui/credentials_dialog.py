@@ -29,7 +29,7 @@ from fritz_callhistory.fritz.exceptions import (
     FritzBoxPermissionError,
 )
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
-from fritz_callhistory.gui.workers import TestCredentialsFn
+from fritz_callhistory.gui.background_tasks import TestCredentialsFn
 
 _TASK_KEY = "credentials-test"
 

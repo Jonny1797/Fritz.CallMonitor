@@ -43,7 +43,7 @@ from fritz_callhistory.gui.models import (
 )
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
-from fritz_callhistory.gui.workers import ImportFromBoxFn
+from fritz_callhistory.gui.background_tasks import ImportFromBoxFn
 from fritz_callhistory.sync.phonebook_io import (
     ImportedContact,
     ImportedNumber,
