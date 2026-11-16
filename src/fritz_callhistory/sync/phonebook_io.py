@@ -19,6 +19,7 @@ from fritz_callhistory.sync.normalize import normalize_number
 
 if TYPE_CHECKING:
     from fritz_callhistory.db.repository import LocalPhonebookRepository
+    from fritz_callhistory.fritz.client import FritzBoxClient
 
 _DEFAULT_NUMBER_TYPE = "home"
 
@@ -433,3 +434,69 @@ def import_contacts(repo: LocalPhonebookRepository, result: ImportResult) -> Imp
         )
         created += 1
     return ImportSummary(created=created, skipped_duplicate=skipped_duplicate, warnings=list(result.warnings))
+
+
+
+def import_from_box(
+    client: FritzBoxClient, repo: LocalPhonebookRepository, phonebook_ids: list[int]
+) -> int:
+    """Übernimmt Kontakte der gewählten Box-Telefonbücher ins lokale Telefonbuch.
+
+    Pro Box-Kontakt mit Namen: anonyme Nummern werden verworfen; existiert ein
+    Telefonbuch-Kontakt mit derselben Box-Id, wird er aktualisiert (Notizen und
+    Standardnummern bleiben erhalten); sonst wird ein rein lokaler Kontakt mit
+    exakt derselben Nummernmenge adoptiert (mit der Box-Id verknüpft); sonst neu
+    angelegt. Die Zuordnungsregel unterscheidet sich bewusst von der Dedupe-Regel
+    in import_contacts(). Gibt die Anzahl verarbeiteter Box-Kontakte zurück.
+    """
+    imported = 0
+    for phonebook_id in phonebook_ids:
+        for box_contact in client.phonebook_contacts_detailed(phonebook_id):
+            if not box_contact.name:
+                continue
+            numbers: list[tuple[str, str, str]] = []
+            for number in box_contact.numbers:
+                normalized, is_anonymous = normalize_number(number.value)
+                if not is_anonymous:
+                    numbers.append((number.value, normalized, number.type))
+
+            existing = (
+                repo.find_by_box_uniqueid(box_contact.uniqueid) if box_contact.uniqueid else None
+            )
+            if existing:
+                # Die Box kennt kein "Standardnummer"-Konzept - eine zuvor lokal
+                # gesetzte Standardnummer muss über den vollen delete+reinsert von
+                # update() hinweg erhalten bleiben, gematcht über number_normalized
+                # (Zeilen-IDs überleben update() nicht).
+                existing_defaults = {
+                    n.number_normalized for n in existing.numbers if n.is_default
+                }
+                repo.update(
+                    existing.id,
+                    display_name=box_contact.name,
+                    notes=existing.notes,
+                    numbers=[
+                        (raw, normalized, number_type, normalized in existing_defaults)
+                        for raw, normalized, number_type in numbers
+                    ],
+                )
+            else:
+                # "Adoptieren": ein rein lokaler Kontakt mit exakt derselben
+                # Nummernmenge wird mit dieser Box-Id verknüpft statt dupliziert.
+                adopt_id = repo.find_local_only_contact_by_exact_numbers(
+                    [n[1] for n in numbers]
+                )
+                if adopt_id is not None and box_contact.uniqueid:
+                    repo.set_box_uniqueid(adopt_id, box_contact.uniqueid)
+                else:
+                    repo.create(
+                        display_name=box_contact.name,
+                        notes=None,
+                        numbers=[
+                            (raw, normalized, number_type, False)
+                            for raw, normalized, number_type in numbers
+                        ],
+                        box_uniqueid=box_contact.uniqueid,
+                    )
+            imported += 1
+    return imported

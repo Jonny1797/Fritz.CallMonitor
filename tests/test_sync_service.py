@@ -14,6 +14,8 @@ from fritz_callhistory.fritz.client import VoicemailMessage
 from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.sync.service import SyncService
 
+from .fakes import FakeClient
+
 
 class _CountingConnection(sqlite3.Connection):
     """sqlite3.Connection kann nicht gemonkeypatcht werden (immutable Builtin-Typ) -
@@ -49,33 +51,6 @@ def _make_call(
     call.Port = "1"
     call.Device = "Fritz!Fon"
     return call
-
-
-class FakeClient:
-    def __init__(
-        self,
-        calls: list[Call] | None = None,
-        phonebooks: dict | None = None,
-        voicemail_messages: dict[int, list[VoicemailMessage]] | None = None,
-    ) -> None:
-        self._calls = calls or []
-        self._phonebooks = phonebooks or {}
-        self._voicemail_messages = voicemail_messages or {}
-
-    def get_calls(self, *, days=None):
-        return self._calls
-
-    def phonebook_ids(self):
-        return list(self._phonebooks.keys())
-
-    def phonebook_name_numbers(self, phonebook_id):
-        return self._phonebooks[phonebook_id]
-
-    def voicemail_tam_indices(self):
-        return list(self._voicemail_messages.keys())
-
-    def voicemail_messages(self, tam_index):
-        return self._voicemail_messages[tam_index]
 
 
 def _service(connection, calls=None, phonebooks=None, voicemail_messages=None):

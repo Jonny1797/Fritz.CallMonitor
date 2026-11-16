@@ -34,7 +34,7 @@ from fritz_callhistory.gui.background_tasks import (
     TestCredentialsFn,
 )
 from fritz_callhistory.paths import database_file
-from fritz_callhistory.sync.normalize import normalize_number
+from fritz_callhistory.sync.phonebook_io import import_from_box
 from fritz_callhistory.sync.service import SyncService
 
 
@@ -117,64 +117,7 @@ def _build_import_from_box_fn(
         worker_connection = connect(database_file())
         try:
             client = FritzBoxClient(current.address, current.username, current_password)
-            local_repo = LocalPhonebookRepository(worker_connection)
-            imported = 0
-            for phonebook_id in phonebook_ids:
-                for box_contact in client.phonebook_contacts_detailed(phonebook_id):
-                    if not box_contact.name:
-                        continue
-                    numbers: list[tuple[str, str, str]] = []
-                    for number in box_contact.numbers:
-                        normalized, is_anonymous = normalize_number(number.value)
-                        if not is_anonymous:
-                            numbers.append((number.value, normalized, number.type))
-
-                    existing = (
-                        local_repo.find_by_box_uniqueid(box_contact.uniqueid)
-                        if box_contact.uniqueid
-                        else None
-                    )
-                    if existing:
-                        # Die Box kennt kein "Standardnummer"-Konzept - eine
-                        # zuvor lokal gesetzte Standardnummer muss über den
-                        # vollen delete+reinsert von update() hinweg erhalten
-                        # bleiben, gematcht über number_normalized (Zeilen-IDs
-                        # überleben update() nicht, siehe db/repository.py).
-                        existing_defaults = {
-                            n.number_normalized for n in existing.numbers if n.is_default
-                        }
-                        numbers_with_default = [
-                            (raw, normalized, number_type, normalized in existing_defaults)
-                            for raw, normalized, number_type in numbers
-                        ]
-                        local_repo.update(
-                            existing.id,
-                            display_name=box_contact.name,
-                            notes=existing.notes,
-                            numbers=numbers_with_default,
-                        )
-                    else:
-                        # "Adoptieren": ein zuvor rein lokal angelegter Kontakt mit
-                        # exakt derselben Nummernmenge wird mit dieser Box-Id
-                        # verknüpft statt dupliziert (siehe db/repository.py's
-                        # find_local_only_contact_by_exact_numbers).
-                        adopt_id = local_repo.find_local_only_contact_by_exact_numbers(
-                            [n[1] for n in numbers]
-                        )
-                        if adopt_id is not None and box_contact.uniqueid:
-                            local_repo.set_box_uniqueid(adopt_id, box_contact.uniqueid)
-                        else:
-                            local_repo.create(
-                                display_name=box_contact.name,
-                                notes=None,
-                                numbers=[
-                                    (raw, normalized, number_type, False)
-                                    for raw, normalized, number_type in numbers
-                                ],
-                                box_uniqueid=box_contact.uniqueid,
-                            )
-                    imported += 1
-            return imported
+            return import_from_box(client, LocalPhonebookRepository(worker_connection), phonebook_ids)
         finally:
             worker_connection.close()
 
