@@ -757,11 +757,14 @@ def _contact(name, anonymous=False) -> Contact:
 
 
 def test_contacts_sort_anonymous_under_displayed_label_not_first(qtbot):
-    model = ContactListModel([_contact("Zoe"), _contact(None, anonymous=True), _contact("Bert")])
+    # Alter Schlüssel (leerer Name) hätte "Anonym / unterdrückt" vor "Alpha" gestellt.
+    model = ContactListModel(
+        [_contact("Zoe"), _contact(None, anonymous=True), _contact("Bert"), _contact("Alpha")]
+    )
 
     texts = _sorted_texts(model, model.contact_at, CONTACT_COLUMNS, 0)
 
-    assert texts == ["Anonym / unterdrückt", "Bert", "Zoe"]
+    assert texts == ["Alpha", "Anonym / unterdrückt", "Bert", "Zoe"]
 
 
 def test_contacts_name_sort_is_case_insensitive(qtbot):
@@ -804,11 +807,15 @@ def test_all_calls_name_number_sorts_by_displayed_label_case_insensitive(qtbot):
     anonymous.contact_is_anonymous = True
     other = _call_with_contact(1)
     other.contact_display_name = "Alpha"
-    model = AllCallsListModel([named, anonymous, other])
+    # Der anonyme Kontakt trägt noch den Namen "Max Mustermann": der alte Schlüssel
+    # (gespeicherter Name) hätte ihn hinter "Bert" sortiert.
+    bert = _call_with_contact(1)
+    bert.contact_display_name = "Bert"
+    model = AllCallsListModel([named, anonymous, other, bert])
 
     texts = _sorted_texts(model, model.call_at, ALL_CALLS_COLUMNS, 2)
 
-    assert texts == ["Alpha", "Anonym / unterdrückt", "zeta"]
+    assert texts == ["Alpha", "Anonym / unterdrückt", "Bert", "zeta"]
 
 
 def test_all_calls_name_number_without_name_sorts_by_formatted_number(qtbot):
