@@ -15,6 +15,7 @@ from fritz_callhistory.db.repository import (
     VoicemailRepository,
 )
 from fritz_callhistory.fritz.client import FritzBoxClient
+from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.sync.normalize import normalize_number
 
 _OUTGOING_TYPES = {OUT_CALL_TYPE, ACTIVE_OUT_CALL_TYPE}
@@ -39,36 +40,6 @@ def _call_date_iso(call: Call) -> str:
     if isinstance(date, datetime.datetime):
         return date.isoformat()
     return str(call.Date)
-
-
-def resolve_contact_names(
-    contacts: ContactRepository,
-    phonebook: PhonebookRepository,
-    local_phonebook: LocalPhonebookRepository,
-) -> int:
-    """Aktualisiert contacts.display_name aus dem lokalen Telefonbuch und dem
-    Box-Telefonbuch-Cache. Das lokale Telefonbuch hat Vorrang, da vom Nutzer
-    gepflegt (der Box-Cache wird komplett überschrieben bei jedem Sync).
-
-    Kein Netzwerkzugriff, daher bewusst eine freie Funktion statt einer
-    SyncService-Methode - kann auch von der GUI direkt nach lokalen
-    Telefonbuch-Aenderungen aufgerufen werden, ohne SyncService/FritzBoxClient.
-
-    Lädt beide Telefonbücher einmalig komplett (statt pro Kontakt einzeln
-    nachzuschlagen) und schreibt alle geänderten Anzeigenamen in einer einzigen
-    Transaktion - für N Kontakte 2 Queries + 1 Commit statt bis zu 3N.
-    """
-    local_names = local_phonebook.all_names()
-    box_names = phonebook.all_names()
-    updates: dict[int, str | None] = {}
-    for contact in contacts.search(""):
-        # Das Ergebnis ist maßgeblich: Löst eine Nummer nicht mehr auf (z.B. nach dem
-        # Löschen eines lokalen Kontakts), wird der gespeicherte Name geleert.
-        name = local_names.get(contact.primary_number) or box_names.get(contact.primary_number)
-        if name != contact.display_name:
-            updates[contact.id] = name
-    contacts.set_display_names(updates)
-    return len(updates)
 
 
 class SyncService:
@@ -185,4 +156,6 @@ class SyncService:
                     entries.append((name, normalized))
             self._phonebook.replace_entries(phonebook_id, entries)
 
-        return resolve_contact_names(self._contacts, self._phonebook, self._local_phonebook)
+        return CallerDirectory(
+            self._contacts, self._phonebook, self._local_phonebook
+        ).refresh_names()

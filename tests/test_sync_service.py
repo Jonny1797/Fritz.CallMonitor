@@ -11,7 +11,8 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.db.schema import migrate
 from fritz_callhistory.fritz.client import VoicemailMessage
-from fritz_callhistory.sync.service import SyncService, resolve_contact_names
+from fritz_callhistory.sync.caller_directory import CallerDirectory
+from fritz_callhistory.sync.service import SyncService
 
 
 class _CountingConnection(sqlite3.Connection):
@@ -292,7 +293,7 @@ def test_sync_calls_keeps_real_device_value(connection):
     assert records[0].device == "Fritz!Fon"
 
 
-def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection):
+def test_refresh_names_prefers_local_phonebook_over_box_cache(connection):
     call = _make_call(call_type=1, caller_number="030 1234567")
     service = _service(connection, [call], {0: [("Box-Name", ["030 1234567"])]})
     service.sync_calls()
@@ -305,9 +306,7 @@ def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection
         numbers=[("030 1234567", "+49301234567", "home", False)],
     )
 
-    updated = resolve_contact_names(
-        ContactRepository(connection), PhonebookRepository(connection), local_phonebook
-    )
+    updated = _resolve(connection, local_phonebook)
 
     assert updated == 1
     contact = ContactRepository(connection).search("")[0]
@@ -315,12 +314,12 @@ def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection
 
 
 def _resolve(connection, local):
-    return resolve_contact_names(
+    return CallerDirectory(
         ContactRepository(connection), PhonebookRepository(connection), local
-    )
+    ).refresh_names()
 
 
-def test_resolve_contact_names_clears_name_after_local_contact_deleted(connection):
+def test_refresh_names_clears_name_after_local_contact_deleted(connection):
     _service(connection, [_make_call(call_type=1, caller_number="030 1234567")]).sync_calls()
     local = LocalPhonebookRepository(connection)
     contact_id = local.create(
@@ -338,7 +337,7 @@ def test_resolve_contact_names_clears_name_after_local_contact_deleted(connectio
     assert ContactRepository(connection).search("")[0].display_name is None
 
 
-def test_resolve_contact_names_falls_back_to_box_name_after_local_contact_deleted(connection):
+def test_refresh_names_falls_back_to_box_name_after_local_contact_deleted(connection):
     service = _service(
         connection,
         [_make_call(call_type=1, caller_number="030 1234567")],
@@ -360,7 +359,7 @@ def test_resolve_contact_names_falls_back_to_box_name_after_local_contact_delete
     assert ContactRepository(connection).search("")[0].display_name == "Box-Name"
 
 
-def test_resolve_contact_names_returns_zero_when_nothing_changes(connection):
+def test_refresh_names_returns_zero_when_nothing_changes(connection):
     _service(connection, [_make_call(call_type=1, caller_number="030 1234567")]).sync_calls()
 
     updated = _resolve(connection, LocalPhonebookRepository(connection))

@@ -646,25 +646,12 @@ def test_local_phonebook_find_by_number_returns_none_when_missing(connection):
     assert repo.find_by_number("+491234567") is None
 
 
-def test_local_phonebook_lookup_name_ties_break_by_lowest_id(connection):
+def test_local_phonebook_all_entries_ties_break_by_lowest_id(connection):
     repo = LocalPhonebookRepository(connection)
     repo.create(display_name="Erster", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
     repo.create(display_name="Zweiter", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
 
-    assert repo.lookup_name("+491234567") == "Erster"
-
-
-def test_local_phonebook_lookup_name_returns_none_when_missing(connection):
-    repo = LocalPhonebookRepository(connection)
-    assert repo.lookup_name("+491234567") is None
-
-
-def test_local_phonebook_all_names_ties_break_by_lowest_id(connection):
-    repo = LocalPhonebookRepository(connection)
-    repo.create(display_name="Erster", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
-    repo.create(display_name="Zweiter", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
-
-    assert repo.all_names() == {"+491234567": "Erster"}
+    assert repo.all_entries() == {"+491234567": ("Erster", None)}
 
 
 def test_phonebook_all_names_ties_break_by_lowest_phonebook_id(connection):

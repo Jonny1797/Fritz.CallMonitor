@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Caller names are now resolved in one place (the Caller directory): the
+  incoming-call popup and the name refresh after syncs and Telefonbuch changes
+  use the same rules.
 - Cancel is available while credentials are being checked.
 - `SyncService.sync_calls()`/`sync_voicemail()` now commit once per full sync
   instead of once per synced call/voicemail message. Sync is idempotent and

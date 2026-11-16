@@ -4,7 +4,12 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QSystemTrayIcon
 
 from fritz_callhistory.config import Config
-from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
+from fritz_callhistory.db.repository import (
+    CallRepository,
+    ContactRepository,
+    LocalPhonebookRepository,
+    SyncStateRepository,
+)
 from fritz_callhistory.fritz.exceptions import (
     FritzBoxAuthError,
     FritzBoxConnectionError,
@@ -499,8 +504,12 @@ def test_no_call_monitor_started_without_address(qtbot, connection):
 
 def test_on_ring_shows_known_contact_name(qtbot, connection, mocker):
     contacts = ContactRepository(connection)
-    contact_id = contacts.upsert("+49301234567")
-    contacts.set_display_name(contact_id, "Max Mustermann")
+    contacts.upsert("+49301234567")
+    LocalPhonebookRepository(connection).create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
 
     window = MainWindow(connection)
     qtbot.addWidget(window)

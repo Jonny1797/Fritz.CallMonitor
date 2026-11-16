@@ -6,7 +6,7 @@ Package: `src/fritz_callhistory/`.
 |---|---|
 | `fritz/client.py` | Thin wrapper around `fritzconnection` (TR-064). See [fritzbox.md](fritzbox.md). |
 | `fritz/callmonitor.py` | Raw TCP call-monitor protocol (port 1012). See [fritzbox.md](fritzbox.md). |
-| `sync/` | Bridges `fritz/` and `db/`. `normalize.py` (phone numbers), `service.py` (`SyncService.sync_calls()` / `sync_phonebook()`), `phonebook_io.py`. |
+| `sync/` | Bridges `fritz/` and `db/`. `normalize.py` (phone numbers), `service.py` (`SyncService.sync_calls()` / `sync_phonebook()`), `phonebook_io.py`, `caller_directory.py` (`CallerDirectory`: who is behind a number). |
 | `db/` | Raw `sqlite3` + repository pattern in `db/repository.py`. No ORM. See [database.md](database.md). |
 | `gui/` | PySide6 widgets, table models (`gui/models.py`), Background tasks (`gui/background_tasks.py`), call monitor thread (`gui/callmonitor_worker.py`). |
 | `app.py` | Entry point; builds the Box closures (`sync_fn` etc.) that `BackgroundTasks` runs. See [threading.md](threading.md). |
@@ -15,9 +15,9 @@ Package: `src/fritz_callhistory/`.
 ## Layering rules
 
 - `gui/` **never calls `FritzBoxClient` (TR-064) directly** — network work goes through closures built in `app.py` and run as Background tasks via `BackgroundTasks`.
-- `gui/` may use: `db/` repositories, pure helpers from `sync/` (`normalize`, `phonebook_io`, `service.resolve_contact_names`), `fritz.exceptions`, and the call monitor via `gui/callmonitor_worker.py`.
+- `gui/` may use: `db/` repositories, pure helpers from `sync/` (`normalize`, `phonebook_io`, `caller_directory`), `fritz.exceptions`, and the call monitor via `gui/callmonitor_worker.py`.
 - Nothing above `fritz/` imports `fritzconnection` or catches its/`requests`' exceptions — `fritz/client.py` translates them into `fritz/exceptions.py` types.
-- Caller-name lookup (call list, incoming-call notifications) always goes through `normalize_number()` + the repositories' `find_by_number()` (`ContactRepository`, `LocalPhonebookRepository`) — don't add a separate matching path.
+- Caller identity always comes from the Caller directory (`sync/caller_directory.py`) — don't add a separate matching path. (The Telefonbuch tab's "edit the contact that owns this number" via `find_by_number` is Telefonbuch editing, not identity.)
 
 ## Conventions
 

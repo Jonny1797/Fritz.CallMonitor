@@ -57,7 +57,7 @@ from fritz_callhistory.sync.phonebook_io import (
     write_xml,
 )
 from fritz_callhistory.sync.normalize import normalize_number
-from fritz_callhistory.sync.service import resolve_contact_names
+from fritz_callhistory.sync.caller_directory import CallerDirectory
 
 _IMPORT_FILTER = "Fritz!Box-Telefonbuch (*.xml);;CSV (*.csv);;vCard (*.vcf)"
 _EXPORT_FILTER = "Fritz!Box-Telefonbuch (*.xml);;CSV (*.csv);;vCard (*.vcf)"
@@ -163,7 +163,8 @@ class PhonebookTab(QWidget):
 
     def _after_local_change(self) -> None:
         self._reload()
-        updated = resolve_contact_names(self._contacts_repo, self._phonebook_repo, self._repo)
+        directory = CallerDirectory(self._contacts_repo, self._phonebook_repo, self._repo)
+        updated = directory.refresh_names()
         if updated:
             self.contacts_changed.emit()
 

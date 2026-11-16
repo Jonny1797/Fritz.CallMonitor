@@ -22,7 +22,11 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
-from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
+from fritz_callhistory.db.repository import (
+    ContactRepository,
+    LocalPhonebookRepository,
+    PhonebookRepository,
+)
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.calls_tab import CallsTab
@@ -41,7 +45,8 @@ from fritz_callhistory.gui.background_tasks import (
     SyncFn,
     TestCredentialsFn,
 )
-from fritz_callhistory.sync.normalize import format_number_display, normalize_number
+from fritz_callhistory.sync.caller_directory import CallerDirectory
+from fritz_callhistory.sync.normalize import format_number_display
 
 # Letzte Absicherung für closeEvent(): Sync und Box-Import haben
 # in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
@@ -90,6 +95,9 @@ class MainWindow(QMainWindow):
 
         self._contacts_repo = ContactRepository(connection)
         self._local_phonebook_repo = LocalPhonebookRepository(connection)
+        self._caller_directory = CallerDirectory(
+            self._contacts_repo, PhonebookRepository(connection), self._local_phonebook_repo
+        )
         self._show_incoming_call_popup = show_incoming_call_popup
         self._incoming_call_popups: dict[str, IncomingCallPopup] = {}
         # Vorab auf None statt erst im folgenden if-Block (siehe unten) - so
@@ -304,21 +312,13 @@ class MainWindow(QMainWindow):
         self.close()
 
     def _on_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
-        normalized, is_anonymous = normalize_number(caller_number)
-        contact_id = None
-        notes = None
-        if is_anonymous:
+        identity = self._caller_directory.identify(caller_number)
+        contact_id = identity.caller_id
+        notes = identity.notes
+        if identity.is_anonymous:
             message = "Unbekannte / unterdrückte Nummer"
         else:
-            contact = self._contacts_repo.find_by_number(normalized)
-            message = (
-                contact.display_name
-                if (contact and contact.display_name)
-                else format_number_display(normalized)
-            )
-            contact_id = contact.id if contact else None
-            local_contact = self._local_phonebook_repo.find_by_number(normalized)
-            notes = local_contact.notes if local_contact else None
+            message = identity.label()
         self._tray_icon.showMessage(
             "Eingehender Anruf", message, QSystemTrayIcon.MessageIcon.Information, 8000
         )
@@ -326,7 +326,7 @@ class MainWindow(QMainWindow):
             self._show_incoming_call_window(
                 connection_id,
                 message,
-                "" if is_anonymous else format_number_display(normalized),
+                "" if identity.is_anonymous else format_number_display(identity.number),
                 notes,
                 contact_id,
             )
