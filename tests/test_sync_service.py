@@ -314,6 +314,61 @@ def test_resolve_contact_names_prefers_local_phonebook_over_box_cache(connection
     assert contact.display_name == "Lokaler Name"
 
 
+def _resolve(connection, local):
+    return resolve_contact_names(
+        ContactRepository(connection), PhonebookRepository(connection), local
+    )
+
+
+def test_resolve_contact_names_clears_name_after_local_contact_deleted(connection):
+    _service(connection, [_make_call(call_type=1, caller_number="030 1234567")]).sync_calls()
+    local = LocalPhonebookRepository(connection)
+    contact_id = local.create(
+        display_name="Lokaler Name",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
+    _resolve(connection, local)
+    assert ContactRepository(connection).search("")[0].display_name == "Lokaler Name"
+
+    local.delete(contact_id)
+    updated = _resolve(connection, local)
+
+    assert updated == 1
+    assert ContactRepository(connection).search("")[0].display_name is None
+
+
+def test_resolve_contact_names_falls_back_to_box_name_after_local_contact_deleted(connection):
+    service = _service(
+        connection,
+        [_make_call(call_type=1, caller_number="030 1234567")],
+        {0: [("Box-Name", ["030 1234567"])]},
+    )
+    service.sync_calls()
+    service.sync_phonebook()
+    local = LocalPhonebookRepository(connection)
+    contact_id = local.create(
+        display_name="Lokaler Name",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
+    _resolve(connection, local)
+
+    local.delete(contact_id)
+    _resolve(connection, local)
+
+    assert ContactRepository(connection).search("")[0].display_name == "Box-Name"
+
+
+def test_resolve_contact_names_returns_zero_when_nothing_changes(connection):
+    _service(connection, [_make_call(call_type=1, caller_number="030 1234567")]).sync_calls()
+
+    updated = _resolve(connection, LocalPhonebookRepository(connection))
+
+    assert updated == 0
+    assert ContactRepository(connection).search("")[0].display_name is None
+
+
 def test_sync_voicemail_inserts_new_messages(connection):
     message = _make_voicemail_message()
     service = _service(connection, voicemail_messages={0: [message]})

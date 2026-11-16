@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Deleting a Telefonbuch contact no longer leaves its name on the call history:
+  the name is cleared (or falls back to the Box Telefonbuch name) right away.
+
 ### Changed
 
 - `SyncService.sync_calls()`/`sync_voicemail()` now commit once per full sync

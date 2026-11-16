@@ -222,7 +222,7 @@ class PhonebookTab(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._repo.delete(contact_id)
-        self._reload()
+        self._after_local_change()
 
     def import_from_file(self) -> None:
         path_str, _selected_filter = QFileDialog.getOpenFileName(

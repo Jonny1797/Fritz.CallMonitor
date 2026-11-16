@@ -185,6 +185,33 @@ def test_delete_contact_removes_it(qtbot, connection, mocker):
     assert repo.list_all() == []
 
 
+def test_delete_contact_reruns_name_resolution_and_emits_contacts_changed(
+    qtbot, connection, mocker
+):
+    contacts = ContactRepository(connection)
+    caller_id = contacts.upsert("+49301234567")
+    repo = LocalPhonebookRepository(connection)
+    repo.create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("030 1234567", "+49301234567", "home", False)],
+    )
+    contacts.set_display_names({caller_id: "Max Mustermann"})
+
+    tab = PhonebookTab(connection)
+    qtbot.addWidget(tab)
+    tab._table.selectRow(0)
+    mocker.patch(
+        "fritz_callhistory.gui.phonebook_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    )
+
+    with qtbot.waitSignal(tab.contacts_changed, timeout=1000):
+        tab._on_delete_clicked()
+
+    assert contacts.search("")[0].display_name is None
+
+
 def test_add_or_edit_number_creates_new_contact_with_prefilled_number(qtbot, connection, mocker):
     tab = PhonebookTab(connection)
     qtbot.addWidget(tab)

@@ -100,7 +100,7 @@ class ContactRepository:
         )
         self._conn.commit()
 
-    def set_display_names(self, updates: dict[int, str]) -> None:
+    def set_display_names(self, updates: dict[int, str | None]) -> None:
         """Batched Variante von set_display_name für viele Kontakte in einer Transaktion."""
         if not updates:
             return

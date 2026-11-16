@@ -60,10 +60,12 @@ def resolve_contact_names(
     """
     local_names = local_phonebook.all_names()
     box_names = phonebook.all_names()
-    updates: dict[int, str] = {}
+    updates: dict[int, str | None] = {}
     for contact in contacts.search(""):
+        # Das Ergebnis ist maßgeblich: Löst eine Nummer nicht mehr auf (z.B. nach dem
+        # Löschen eines lokalen Kontakts), wird der gespeicherte Name geleert.
         name = local_names.get(contact.primary_number) or box_names.get(contact.primary_number)
-        if name and name != contact.display_name:
+        if name != contact.display_name:
             updates[contact.id] = name
     contacts.set_display_names(updates)
     return len(updates)
