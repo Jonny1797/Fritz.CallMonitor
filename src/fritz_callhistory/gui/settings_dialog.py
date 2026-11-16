@@ -3,12 +3,12 @@
 Schreibt Änderungen in die Config-TOML und gibt die neue Config zurück (siehe
 save()); MainWindow._apply_settings_change() wendet sie danach sofort auf den
 laufenden Zustand an (Auto-Sync-Timer, Popup-Flag, phonebook_ids über
-credentials_ref) - kein Neustart der App mehr nötig.
+BoxGateway.apply_config()) - kein Neustart der App mehr nötig.
 
 Kennt bewusst weder FritzBoxClient noch Hintergrundaufgaben: MainWindow holt die
-Telefonbuchliste selbst (BackgroundTasks, an MainWindow statt an diesen
-Dialog gehängt - siehe _open_settings_dialog()) und reicht das Ergebnis über
-set_phonebooks()/set_phonebooks_unavailable() synchron herein.
+Telefonbuchliste selbst (über BackgroundTasks, mit diesem Dialog als Kontext -
+siehe _open_settings_dialog()) und reicht das Ergebnis über
+set_phonebooks()/set_phonebooks_unavailable() herein.
 """
 
 from __future__ import annotations
