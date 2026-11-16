@@ -10,6 +10,8 @@ from fritz_callhistory.db.repository import (
     PhonebookNumber,
     VoicemailMessageRecord,
 )
+from fritz_callhistory.gui.live_calls import LiveCall, LiveCallState
+from fritz_callhistory.sync.caller_directory import CallerIdentity
 from fritz_callhistory.sync.normalize import format_number_display
 from fritz_callhistory.gui.models import (
     AllCallsListModel,
@@ -872,3 +874,40 @@ def test_voicemail_new_messages_are_bold_and_red_old_ones_are_not(qtbot):
     assert model.data(model.index(0, 0), Qt.ItemDataRole.ForegroundRole) is not None
     assert model.data(model.index(1, 0), Qt.ItemDataRole.FontRole) is None
     assert model.data(model.index(1, 0), Qt.ItemDataRole.ForegroundRole) is None
+
+
+def _live_call(state, answered=False):
+    identity = CallerIdentity("+49301234567", False, None, None, None)
+    return LiveCall("030 1234567", "069987654", identity, "2026-06-05T09:00:00", state, answered)
+
+
+@pytest.mark.parametrize("column", range(5))
+def test_all_calls_mixed_stored_and_live_rows_sort_by_every_column(qtbot, column):
+    rows = [
+        _call_with_contact(2),
+        _live_call(LiveCallState.RINGING),
+        _call_with_contact(1),
+        _live_call(LiveCallState.ENDED),
+    ]
+    model = AllCallsListModel(rows)
+    proxy = DataclassSortProxy(model.call_at, ALL_CALLS_COLUMNS)
+    proxy.setSourceModel(model)
+
+    for order in (Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder):
+        proxy.sort(column, order)
+        assert proxy.rowCount() == 4
+
+
+def test_all_calls_direction_column_sorts_live_calls_before_box_codes(qtbot):
+    rows = [
+        _call_with_contact(1),
+        _live_call(LiveCallState.RINGING),
+        _call_with_contact(10),
+        _live_call(LiveCallState.CONNECTED, answered=True),
+    ]
+    model = AllCallsListModel(rows)
+
+    texts = _sorted_texts(model, model.call_at, ALL_CALLS_COLUMNS, 1)
+
+    assert [t.split(" ", 1)[1] for t in texts[:2]] == ["Verbunden …", "Klingelt …"]
+    assert texts[2:] == ["↘ Eingehend", "⊘ Abgelehnt"]

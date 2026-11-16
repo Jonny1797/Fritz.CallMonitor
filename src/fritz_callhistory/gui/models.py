@@ -20,6 +20,7 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.fritz.call_types import counterparty_number, is_missed
 from fritz_callhistory.fritz.call_types import display as call_type_display
+from fritz_callhistory.gui.live_calls import LiveCall, LiveCallState
 from fritz_callhistory.sync.caller_directory import CallerIdentity
 from fritz_callhistory.sync.normalize import format_number_display, normalize_number
 
@@ -106,12 +107,61 @@ def _call_number_sort_key(call: CallRecord) -> str:
     return normalize_number(call_number(call))[0]
 
 
-def _all_calls_name(call: CallWithContact) -> str:
+AllCallsRow = CallWithContact | LiveCall
+
+_LIVE_STATE_ORDER = {
+    LiveCallState.CONNECTED: 0,
+    LiveCallState.RINGING: 1,
+    LiveCallState.ENDED: 2,
+}
+
+
+def _all_calls_name(row: AllCallsRow) -> str:
+    if isinstance(row, LiveCall):
+        identity = row.identity
+        return contact_display_label(
+            identity.is_anonymous, identity.name, format_number_display(identity.number)
+        )
     return contact_display_label(
-        call.contact_is_anonymous,
-        call.contact_display_name,
-        format_number_display(call.contact_primary_number),
+        row.contact_is_anonymous,
+        row.contact_display_name,
+        format_number_display(row.contact_primary_number),
     )
+
+
+def _all_calls_date_raw(row: AllCallsRow) -> str:
+    return row.started_at if isinstance(row, LiveCall) else row.call_date
+
+
+def _all_calls_date(row: AllCallsRow) -> str:
+    return _format_call_date(_all_calls_date_raw(row))
+
+
+def _all_calls_direction(row: AllCallsRow) -> str:
+    if isinstance(row, LiveCall):
+        return row.display()
+    return call_type_display(row.call_type)
+
+
+def _all_calls_direction_key(row: AllCallsRow) -> tuple[int, int]:
+    """Live-Anrufe sortieren vor allen Box-Codes."""
+    if isinstance(row, LiveCall):
+        return (0, _LIVE_STATE_ORDER[row.state])
+    return (1, row.call_type)
+
+
+def _all_calls_duration_seconds(row: AllCallsRow) -> int | None:
+    return None if isinstance(row, LiveCall) else row.duration_seconds
+
+
+def _all_calls_duration(row: AllCallsRow) -> str:
+    return _format_duration(_all_calls_duration_seconds(row))
+
+
+def _all_calls_port_device(row: AllCallsRow) -> str:
+    if isinstance(row, LiveCall):
+        return port_device_display(None, None)
+    return port_device_display(row.device, row.port)
 
 
 def _call_columns(number: Column) -> tuple[Column, ...]:
@@ -171,8 +221,24 @@ CALL_COLUMNS = _call_columns(
     Column("number", "Nummer", _call_number_display, _call_number_sort_key)
 )
 
-ALL_CALLS_COLUMNS = _call_columns(
-    Column("name_number", "Name/Nummer", _all_calls_name, lambda c: _all_calls_name(c).lower())
+ALL_CALLS_COLUMNS = (
+    Column(
+        "date",
+        "Datum",
+        _all_calls_date,
+        _all_calls_date_raw,
+        _MINUTE_PRECISION_TOOLTIPS["Datum"],
+    ),
+    Column("direction", "Richtung", _all_calls_direction, _all_calls_direction_key),
+    Column("name_number", "Name/Nummer", _all_calls_name, lambda r: _all_calls_name(r).lower()),
+    Column(
+        "duration",
+        "Dauer",
+        _all_calls_duration,
+        _all_calls_duration_seconds,
+        _MINUTE_PRECISION_TOOLTIPS["Dauer"],
+    ),
+    Column("port_device", "Port/Gerät", _all_calls_port_device),
 )
 
 
@@ -310,13 +376,13 @@ class AllCallsListModel(TableModel):
 
     def __init__(
         self,
-        calls: list[CallWithContact] | None = None,
+        calls: list[AllCallsRow] | None = None,
         last_seen_at: str | None = None,
     ) -> None:
         super().__init__(ALL_CALLS_COLUMNS, calls, row_emphasis=self._is_new_missed)
         self._last_seen_at = last_seen_at
 
-    def set_calls(self, calls: list[CallWithContact]) -> None:
+    def set_calls(self, calls: list[AllCallsRow]) -> None:
         self._set_items(calls)
 
     def set_last_seen_at(self, last_seen_at: str | None) -> None:
@@ -330,10 +396,12 @@ class AllCallsListModel(TableModel):
                 [Qt.ItemDataRole.FontRole, Qt.ItemDataRole.ForegroundRole],
             )
 
-    def call_at(self, row: int) -> CallWithContact:
+    def call_at(self, row: int) -> AllCallsRow:
         return self._item_at(row)
 
-    def _is_new_missed(self, call: CallWithContact) -> bool:
+    def _is_new_missed(self, call: AllCallsRow) -> bool:
+        if isinstance(call, LiveCall):
+            return call.is_new_missed(self._last_seen_at)
         return (
             is_missed(call.call_type)
             and self._last_seen_at is not None

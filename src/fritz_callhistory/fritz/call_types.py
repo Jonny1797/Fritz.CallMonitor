@@ -17,10 +17,6 @@ class CallType(IntEnum):
     ACTIVE_INCOMING = 9
     REJECTED = 10
     ACTIVE_OUTGOING = 11
-    # Nur zur Anzeige für live per CallMonitor verfolgte Anrufe - werden nie gespeichert
-    # und liegen bewusst ausserhalb des Wertebereichs echter Box-Codes.
-    LIVE_RINGING = -1
-    LIVE_CONNECTED = -2
 
 
 _OUTGOING = (CallType.OUTGOING, CallType.ACTIVE_OUTGOING)
@@ -32,8 +28,6 @@ _LABELS = {
     CallType.ACTIVE_INCOMING: "Eingehend (aktiv)",
     CallType.REJECTED: "Abgelehnt",
     CallType.ACTIVE_OUTGOING: "Ausgehend (aktiv)",
-    CallType.LIVE_RINGING: "Klingelt …",
-    CallType.LIVE_CONNECTED: "Verbunden …",
 }
 
 _ICONS = {
@@ -43,8 +37,6 @@ _ICONS = {
     CallType.ACTIVE_INCOMING: "↘",
     CallType.REJECTED: "⊘",
     CallType.ACTIVE_OUTGOING: "↗",
-    CallType.LIVE_RINGING: "🔔",
-    CallType.LIVE_CONNECTED: "📞",
 }
 
 

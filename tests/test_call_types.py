@@ -1,5 +1,4 @@
 from fritz_callhistory.fritz.call_types import (
-    CallType,
     counterparty_number,
     display,
     icon,
@@ -35,18 +34,11 @@ def test_label_and_icon_per_known_code():
         9: ("↘", "Eingehend (aktiv)"),
         10: ("⊘", "Abgelehnt"),
         11: ("↗", "Ausgehend (aktiv)"),
-        -1: ("🔔", "Klingelt …"),
-        -2: ("📞", "Verbunden …"),
     }
     for code, (symbol, text) in expected.items():
         assert icon(code) == symbol
         assert label(code) == text
         assert display(code) == f"{symbol} {text}"
-
-
-def test_live_states_have_documented_values():
-    assert CallType.LIVE_RINGING == -1
-    assert CallType.LIVE_CONNECTED == -2
 
 
 def test_unknown_code_falls_back_to_bare_number():

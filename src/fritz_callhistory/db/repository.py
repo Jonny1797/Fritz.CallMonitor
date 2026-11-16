@@ -62,22 +62,13 @@ class CallRecord:
     box_call_id: int | None = None
 
 
-@dataclass
-class CallWithContact:
-    id: int
-    contact_id: int
-    call_type: int
-    caller_number: str | None
-    called_number: str | None
-    port: str | None
-    device: str | None
-    call_date: str
-    duration_seconds: int | None
-    raw_name: str | None
+@dataclass(kw_only=True)
+class CallWithContact(CallRecord):
+    """Ein gespeicherter Anruf samt Caller-Feldern (Join auf contacts)."""
+
     contact_display_name: str | None
     contact_primary_number: str
     contact_is_anonymous: bool
-    box_call_id: int | None = None
 
 
 class ContactRepository:
@@ -308,38 +299,32 @@ class CallRepository:
         return [self._row_to_call_with_contact(row) for row in rows]
 
     @staticmethod
-    def _row_to_call(row: sqlite3.Row) -> CallRecord:
-        return CallRecord(
-            id=row["id"],
-            contact_id=row["contact_id"],
-            call_type=row["call_type"],
-            caller_number=row["caller_number"],
-            called_number=row["called_number"],
-            port=row["port"],
-            device=row["device"],
-            call_date=row["call_date"],
-            duration_seconds=row["duration_seconds"],
-            raw_name=row["raw_name"],
-            box_call_id=row["box_call_id"],
-        )
+    def _call_fields(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "contact_id": row["contact_id"],
+            "call_type": row["call_type"],
+            "caller_number": row["caller_number"],
+            "called_number": row["called_number"],
+            "port": row["port"],
+            "device": row["device"],
+            "call_date": row["call_date"],
+            "duration_seconds": row["duration_seconds"],
+            "raw_name": row["raw_name"],
+            "box_call_id": row["box_call_id"],
+        }
 
-    @staticmethod
-    def _row_to_call_with_contact(row: sqlite3.Row) -> CallWithContact:
+    @classmethod
+    def _row_to_call(cls, row: sqlite3.Row) -> CallRecord:
+        return CallRecord(**cls._call_fields(row))
+
+    @classmethod
+    def _row_to_call_with_contact(cls, row: sqlite3.Row) -> CallWithContact:
         return CallWithContact(
-            id=row["id"],
-            contact_id=row["contact_id"],
-            call_type=row["call_type"],
-            caller_number=row["caller_number"],
-            called_number=row["called_number"],
-            port=row["port"],
-            device=row["device"],
-            call_date=row["call_date"],
-            duration_seconds=row["duration_seconds"],
-            raw_name=row["raw_name"],
+            **cls._call_fields(row),
             contact_display_name=row["contact_display_name"],
             contact_primary_number=row["contact_primary_number"],
             contact_is_anonymous=bool(row["contact_is_anonymous"]),
-            box_call_id=row["box_call_id"],
         )
 
 

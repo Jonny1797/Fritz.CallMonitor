@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QDate, QModelIndex, Signal
@@ -25,7 +24,6 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory.db.repository import (
     CallRepository,
-    CallWithContact,
     SyncStateRepository,
 )
 from fritz_callhistory.fritz.call_types import CallType
@@ -41,23 +39,12 @@ from fritz_callhistory.gui.models import (
     selected_source_row,
     set_search_text_silently,
 )
-from fritz_callhistory.sync.caller_directory import CallerDirectory, CallerIdentity
+from fritz_callhistory.gui.live_calls import LiveCall, LiveCallState
+from fritz_callhistory.sync.caller_directory import CallerDirectory
 
 _ISO_DAY_START = "T00:00:00"
 _ISO_DAY_END = "T23:59:59"
 _LAST_SEEN_KEY = "missed_calls_last_seen_at"
-_LIVE_CALL_SENTINEL_ID = -1
-
-
-@dataclass
-class _LiveCall:
-    caller_number: str
-    called_number: str
-    identity: CallerIdentity
-    call_type: int  # CallType.LIVE_RINGING oder CallType.LIVE_CONNECTED
-    started_at: str
-    connected: bool = False  # war der Anruf je verbunden (Verbunden), auch nach dem Ende
-    ended: bool = False  # Anruf beendet, wartet auf den nächsten erfolgreichen Sync (siehe on_live_disconnected)
 
 
 class AllCallsView(QWidget):
@@ -83,7 +70,7 @@ class AllCallsView(QWidget):
         self._new_missed_only = False
         self._new_missed_count = 0
         self._last_seen_at = self._load_or_init_last_seen_at()
-        self._live_calls: dict[str, _LiveCall] = {}
+        self._live_calls: dict[str, LiveCall] = {}
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Suche nach Name oder Nummer …")
@@ -233,13 +220,14 @@ class AllCallsView(QWidget):
         else:
             calls = self._calls_repo.all_calls(search=search)
 
+        rows: list = list(calls)
         if not self._new_missed_only:
             # Live-Anrufe (klingelt/verbunden) immer oben zeigen, ausser im
             # "Neu verpasst"-Preset - der ist semantisch nur für bereits
             # abgeschlossene, verpasste Anrufe gedacht.
-            calls = self._live_calls_as_call_with_contact(search) + calls
+            rows = self._matching_live_calls(search) + rows
 
-        self._model.set_calls(calls)
+        self._model.set_calls(rows)
         self._model.set_last_seen_at(self._last_seen_at)
         # precomputed nur ohne aktive Suche verwenden: die globale "neu
         # verpasst"-Badge (new_missed_calls_changed) und der "als gesehen
@@ -251,47 +239,17 @@ class AllCallsView(QWidget):
             precomputed=calls if (self._new_missed_only and not search) else None
         )
 
-    def _live_calls_as_call_with_contact(self, search: str = "") -> list[CallWithContact]:
-        query = search
-        result = []
-        for live in sorted(self._live_calls.values(), key=lambda c: c.started_at, reverse=True):
-            identity = live.identity
-            # Dieselbe Trefferlogik wie bei gespeicherten Anrufen (Caller directory)
-            if query and not CallerDirectory.matches(query, identity):
-                continue
-            result.append(
-                CallWithContact(
-                    id=_LIVE_CALL_SENTINEL_ID,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
-                    contact_id=live.identity.caller_id or _LIVE_CALL_SENTINEL_ID,
-                    # Beendete Anrufe verschwinden nicht sofort: angenommene zeigen
-                    # "Eingehend", nie angenommene "Verpasst" (wie der echte Eintrag
-                    # nach dem Sync). Der CallMonitor verfolgt nur eingehende Anrufe.
-                    call_type=self._ended_call_type(live) if live.ended else live.call_type,
-                    caller_number=live.caller_number,
-                    called_number=live.called_number,
-                    port=None,
-                    device=None,
-                    call_date=live.started_at,
-                    duration_seconds=None,
-                    raw_name=None,
-                    contact_display_name=identity.name,
-                    contact_primary_number=identity.number,
-                    contact_is_anonymous=identity.is_anonymous,
-                )
-            )
-        return result
-
-    @staticmethod
-    def _ended_call_type(live: _LiveCall) -> CallType:
-        return CallType.INCOMING if live.connected else CallType.MISSED
+    def _matching_live_calls(self, search: str = "") -> list[LiveCall]:
+        live_calls = sorted(self._live_calls.values(), key=lambda c: c.started_at, reverse=True)
+        # Dieselbe Trefferlogik wie bei gespeicherten Anrufen (Caller directory)
+        return [c for c in live_calls if not search or CallerDirectory.matches(search, c.identity)]
 
     def on_live_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
         identity = self._caller_directory.register(caller_number)
-        self._live_calls[connection_id] = _LiveCall(
+        self._live_calls[connection_id] = LiveCall(
             caller_number=caller_number,
             called_number=called_number,
             identity=identity,
-            call_type=CallType.LIVE_RINGING,
             started_at=self._now_provider().isoformat(),
         )
         self._reload()
@@ -299,19 +257,19 @@ class AllCallsView(QWidget):
     def on_live_connected(self, connection_id: str) -> None:
         live = self._live_calls.get(connection_id)
         if live is not None:
-            live.call_type = CallType.LIVE_CONNECTED
-            live.connected = True
+            live.state = LiveCallState.CONNECTED
+            live.answered = True
             self._reload()
 
     def on_live_disconnected(self, connection_id: str) -> None:
         # Der Eintrag wird nicht sofort entfernt, sondern nur als beendet
-        # markiert (siehe _live_calls_as_call_with_contact) - so bleibt die
+        # markiert (siehe _matching_live_calls) - so bleibt die
         # Zeile sichtbar, bis der dadurch ausgelöste Sync (live_call_ended
         # -> MainWindow._trigger_sync) den echten Eintrag gebracht hat, statt
         # kurz zu verschwinden und dann wieder aufzutauchen.
         live = self._live_calls.get(connection_id)
         if live is not None:
-            live.ended = True
+            live.state = LiveCallState.ENDED
             self._reload()
             self.live_call_ended.emit()
 
@@ -319,7 +277,7 @@ class AllCallsView(QWidget):
         """Entfernt beendete Live-Anrufe, nachdem der dadurch ausgelöste Sync
         abgeschlossen ist (siehe MainWindow._on_sync_finished) - der echte,
         jetzt synchronisierte Eintrag ersetzt die Platzhalterzeile dann nahtlos."""
-        ended_ids = [cid for cid, live in self._live_calls.items() if live.ended]
+        ended_ids = [cid for cid, live in self._live_calls.items() if live.state is LiveCallState.ENDED]
         for connection_id in ended_ids:
             del self._live_calls[connection_id]
 
@@ -349,13 +307,14 @@ class AllCallsView(QWidget):
             return
         source_row = self._proxy.mapToSource(index).row()
         call = self._model.call_at(source_row)
-        if call.contact_id == _LIVE_CALL_SENTINEL_ID:
+        contact_id = call.identity.caller_id if isinstance(call, LiveCall) else call.contact_id
+        if contact_id is None:
             return  # Live-Anruf ohne Caller (sollte nach register() nicht vorkommen)
-        self.contact_selected.emit(call.contact_id)
+        self.contact_selected.emit(contact_id)
 
     def _number_for_row(self, row: int) -> str | None:
         call = self._model.call_at(row)
-        if call.id == _LIVE_CALL_SENTINEL_ID or call.contact_is_anonymous:
+        if isinstance(call, LiveCall) or call.contact_is_anonymous:
             return None
         return call_number(call)
 

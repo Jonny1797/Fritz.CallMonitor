@@ -5,7 +5,8 @@ Package: `src/fritz_callhistory/`.
 | Module | Role |
 |---|---|
 | `fritz/client.py` | Thin wrapper around `fritzconnection` (TR-064); returns its own `FritzCallListEntry`, never fritzconnection's `Call`. See [fritzbox.md](fritzbox.md). |
-| `fritz/call_types.py` | Pure `CallType` enum + helpers (missed?, outgoing?, counterparty number, label, icon). No fritzconnection import. |
+| `gui/live_calls.py` | Pure `LiveCall` / `LiveCallState` for Live calls in Alle Anrufe (state, label/icon, new-missed?); the model holds `CallWithContact \| LiveCall`. |
+| `fritz/call_types.py` | Pure `CallType` enum (Box codes only) + helpers (missed?, outgoing?, counterparty number, label, icon). No fritzconnection import. |
 | `fritz/callmonitor.py` | Raw TCP call-monitor protocol (port 1012). See [fritzbox.md](fritzbox.md). |
 | `sync/` | Bridges `fritz/` and `db/`. `normalize.py` (phone numbers), `service.py` (`SyncService.sync_calls()` / `sync_phonebook()`), `phonebook_io.py` (file formats only: parse/write XML, CSV, vCard), `telefonbuch.py` (`Telefonbuch`: the only write path to the local Telefonbuch; owns normalization, dedupe, Default number rule, file import and Box import policies; works on `ContactDraft`/`NumberDraft`), `caller_directory.py` (`CallerDirectory`: who is behind a number), `box_gateway.py` (`BoxGateway`: the app's one way to act on the Fritz!Box with the stored login). |
 | `db/` | Raw `sqlite3` + repository pattern in `db/repository.py`. No ORM. See [database.md](database.md). |
