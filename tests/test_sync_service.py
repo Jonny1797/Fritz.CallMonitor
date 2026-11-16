@@ -242,14 +242,14 @@ def test_sync_calls_stores_box_call_id_for_ordering_tiebreak(connection):
 
 def test_sync_calls_keeps_real_device_value(connection):
     call = _make_call(call_type=1, caller_number="030 1234567")
-    call.Device = "Fritz!Fon"
+    call.device = "Fritz!Fon C6"
     service = _service(connection, [call])
     service.sync_calls()
 
     contact = ContactRepository(connection).search("")[0]
     records = CallRepository(connection).for_contact(contact.id)
 
-    assert records[0].device == "Fritz!Fon"
+    assert records[0].device == "Fritz!Fon C6"
 
 
 def test_refresh_names_prefers_local_phonebook_over_box_cache(connection):
