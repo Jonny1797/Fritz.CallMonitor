@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Credentials entered after cancelling the startup dialog now enable sync, dialing, Box
+  import and Anrufbeantworter actions without a restart.
 - Searching by number now also finds calls that are ringing or in progress (same
   matching rules as stored calls).
 - Deleting a Telefonbuch contact no longer leaves its name on the call history:

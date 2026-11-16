@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
+from fritz_callhistory.sync.box_gateway import BoxGateway
 from fritz_callhistory.db.repository import (
     ContactRepository,
     LocalPhonebookRepository,
@@ -42,8 +43,6 @@ from fritz_callhistory.gui.models import (
 _AUDIO_KEY = "voicemail-audio"
 _ACTION_KEY = "voicemail-action"
 
-AudioFetchFn = Callable[[VoicemailMessageRecord], bytes]
-VoicemailActionFn = Callable[[VoicemailMessageRecord], None]
 
 
 def _format_ms(milliseconds: int) -> str:
@@ -75,9 +74,7 @@ class VoicemailView(QWidget):
         self,
         connection: sqlite3.Connection,
         background_tasks: BackgroundTasks,
-        audio_fetch_fn: AudioFetchFn | None = None,
-        mark_read_fn: VoicemailActionFn | None = None,
-        delete_fn: VoicemailActionFn | None = None,
+        gateway: BoxGateway,
     ) -> None:
         super().__init__()
         self._voicemail_repo = VoicemailRepository(connection)
@@ -86,9 +83,7 @@ class VoicemailView(QWidget):
             PhonebookRepository(connection),
             LocalPhonebookRepository(connection),
         )
-        self._audio_fetch_fn = audio_fetch_fn
-        self._mark_read_fn = mark_read_fn
-        self._delete_fn = delete_fn
+        self._gateway = gateway
         self._background_tasks = background_tasks
         self._new_voicemail_count = 0
         # Player-Quelle (QByteArray/QBuffer) als Instanzattribute halten, damit sie
@@ -246,11 +241,10 @@ class VoicemailView(QWidget):
             self._delete_message(message)
 
     def play_message(self, message: VoicemailMessageRecord) -> None:
-        if self._audio_fetch_fn is None or self._background_tasks.is_running(_AUDIO_KEY):
+        if not self._gateway.has_credentials or self._background_tasks.is_running(_AUDIO_KEY):
             return
-        fetch_fn = self._audio_fetch_fn
         started = self._background_tasks.start(
-            lambda: fetch_fn(message),
+            lambda: self._gateway.voicemail_audio(message),
             self,
             lambda data: self._on_audio_ready(message, data),
             self._on_audio_failed,
@@ -264,7 +258,7 @@ class VoicemailView(QWidget):
     def _on_audio_ready(self, message: VoicemailMessageRecord, data: bytes) -> None:
         self._now_playing_label.setText(f"Wird abgespielt: {self._model.caller_label(message)}")
         # Playing already marks the message read on the box (see
-        # app.py's _build_voicemail_audio_fn) - flip it locally too, right away,
+        # BoxGateway.voicemail_audio) - flip it locally too, right away,
         # so the unread styling clears immediately instead of waiting for the next
         # sync (same as the explicit "Gelesen" button does).
         self._voicemail_repo.mark_read_locally(message.id)
@@ -280,11 +274,11 @@ class VoicemailView(QWidget):
         self._now_playing_label.setText(f"Abspielen fehlgeschlagen: {error}")
 
     def _mark_read(self, message: VoicemailMessageRecord) -> None:
-        if self._mark_read_fn is None:
+        if not self._gateway.has_credentials:
             return
-        mark_read_fn = self._mark_read_fn
         self._run_action(
-            lambda: mark_read_fn(message), lambda: self._on_mark_read_succeeded(message)
+            lambda: self._gateway.voicemail_mark_read(message),
+            lambda: self._on_mark_read_succeeded(message),
         )
 
     def _on_mark_read_succeeded(self, message: VoicemailMessageRecord) -> None:
@@ -292,10 +286,12 @@ class VoicemailView(QWidget):
         self.reload()
 
     def _delete_message(self, message: VoicemailMessageRecord) -> None:
-        if self._delete_fn is None:
+        if not self._gateway.has_credentials:
             return
-        delete_fn = self._delete_fn
-        self._run_action(lambda: delete_fn(message), lambda: self._on_delete_succeeded(message))
+        self._run_action(
+            lambda: self._gateway.voicemail_delete(message),
+            lambda: self._on_delete_succeeded(message),
+        )
 
     def _on_delete_succeeded(self, message: VoicemailMessageRecord) -> None:
         self._voicemail_repo.delete(message.id)

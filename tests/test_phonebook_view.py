@@ -1,16 +1,22 @@
 from PySide6.QtWidgets import QDialog, QMessageBox
 
+from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
 from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
 from fritz_callhistory.gui.main_window import MainWindow
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
+from tests.fakes import FakeGateway
 
 
-def _make_tab(connection, **kwargs):
+def _make_tab(connection, import_from_box_fn=None, gateway=None):
+    """import_from_box_fn ersetzt die Gateway-Operation; None = keine Zugangsdaten."""
+    if gateway is None:
+        handlers = {"import_from_box": import_from_box_fn} if import_from_box_fn else {}
+        gateway = FakeGateway(handlers=handlers, has_credentials=import_from_box_fn is not None)
     tasks = BackgroundTasks()
-    tab = PhonebookTab(connection, tasks, **kwargs)
+    tab = PhonebookTab(connection, tasks, gateway)
     tasks.setParent(tab)
     return tab
 
@@ -316,7 +322,7 @@ def test_adding_local_contact_renames_matching_call_history_contact(qtbot, conne
     contacts_repo = ContactRepository(connection)
     contact_id = contacts_repo.upsert("+491234567")
 
-    window = MainWindow(connection)
+    window = MainWindow(connection, Config(address=""), FakeGateway(has_credentials=False))
     qtbot.addWidget(window)
 
     window._phonebook_tab._repo.create(

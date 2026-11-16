@@ -125,7 +125,7 @@ class SettingsDialog(QDialog):
         self._phonebooks_loaded = True
 
     def set_phonebooks_unavailable(self, message: str) -> None:
-        """Kein list_phonebooks_fn (keine Zugangsdaten) oder Ladefehler - Namen können
+        """Keine Zugangsdaten oder Ladefehler - Namen können
         nicht aufgelöst werden, daher bleibt nur die Checkbox-Liste deaktiviert. "Alle
         Telefonbücher einbeziehen" bleibt wählbar (braucht keine Box-Verbindung), und
         ein manuelles ID-Eingabefeld füllt die Lücke für alles andere."""

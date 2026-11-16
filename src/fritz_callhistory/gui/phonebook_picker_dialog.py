@@ -74,7 +74,7 @@ class PhonebookPickerDialog(QDialog):
         self._ok_button.setEnabled(True)
 
     def set_phonebooks_unavailable(self, message: str) -> None:
-        """Kein list_phonebooks_fn (keine Zugangsdaten) oder Ladefehler - ohne
+        """Keine Zugangsdaten oder Ladefehler - ohne
         Box-Verbindung gibt es nichts auszuwählen, OK bleibt deaktiviert und nur
         Abbrechen führt weiter."""
         self._status_label.setText(message)

@@ -29,7 +29,7 @@ from fritz_callhistory.fritz.exceptions import (
     FritzBoxPermissionError,
 )
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
-from fritz_callhistory.gui.background_tasks import TestCredentialsFn
+from fritz_callhistory.sync.box_gateway import BoxGateway
 
 _TASK_KEY = "credentials-test"
 
@@ -39,12 +39,12 @@ class CredentialsDialog(QDialog):
         self,
         config: Config,
         background_tasks: BackgroundTasks,
-        test_connection_fn: TestCredentialsFn | None = None,
+        gateway: BoxGateway,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Fritz!Box-Zugangsdaten")
-        self._test_connection_fn = test_connection_fn
+        self._gateway = gateway
         self._background_tasks = background_tasks
         self._busy = False
         # Nach Abbruch/Schließen wird ein spät eintreffendes Ergebnis verworfen.
@@ -100,12 +100,6 @@ class CredentialsDialog(QDialog):
         return credentials.get_password(username) or ""
 
     def _on_accept_clicked(self) -> None:
-        if self._test_connection_fn is None:
-            # Kein Verbindungstest injiziert - z.B. in Tests, die diesen Pfad
-            # nicht mit abdecken wollen. Altes Verhalten: sofort übernehmen.
-            self.accept()
-            return
-
         address = self._address_edit.text().strip()
         username = self._username_edit.text().strip()
         if not address or not username:
@@ -116,9 +110,8 @@ class CredentialsDialog(QDialog):
         self._set_busy(True)
         self._show_status("Verbindung wird geprüft …", is_error=False)
 
-        test_connection_fn = self._test_connection_fn
         started = self._background_tasks.start(
-            lambda: test_connection_fn(address, username, password),
+            lambda: self._gateway.check_credentials(address, username, password),
             self,
             self._on_test_succeeded,
             self._on_test_failed,

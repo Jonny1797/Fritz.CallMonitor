@@ -9,11 +9,26 @@ from fritz_callhistory.db.repository import (
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.voicemail_view import VoicemailView
+from tests.fakes import FakeGateway
 
 
-def _make_view(connection, **kwargs):
+_OPERATIONS = {
+    "audio_fetch_fn": "voicemail_audio",
+    "mark_read_fn": "voicemail_mark_read",
+    "delete_fn": "voicemail_delete",
+}
+
+
+def _make_view(connection, gateway=None, **kwargs):
+    """Die Schlüsselwörter (audio_fetch_fn, ...) ersetzen die jeweilige Gateway-Operation;
+    ein ausdrückliches None steht für "keine Zugangsdaten"."""
+    if gateway is None:
+        handlers = {_OPERATIONS[k]: v for k, v in kwargs.items() if v is not None}
+        gateway = FakeGateway(
+            handlers=handlers, has_credentials=all(v is not None for v in kwargs.values())
+        )
     tasks = BackgroundTasks()
-    view = VoicemailView(connection, tasks, **kwargs)
+    view = VoicemailView(connection, tasks, gateway)
     tasks.setParent(view)
     return view
 

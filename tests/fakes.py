@@ -63,3 +63,77 @@ class FakeClient:
 
     def voicemail_delete(self, tam_index, message_index):
         self.calls_made.append(("voicemail_delete", tam_index, message_index))
+
+
+class FakeGateway:
+    """Ersatz für BoxGateway in GUI-Tests.
+
+    `has_credentials` ist frei setzbar; jeder Aufruf wird als (name, args) in `calls`
+    aufgezeichnet. Ergebnis oder Fehler je Operation über `results` / `errors`;
+    `handlers` erlaubt blockierende/berechnende Ersatzfunktionen (z.B. mit threading.Event).
+    """
+
+    _DEFAULT_RESULTS = {
+        "sync": (0, 0),
+        "list_phonebooks": [],
+        "import_from_box": 0,
+        "voicemail_audio": b"",
+    }
+
+    def __init__(
+        self,
+        config=None,
+        *,
+        has_credentials: bool = True,
+        results: dict | None = None,
+        errors: dict | None = None,
+        handlers: dict | None = None,
+    ) -> None:
+        from fritz_callhistory.config import Config
+
+        self.config = config or Config()
+        self.has_credentials = has_credentials
+        self.results = results or {}
+        self.errors = errors or {}
+        self.handlers = handlers or {}
+        self.calls: list[tuple] = []
+        self.applied_configs: list = []
+
+    def apply_config(self, new_config) -> None:
+        self.config = new_config
+        self.applied_configs.append(new_config)
+
+    def _run(self, name: str, *args):
+        self.calls.append((name, *args))
+        if name in self.handlers:
+            return self.handlers[name](*args)
+        if name in self.errors:
+            raise self.errors[name]
+        return self.results.get(name, self._DEFAULT_RESULTS.get(name))
+
+    def sync(self):
+        return self._run("sync")
+
+    def list_phonebooks(self):
+        return self._run("list_phonebooks")
+
+    def import_from_box(self, phonebook_ids):
+        return self._run("import_from_box", phonebook_ids)
+
+    def dial(self, number):
+        return self._run("dial", number)
+
+    def voicemail_audio(self, message):
+        return self._run("voicemail_audio", message)
+
+    def voicemail_mark_read(self, message):
+        return self._run("voicemail_mark_read", message)
+
+    def voicemail_delete(self, message):
+        return self._run("voicemail_delete", message)
+
+    def check_credentials(self, address, username, password):
+        return self._run("check_credentials", address, username, password)
+
+    def count(self, name: str) -> int:
+        return sum(1 for call in self.calls if call[0] == name)

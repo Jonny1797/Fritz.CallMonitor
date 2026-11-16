@@ -574,7 +574,7 @@ class LocalPhonebookRepository:
         """Wie all_numbers_belong_to_one_contact, aber nur unter Kontakten ohne
         box_uniqueid - die "Adoptieren"-Heuristik beim Box-Import: ein zuvor
         lokal angelegter Kontakt wird mit dem passenden Box-Eintrag verknüpft,
-        statt dupliziert zu werden (siehe app.py's _build_import_from_box_fn)."""
+        statt dupliziert zu werden (siehe sync/phonebook_io.py's import_from_box)."""
         if not numbers_normalized:
             return None
         rows = self._conn.execute(

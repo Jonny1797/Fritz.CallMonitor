@@ -43,7 +43,7 @@ from fritz_callhistory.gui.models import (
 )
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
-from fritz_callhistory.gui.background_tasks import ImportFromBoxFn
+from fritz_callhistory.sync.box_gateway import BoxGateway
 from fritz_callhistory.sync.phonebook_io import (
     ImportedContact,
     ImportedNumber,
@@ -77,7 +77,7 @@ class PhonebookTab(QWidget):
         self,
         connection: sqlite3.Connection,
         background_tasks: BackgroundTasks,
-        import_from_box_fn: ImportFromBoxFn | None = None,
+        gateway: BoxGateway,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -85,7 +85,7 @@ class PhonebookTab(QWidget):
         self._repo = LocalPhonebookRepository(connection)
         self._contacts_repo = ContactRepository(connection)
         self._phonebook_repo = PhonebookRepository(connection)
-        self._import_from_box_fn = import_from_box_fn
+        self._gateway = gateway
         self._background_tasks = background_tasks
 
         self._search_edit = QLineEdit()
@@ -138,7 +138,7 @@ class PhonebookTab(QWidget):
 
     @property
     def can_import_from_box(self) -> bool:
-        return self._import_from_box_fn is not None
+        return self._gateway.has_credentials and not self._background_tasks.is_running(_IMPORT_KEY)
 
     def _reload(self) -> None:
         self._model.set_contacts(self._repo.list_all(self._search_edit.text()))
@@ -282,12 +282,11 @@ class PhonebookTab(QWidget):
         """*phonebook_ids* kommt aus MainWindow._open_phonebook_import_dialog()'s
         PhonebookPickerDialog - die Auswahl dort dient bereits als Bestätigung,
         daher kein zusätzlicher QMessageBox.question() mehr hier."""
-        if self._import_from_box_fn is None or self._background_tasks.is_running(_IMPORT_KEY):
+        if not self._gateway.has_credentials or self._background_tasks.is_running(_IMPORT_KEY):
             return
 
-        import_fn = self._import_from_box_fn
         started = self._background_tasks.start(
-            lambda: import_fn(phonebook_ids),
+            lambda: self._gateway.import_from_box(phonebook_ids),
             self,
             self._on_import_from_box_finished,
             self._on_import_from_box_failed,

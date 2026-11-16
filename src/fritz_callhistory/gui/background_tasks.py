@@ -11,14 +11,6 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 
-# Funktionstypen, die die Closures aus app.py an die Oberfläche liefern.
-SyncFn = Callable[[], tuple[int, int]]
-ImportFromBoxFn = Callable[[list[int]], int]
-DialFn = Callable[[str], None]
-VoicemailAudioFn = Callable[[], bytes]
-ListPhonebooksFn = Callable[[], list[tuple[int, str]]]
-TestCredentialsFn = Callable[[str, str, str], None]
-
 # Sekunden, die nach Beginn des Beendens auf laufende Aufgaben gewartet wird.
 DEFAULT_FAILSAFE_TIMEOUT_S = 10.0
 
