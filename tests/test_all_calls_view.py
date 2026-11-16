@@ -2,7 +2,12 @@ from datetime import date, datetime
 
 from PySide6.QtCore import Qt
 
-from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
+from fritz_callhistory.db.repository import (
+    CallRepository,
+    ContactRepository,
+    LocalPhonebookRepository,
+    SyncStateRepository,
+)
 from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY, AllCallsView
 
 
@@ -416,7 +421,11 @@ def test_clear_live_calls_removes_all_entries(qtbot, connection):
 def test_live_call_groups_under_existing_contact(qtbot, connection):
     contacts = ContactRepository(connection)
     contact_id = contacts.upsert("+49301234567")
-    contacts.set_display_name(contact_id, "Max Mustermann")
+    LocalPhonebookRepository(connection).create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("+49301234567", "+49301234567", "home", False)],
+    )
 
     view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
     qtbot.addWidget(view)
@@ -707,8 +716,12 @@ def test_dial_selected_does_nothing_for_anonymous_contact(qtbot, connection):
 
 def test_search_filters_live_call_by_contact_name(qtbot, connection):
     contacts = ContactRepository(connection)
-    contact_id = contacts.upsert("+49301234567")
-    contacts.set_display_name(contact_id, "Max Mustermann")
+    contacts.upsert("+49301234567")
+    LocalPhonebookRepository(connection).create(
+        display_name="Max Mustermann",
+        notes=None,
+        numbers=[("+49301234567", "+49301234567", "home", False)],
+    )
 
     view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
     qtbot.addWidget(view)
@@ -722,3 +735,59 @@ def test_search_filters_live_call_by_contact_name(qtbot, connection):
     view._search_edit.setText("Mustermann")
     qtbot.wait(400)
     assert view._model.rowCount() == 1
+
+
+def _stored_and_live(qtbot, connection):
+    contacts = ContactRepository(connection)
+    contact_id = contacts.upsert("+49176555")
+    _insert_call(CallRepository(connection), contact_id=contact_id, call_date="2026-06-15T09:00:00")
+    LocalPhonebookRepository(connection).create(
+        display_name="Erika Muster",
+        notes=None,
+        numbers=[("+49176555", "+49176555", "mobile", False)],
+    )
+    contacts.set_display_name(contact_id, "Erika Muster")  # gespeicherter Name wie nach refresh
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+    view.on_live_ring("1", "+49176555", "069987654")
+    return view
+
+
+def test_live_call_search_matches_same_queries_as_stored_call(qtbot, connection):
+    view = _stored_and_live(qtbot, connection)
+
+    for query in ("0176", "176", "+49176", "erika", "ERIKA MUSTER"):
+        view._search_edit.setText(query)
+        view._reload()
+        ids = [view._model.call_at(i).id for i in range(view._model.rowCount())]
+        assert -1 in ids, query
+        assert len(ids) == 2, query  # Live-Anruf und gespeicherter Anruf
+
+
+def test_live_call_hidden_with_non_matching_query_like_stored_call(qtbot, connection):
+    view = _stored_and_live(qtbot, connection)
+
+    view._search_edit.setText("999")
+    view._reload()
+
+    assert view._model.rowCount() == 0
+
+
+def test_live_ring_creates_one_caller_only(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+
+    view.on_live_ring("1", "0176 999", "069987654")
+    view.on_live_ring("2", "0176 999", "069987654")
+
+    assert len(ContactRepository(connection).search("")) == 1
+
+
+def test_anonymous_live_ring_shows_anonymous_label_without_caller(qtbot, connection):
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+    qtbot.addWidget(view)
+
+    view.on_live_ring("1", "", "069987654")
+
+    assert view._model.data(view._model.index(0, 2)) == "Anonym / unterdrückt"
+    assert ContactRepository(connection).search("") == []

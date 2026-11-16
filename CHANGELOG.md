@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Searching by number now also finds calls that are ringing or in progress (same
+  matching rules as stored calls).
 - Deleting a Telefonbuch contact no longer leaves its name on the call history:
   the name is cleared (or falls back to the Box Telefonbuch name) right away.
 - Anrufbeantworter and Telefonbuch actions can no longer start while the app is

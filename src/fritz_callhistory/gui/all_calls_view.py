@@ -28,6 +28,8 @@ from fritz_callhistory.db.repository import (
     CallRepository,
     CallWithContact,
     ContactRepository,
+    LocalPhonebookRepository,
+    PhonebookRepository,
     SyncStateRepository,
 )
 from fritz_callhistory.gui.models import (
@@ -44,7 +46,7 @@ from fritz_callhistory.gui.models import (
     selected_source_row,
     set_search_text_silently,
 )
-from fritz_callhistory.sync.normalize import normalize_number
+from fritz_callhistory.sync.caller_directory import CallerDirectory, CallerIdentity
 
 _ISO_DAY_START = "T00:00:00"
 _ISO_DAY_END = "T23:59:59"
@@ -58,7 +60,7 @@ _LIVE_CALL_SENTINEL_ID = -1
 class _LiveCall:
     caller_number: str
     called_number: str
-    contact_id: int
+    identity: CallerIdentity
     call_type: int  # LIVE_RINGING_CALL_TYPE oder LIVE_CONNECTED_CALL_TYPE
     started_at: str
     ended: bool = False  # Anruf beendet, wartet auf den nächsten erfolgreichen Sync (siehe on_live_disconnected)
@@ -79,7 +81,11 @@ class AllCallsView(QWidget):
     ) -> None:
         super().__init__()
         self._calls_repo = CallRepository(connection)
-        self._contacts_repo = ContactRepository(connection)
+        self._caller_directory = CallerDirectory(
+            ContactRepository(connection),
+            PhonebookRepository(connection),
+            LocalPhonebookRepository(connection),
+        )
         self._sync_state = SyncStateRepository(connection)
         self._today_provider = today_provider
         self._now_provider = now_provider
@@ -268,22 +274,17 @@ class AllCallsView(QWidget):
         )
 
     def _live_calls_as_call_with_contact(self, search: str = "") -> list[CallWithContact]:
-        query = search.lower()
+        query = search
         result = []
         for live in sorted(self._live_calls.values(), key=lambda c: c.started_at, reverse=True):
-            contact = self._contacts_repo.get(live.contact_id)
-            display_name = contact.display_name if contact else None
-            primary_number = contact.primary_number if contact else live.caller_number
-            if (
-                query
-                and query not in (display_name or "").lower()
-                and query not in (primary_number or "").lower()
-            ):
+            identity = live.identity
+            # Dieselbe Trefferlogik wie bei gespeicherten Anrufen (Caller directory)
+            if query and not CallerDirectory.matches(query, identity):
                 continue
             result.append(
                 CallWithContact(
                     id=_LIVE_CALL_SENTINEL_ID,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
-                    contact_id=live.contact_id,
+                    contact_id=live.identity.caller_id or _LIVE_CALL_SENTINEL_ID,
                     # Beendete Anrufe werden generisch als "Eingehend" dargestellt,
                     # statt sofort zu verschwinden - CallMonitor verfolgt ohnehin
                     # ausschliesslich eingehende RING-Ereignisse (siehe
@@ -296,20 +297,19 @@ class AllCallsView(QWidget):
                     call_date=live.started_at,
                     duration_seconds=None,
                     raw_name=None,
-                    contact_display_name=display_name,
-                    contact_primary_number=primary_number,
-                    contact_is_anonymous=contact.is_anonymous if contact else False,
+                    contact_display_name=identity.name,
+                    contact_primary_number=identity.number,
+                    contact_is_anonymous=identity.is_anonymous,
                 )
             )
         return result
 
     def on_live_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
-        normalized, is_anonymous = normalize_number(caller_number)
-        contact_id = self._contacts_repo.upsert(normalized, is_anonymous=is_anonymous)
+        identity = self._caller_directory.register(caller_number)
         self._live_calls[connection_id] = _LiveCall(
             caller_number=caller_number,
             called_number=called_number,
-            contact_id=contact_id,
+            identity=identity,
             call_type=LIVE_RINGING_CALL_TYPE,
             started_at=self._now_provider().isoformat(),
         )
@@ -367,6 +367,8 @@ class AllCallsView(QWidget):
             return
         source_row = self._proxy.mapToSource(index).row()
         call = self._model.call_at(source_row)
+        if call.contact_id == _LIVE_CALL_SENTINEL_ID:
+            return  # anonymer Live-Anruf: noch kein Caller vorhanden
         self.contact_selected.emit(call.contact_id)
 
     def _number_for_row(self, row: int) -> str | None:
