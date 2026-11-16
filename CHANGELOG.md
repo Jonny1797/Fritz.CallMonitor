@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Duplicate numbers in imported Telefonbuch contacts (e.g. a vCard listing the same TEL
   twice) are no longer stored twice, and Telefonbuch imports (file and Box) are now
   all-or-nothing: if one fails halfway, nothing from it is stored.
+- A file import now skips a contact as a duplicate whenever any Telefonbuch contact has
+  exactly the same numbers. Before, it was imported anyway if two or more contacts had
+  that number set.
 - The Anrufbeantworter shows names from the local Telefonbuch, the same as the
   call list.
 - Caller names are now resolved in one place (the Caller directory): the
