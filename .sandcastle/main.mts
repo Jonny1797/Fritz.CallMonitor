@@ -46,6 +46,51 @@ const branch = `ralph/${stamp}`;
 const progressDir = resolve(".sandcastle/runs", stamp);
 const progressFile = join(progressDir, "progress.md");
 
+// --- Forgejo credentials ---------------------------------------------------
+// Looked up before the run starts, so a missing one stops it now and not only
+// after hours of iterations, when the PR is due.
+//
+// Host credentials with write:repository scope, first match wins: the
+// environment, then .sandcastle/host.env (never passed into the sandbox),
+// then the forgejo MCP entry in ~/.claude.json (this project's entry first,
+// then the global one).
+const fromFile = (path: string, key: string) => {
+  if (!existsSync(path)) return undefined;
+  const line = readFileSync(path, "utf8")
+    .split("\n")
+    .findLast((l) => l.startsWith(`${key}=`));
+  return line?.slice(key.length + 1).trim() || undefined;
+};
+const fromMcp = (key: string): string | undefined => {
+  try {
+    const config = JSON.parse(
+      readFileSync(join(homedir(), ".claude.json"), "utf8"),
+    );
+    const project = config.projects?.[git("rev-parse", "--show-toplevel")];
+    return (
+      project?.mcpServers?.forgejo?.env?.[key] ??
+      config.mcpServers?.forgejo?.env?.[key]
+    );
+  } catch {
+    return undefined;
+  }
+};
+const credential = (key: string) =>
+  process.env[key] ?? fromFile(".sandcastle/host.env", key) ?? fromMcp(key);
+// The URL is no secret, so the sandbox's .env may supply it too; the token
+// there is read-only and never used for writing.
+const forgejoUrl = (
+  credential("FORGEJO_URL") ?? fromFile(".sandcastle/.env", "FORGEJO_URL")
+)?.replace(/\/$/, "");
+const token = credential("FORGEJO_TOKEN");
+if (!forgejoUrl || !token) {
+  const missing = [!forgejoUrl && "FORGEJO_URL", !token && "FORGEJO_TOKEN"]
+    .filter(Boolean)
+    .join(" and ");
+  console.error(`No ${missing} found (env, .sandcastle/host.env, ~/.claude.json).`);
+  process.exit(1);
+}
+
 // --- Fresh branch from the remote base ---------------------------------------
 git("fetch", REMOTE, BASE);
 // The run branches from REMOTE/BASE; unpushed local commits would be missing
@@ -310,32 +355,6 @@ const body =
   `## Progress log\n\n${progress}\n\n` +
   `${reviewSection(review)}\n\n` +
   `🤖 Generated with [Claude Code](https://claude.com/claude-code)\n`;
-
-// Host credentials with write:repository scope, first match wins: the
-// environment, then .sandcastle/host.env (never passed into the sandbox),
-// then the forgejo MCP entry in ~/.claude.json.
-const fromFile = (key: string) => {
-  const path = ".sandcastle/host.env";
-  if (!existsSync(path)) return undefined;
-  const line = readFileSync(path, "utf8")
-    .split("\n")
-    .findLast((l) => l.startsWith(`${key}=`));
-  return line?.slice(key.length + 1).trim() || undefined;
-};
-const fromMcp = (key: string): string | undefined => {
-  try {
-    const config = JSON.parse(
-      readFileSync(join(homedir(), ".claude.json"), "utf8"),
-    );
-    return config.mcpServers?.forgejo?.env?.[key];
-  } catch {
-    return undefined;
-  }
-};
-const credential = (key: string) =>
-  process.env[key] ?? fromFile(key) ?? fromMcp(key);
-const forgejoUrl = credential("FORGEJO_URL")?.replace(/\/$/, "");
-const token = credential("FORGEJO_TOKEN");
 
 const response = await fetch(
   `${forgejoUrl}/api/v1/repos/${OWNER}/${REPO}/pulls`,
