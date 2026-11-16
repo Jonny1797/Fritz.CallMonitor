@@ -29,9 +29,8 @@ from fritz_callhistory.db.repository import (
     CallWithContact,
     SyncStateRepository,
 )
+from fritz_callhistory.fritz.call_types import CallType
 from fritz_callhistory.gui.models import (
-    LIVE_CONNECTED_CALL_TYPE,
-    LIVE_RINGING_CALL_TYPE,
     AllCallsListModel,
     DataclassSortProxy,
     call_number,
@@ -47,7 +46,6 @@ from fritz_callhistory.sync.caller_directory import CallerDirectory, CallerIdent
 
 _ISO_DAY_START = "T00:00:00"
 _ISO_DAY_END = "T23:59:59"
-_MISSED_CALL_TYPE = 2
 _LAST_SEEN_KEY = "missed_calls_last_seen_at"
 _NAME_NUMBER_COLUMN = 2
 _LIVE_CALL_SENTINEL_ID = -1
@@ -58,7 +56,7 @@ class _LiveCall:
     caller_number: str
     called_number: str
     identity: CallerIdentity
-    call_type: int  # LIVE_RINGING_CALL_TYPE oder LIVE_CONNECTED_CALL_TYPE
+    call_type: int  # CallType.LIVE_RINGING oder CallType.LIVE_CONNECTED
     started_at: str
     ended: bool = False  # Anruf beendet, wartet auf den nächsten erfolgreichen Sync (siehe on_live_disconnected)
 
@@ -239,7 +237,7 @@ class AllCallsView(QWidget):
         search = self._search_edit.text()
         if self._new_missed_only:
             calls = self._calls_repo.all_calls(
-                date_from=self._last_seen_at, call_types=[_MISSED_CALL_TYPE], search=search
+                date_from=self._last_seen_at, call_types=[CallType.MISSED], search=search
             )
         elif self._filter_enabled:
             date_from = self._from_edit.date().toPython().isoformat() + _ISO_DAY_START
@@ -282,7 +280,7 @@ class AllCallsView(QWidget):
                     # statt sofort zu verschwinden - CallMonitor verfolgt ohnehin
                     # ausschliesslich eingehende RING-Ereignisse (siehe
                     # fritz/callmonitor.py's parse_event), daher immer korrekt.
-                    call_type=1 if live.ended else live.call_type,
+                    call_type=CallType.INCOMING if live.ended else live.call_type,
                     caller_number=live.caller_number,
                     called_number=live.called_number,
                     port=None,
@@ -303,7 +301,7 @@ class AllCallsView(QWidget):
             caller_number=caller_number,
             called_number=called_number,
             identity=identity,
-            call_type=LIVE_RINGING_CALL_TYPE,
+            call_type=CallType.LIVE_RINGING,
             started_at=self._now_provider().isoformat(),
         )
         self._reload()
@@ -311,7 +309,7 @@ class AllCallsView(QWidget):
     def on_live_connected(self, connection_id: str) -> None:
         live = self._live_calls.get(connection_id)
         if live is not None:
-            live.call_type = LIVE_CONNECTED_CALL_TYPE
+            live.call_type = CallType.LIVE_CONNECTED
             self._reload()
 
     def on_live_disconnected(self, connection_id: str) -> None:
@@ -347,7 +345,7 @@ class AllCallsView(QWidget):
         else:
             count = len(
                 self._calls_repo.all_calls(
-                    date_from=self._last_seen_at, call_types=[_MISSED_CALL_TYPE]
+                    date_from=self._last_seen_at, call_types=[CallType.MISSED]
                 )
             )
         self._new_missed_count = count

@@ -17,17 +17,10 @@ from fritz_callhistory.db.repository import (
     LocalPhonebookContact,
     VoicemailMessageRecord,
 )
+from fritz_callhistory.fritz.call_types import counterparty_number, is_missed
+from fritz_callhistory.fritz.call_types import display as call_type_display
 from fritz_callhistory.sync.caller_directory import CallerIdentity
 from fritz_callhistory.sync.normalize import format_number_display
-
-_MISSED_CALL_TYPE = 2
-
-# Pseudo-Call-Types für live per CallMonitor verfolgte, noch nicht
-# synchronisierte Anrufe (siehe gui/all_calls_view.py). Bewusst ausserhalb des
-# Wertebereichs echter Fritz!Box-Call-Type-Codes (>=1), damit sie z.B. nie
-# versehentlich als "verpasst" gezählt werden.
-LIVE_RINGING_CALL_TYPE = -1
-LIVE_CONNECTED_CALL_TYPE = -2
 
 _CONTACT_COLUMNS = ("Name", "Letzter Kontakt", "Anrufe")
 _PHONEBOOK_CONTACT_COLUMNS = ("Name", "Nummern", "Notizen")
@@ -44,40 +37,11 @@ _MINUTE_PRECISION_TOOLTIPS = {
     "Dauer": "Die Fritz!Box liefert die Gesprächsdauer nur in ganzen Minuten (keine Sekunden)",
 }
 
-_CALL_TYPE_LABELS = {
-    1: "Eingehend",
-    2: "Verpasst",
-    3: "Ausgehend",
-    9: "Eingehend (aktiv)",
-    10: "Abgelehnt",
-    11: "Ausgehend (aktiv)",
-    LIVE_RINGING_CALL_TYPE: "Klingelt …",
-    LIVE_CONNECTED_CALL_TYPE: "Verbunden …",
-}
-
-_CALL_TYPE_ICONS = {
-    1: "↘",
-    2: "✕",
-    3: "↗",
-    9: "↘",
-    10: "⊘",
-    11: "↗",
-    LIVE_RINGING_CALL_TYPE: "🔔",
-    LIVE_CONNECTED_CALL_TYPE: "📞",
-}
-
-
-def _call_type_display(call_type: int) -> str:
-    icon = _CALL_TYPE_ICONS.get(call_type, "")
-    label = _CALL_TYPE_LABELS.get(call_type, str(call_type))
-    return f"{icon} {label}" if icon else label
-
-
 def call_number(call: CallRecord) -> str | None:
     """Die für den Nutzer relevante Nummer: bei ausgehenden Anrufen die
     angerufene, sonst die anrufende - geteilt zwischen der Tabellenanzeige
     (CallListModel) und dem Doppelklick-Handler in gui/contact_detail.py."""
-    return call.called_number if call.call_type in (3, 11) else call.caller_number
+    return counterparty_number(call.call_type, call.caller_number, call.called_number)
 
 
 def _format_call_date(call_date: str) -> str:
@@ -238,7 +202,7 @@ class CallListModel(_SimpleTableModel):
         if column == 0:
             return _format_call_date(call.call_date)
         if column == 1:
-            return _call_type_display(call.call_type)
+            return call_type_display(call.call_type)
         if column == 2:
             return format_number_display(call_number(call))
         if column == 3:
@@ -285,7 +249,7 @@ class AllCallsListModel(_SimpleTableModel):
 
     def _is_new_missed(self, call: CallWithContact) -> bool:
         return (
-            call.call_type == _MISSED_CALL_TYPE
+            is_missed(call.call_type)
             and self._last_seen_at is not None
             and call.call_date > self._last_seen_at
         )
@@ -306,7 +270,7 @@ class AllCallsListModel(_SimpleTableModel):
         if column == 0:
             return _format_call_date(call.call_date)
         if column == 1:
-            return _call_type_display(call.call_type)
+            return call_type_display(call.call_type)
         if column == 2:
             return contact_display_label(
                 call.contact_is_anonymous,
