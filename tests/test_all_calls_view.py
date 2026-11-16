@@ -382,7 +382,7 @@ def test_on_live_disconnected_without_connect_shows_missed(qtbot, connection):
     with qtbot.waitSignal(view.live_call_ended, timeout=1000):
         view.on_live_disconnected("1")
 
-    # Zeile bleibt sichtbar (id=-1-Sentinel) und zeigt den nie angenommenen Anruf als Verpasst.
+    # Zeile bleibt als Live-Anruf sichtbar und zeigt den nie angenommenen Anruf als Verpasst.
     assert view._model.rowCount() == 1
     assert view._model.data(view._model.index(0, 1)) == "✕ Verpasst"
 
