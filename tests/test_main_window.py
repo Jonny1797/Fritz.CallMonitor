@@ -5,10 +5,15 @@ from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QSystemTrayIco
 
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import CallRepository, ContactRepository, SyncStateRepository
-from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxConnectionError
+from fritz_callhistory.fritz.exceptions import (
+    FritzBoxAuthError,
+    FritzBoxConnectionError,
+    FritzBoxError,
+)
 from fritz_callhistory.gui.all_calls_view import _LAST_SEEN_KEY
 from fritz_callhistory.gui.main_window import MainWindow
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
+from fritz_callhistory.gui.settings_dialog import SettingsDialog
 
 
 def test_sync_action_disabled_without_sync_fn(qtbot, connection):
@@ -292,7 +297,7 @@ def test_close_while_settings_phonebook_list_running_defers_until_finished(
     qtbot, connection, mocker
 ):
     # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
-    # but for the PhonebookListWorker started by _open_settings_dialog() - it is
+    # but for the phonebook list task started by _open_settings_dialog() - it is
     # deliberately parented to MainWindow (not the dialog) so a slow fetch
     # survives the dialog being closed, which means closeEvent() must know
     # about it too.
@@ -310,20 +315,16 @@ def test_close_while_settings_phonebook_list_running_defers_until_finished(
     qtbot.addWidget(window)
     window.show()
     window._open_settings_dialog()
-    qtbot.waitUntil(
-        lambda: window._phonebook_list_thread is not None
-        and window._phonebook_list_thread.isRunning(),
-        timeout=2000,
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("phonebook-list-settings"))
 
     closed = window.close()
 
     assert closed is False
     assert not window.isVisible()
-    assert window._phonebook_list_thread.isRunning()
+    assert window.background_tasks.is_running("phonebook-list-settings")
 
     release_list.set()
-    qtbot.waitUntil(lambda: not window._phonebook_list_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("phonebook-list-settings"), timeout=2000)
     qtbot.wait(50)
 
     assert window.close() is True
@@ -332,9 +333,9 @@ def test_close_while_settings_phonebook_list_running_defers_until_finished(
 def test_close_while_phonebook_import_list_running_defers_until_finished(
     qtbot, connection, mocker
 ):
-    # Same bug class as above, but for the second PhonebookListWorker instance -
+    # Same bug class as above, but for the second phonebook list task -
     # the one started by _open_phonebook_import_dialog() and held separately as
-    # self._phonebook_import_list_thread so both dialogs can fetch independently.
+    # its own key so both dialogs can fetch independently.
     mocker.patch(
         "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
         return_value=QDialog.DialogCode.Rejected,
@@ -349,20 +350,16 @@ def test_close_while_phonebook_import_list_running_defers_until_finished(
     qtbot.addWidget(window)
     window.show()
     window._open_phonebook_import_dialog()
-    qtbot.waitUntil(
-        lambda: window._phonebook_import_list_thread is not None
-        and window._phonebook_import_list_thread.isRunning(),
-        timeout=2000,
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("phonebook-list-import"))
 
     closed = window.close()
 
     assert closed is False
     assert not window.isVisible()
-    assert window._phonebook_import_list_thread.isRunning()
+    assert window.background_tasks.is_running("phonebook-list-import")
 
     release_list.set()
-    qtbot.waitUntil(lambda: not window._phonebook_import_list_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("phonebook-list-import"), timeout=2000)
     qtbot.wait(50)
 
     assert window.close() is True
@@ -1023,15 +1020,14 @@ def test_open_settings_dialog_without_list_phonebooks_fn_marks_unavailable(qtbot
     mock_set_unavailable = mocker.patch(
         "fritz_callhistory.gui.main_window.SettingsDialog.set_phonebooks_unavailable"
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-
     window = MainWindow(connection, list_phonebooks_fn=None)
     qtbot.addWidget(window)
 
     window._open_settings_dialog()
 
     mock_set_unavailable.assert_called_once()
-    mock_worker_cls.assert_not_called()
+    assert not window.background_tasks.is_running("phonebook-list-settings")
+    assert not window.background_tasks.is_running("phonebook-list-import")
 
 
 def test_open_settings_dialog_starts_phonebook_list_worker_when_available(qtbot, connection, mocker):
@@ -1039,17 +1035,17 @@ def test_open_settings_dialog_starts_phonebook_list_worker_when_available(qtbot,
         "fritz_callhistory.gui.main_window.SettingsDialog.exec",
         return_value=QDialog.DialogCode.Rejected,
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-    mock_worker = mock_worker_cls.return_value
+    mock_set = mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.set_phonebooks"
+    )
 
-    list_phonebooks_fn = mocker.Mock(return_value=[(0, "Telefonbuch")])
-    window = MainWindow(connection, list_phonebooks_fn=list_phonebooks_fn)
+    window = MainWindow(connection, list_phonebooks_fn=lambda: [(0, "Telefonbuch")])
     qtbot.addWidget(window)
 
     window._open_settings_dialog()
 
-    mock_worker_cls.assert_called_once_with(list_phonebooks_fn, parent=window)
-    mock_worker.start.assert_called_once()
+    qtbot.waitUntil(lambda: mock_set.called, timeout=2000)
+    mock_set.assert_called_once_with([(0, "Telefonbuch")])
 
 
 def test_open_phonebook_import_dialog_without_list_phonebooks_fn_marks_unavailable(
@@ -1062,15 +1058,14 @@ def test_open_phonebook_import_dialog_without_list_phonebooks_fn_marks_unavailab
     mock_set_unavailable = mocker.patch(
         "fritz_callhistory.gui.main_window.PhonebookPickerDialog.set_phonebooks_unavailable"
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-
     window = MainWindow(connection, list_phonebooks_fn=None)
     qtbot.addWidget(window)
 
     window._open_phonebook_import_dialog()
 
     mock_set_unavailable.assert_called_once()
-    mock_worker_cls.assert_not_called()
+    assert not window.background_tasks.is_running("phonebook-list-settings")
+    assert not window.background_tasks.is_running("phonebook-list-import")
 
 
 def test_open_phonebook_import_dialog_starts_phonebook_list_worker_when_available(
@@ -1080,17 +1075,104 @@ def test_open_phonebook_import_dialog_starts_phonebook_list_worker_when_availabl
         "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
         return_value=QDialog.DialogCode.Rejected,
     )
-    mock_worker_cls = mocker.patch("fritz_callhistory.gui.main_window.PhonebookListWorker")
-    mock_worker = mock_worker_cls.return_value
+    mock_set = mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.set_phonebooks"
+    )
 
-    list_phonebooks_fn = mocker.Mock(return_value=[(0, "Telefonbuch")])
-    window = MainWindow(connection, list_phonebooks_fn=list_phonebooks_fn)
+    window = MainWindow(connection, list_phonebooks_fn=lambda: [(0, "Telefonbuch")])
     qtbot.addWidget(window)
 
     window._open_phonebook_import_dialog()
 
-    mock_worker_cls.assert_called_once_with(list_phonebooks_fn, parent=window)
-    mock_worker.start.assert_called_once()
+    qtbot.waitUntil(lambda: mock_set.called, timeout=2000)
+    mock_set.assert_called_once_with([(0, "Telefonbuch")])
+
+
+def test_phonebook_list_error_marks_dialog_unavailable(qtbot, connection, mocker):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    mock_unavailable = mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.set_phonebooks_unavailable"
+    )
+
+    def failing_list():
+        raise FritzBoxError("Box nicht erreichbar")
+
+    window = MainWindow(connection, list_phonebooks_fn=failing_list)
+    qtbot.addWidget(window)
+
+    window._open_settings_dialog()
+
+    qtbot.waitUntil(lambda: mock_unavailable.called, timeout=2000)
+    mock_unavailable.assert_called_once_with("Box nicht erreichbar")
+
+
+def test_settings_and_import_phonebook_lists_load_independently(qtbot, connection, mocker):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.PhonebookPickerDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    release = threading.Event()
+
+    def slow_list():
+        release.wait(5)
+        return [(0, "Telefonbuch")]
+
+    window = MainWindow(connection, list_phonebooks_fn=slow_list)
+    qtbot.addWidget(window)
+
+    window._open_settings_dialog()
+    window._open_phonebook_import_dialog()
+
+    assert window.background_tasks.is_running("phonebook-list-settings")
+    assert window.background_tasks.is_running("phonebook-list-import")
+    release.set()
+    qtbot.waitUntil(
+        lambda: not window.background_tasks.is_running("phonebook-list-settings")
+        and not window.background_tasks.is_running("phonebook-list-import"),
+        timeout=2000,
+    )
+
+
+def test_closing_dialog_while_phonebook_list_loads_drops_late_result(qtbot, connection, mocker):
+    mocker.patch(
+        "fritz_callhistory.gui.main_window.SettingsDialog.exec",
+        return_value=QDialog.DialogCode.Rejected,
+    )
+    release = threading.Event()
+
+    def slow_list():
+        release.wait(5)
+        return [(0, "Telefonbuch")]
+
+    window = MainWindow(connection, list_phonebooks_fn=slow_list)
+    qtbot.addWidget(window)
+    created = []
+    original = SettingsDialog.__init__
+
+    def tracking_init(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        created.append(self)
+
+    mocker.patch.object(SettingsDialog, "__init__", tracking_init)
+
+    window._open_settings_dialog()
+    dialog = created[0]
+    dialog.deleteLater()
+    qtbot.wait(50)
+    release.set()
+    qtbot.waitUntil(
+        lambda: not window.background_tasks.is_running("phonebook-list-settings"), timeout=2000
+    )
+    qtbot.wait(50)
+
+    assert window.isEnabled()
 
 
 def test_open_phonebook_import_dialog_calls_import_from_box_with_selected_ids_on_accept(

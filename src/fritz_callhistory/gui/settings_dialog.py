@@ -6,7 +6,7 @@ laufenden Zustand an (Auto-Sync-Timer, Popup-Flag, phonebook_ids über
 credentials_ref) - kein Neustart der App mehr nötig.
 
 Kennt bewusst weder FritzBoxClient noch Worker-Threads: MainWindow holt die
-Telefonbuchliste selbst (PhonebookListWorker, an MainWindow statt an diesen
+Telefonbuchliste selbst (BackgroundTasks, an MainWindow statt an diesen
 Dialog gehängt - siehe _open_settings_dialog()) und reicht das Ergebnis über
 set_phonebooks()/set_phonebooks_unavailable() synchron herein.
 """

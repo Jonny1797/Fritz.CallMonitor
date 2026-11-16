@@ -39,7 +39,6 @@ from fritz_callhistory.gui.workers import (
     DialFn,
     ImportFromBoxFn,
     ListPhonebooksFn,
-    PhonebookListWorker,
     SyncFn,
     TestCredentialsFn,
 )
@@ -83,8 +82,6 @@ class MainWindow(QMainWindow):
         self._dial_fn = dial_fn
         self._config = config or Config()
         self._list_phonebooks_fn = list_phonebooks_fn
-        self._phonebook_list_thread: PhonebookListWorker | None = None
-        self._phonebook_import_list_thread: PhonebookListWorker | None = None
         self._close_requested = False
         self._quit_requested = False
         self._shutdown_failsafe_timer: QTimer | None = None
@@ -245,7 +242,7 @@ class MainWindow(QMainWindow):
 
     def _legacy_busy_threads(self) -> list[QThread]:
         """Übergangsbrücke: Threads, die noch nicht über BackgroundTasks laufen
-        (Telefonbuch-Import, Anrufbeantworter, Telefonbuchlisten). closeEvent()
+        (Telefonbuch-Import, Anrufbeantworter). closeEvent()
         muss auch auf sie warten; jedes Folge-Ticket entfernt seinen Teil."""
         threads: list[QThread] = []
         import_thread = self._phonebook_tab.import_thread
@@ -257,13 +254,6 @@ class MainWindow(QMainWindow):
         action_thread = self._voicemail_view.action_thread
         if action_thread is not None and action_thread.isRunning():
             threads.append(action_thread)
-        if self._phonebook_list_thread is not None and self._phonebook_list_thread.isRunning():
-            threads.append(self._phonebook_list_thread)
-        if (
-            self._phonebook_import_list_thread is not None
-            and self._phonebook_import_list_thread.isRunning()
-        ):
-            threads.append(self._phonebook_import_list_thread)
         return threads
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -498,40 +488,33 @@ class MainWindow(QMainWindow):
         if self._list_phonebooks_fn is None:
             dialog.set_phonebooks_unavailable("Keine Zugangsdaten hinterlegt")
         else:
-            # An MainWindow (self), nicht am Dialog gehängt: der Dialog ist nur
-            # so lange am Leben, wie exec() läuft, der Netzwerk-Fetch aber
-            # kann bis zum Timeout dauern - schliesst der Nutzer den Dialog
-            # vorher, würde ein am Dialog hängender QThread zerstört werden,
-            # während er noch läuft (SIGABRT). An MainWindow gehängt läuft er
-            # einfach im Hintergrund zu Ende; Qt trennt die Signal-Verbindung
-            # zum dann bereits zerstörten Dialog automatisch.
-            self._phonebook_list_thread = PhonebookListWorker(self._list_phonebooks_fn, parent=self)
-            self._phonebook_list_thread.finished_listing.connect(dialog.set_phonebooks)
-            self._phonebook_list_thread.listing_failed.connect(dialog.set_phonebooks_unavailable)
-            self._phonebook_list_thread.start()
+            self._load_phonebook_list(dialog, "phonebook-list-settings")
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config = dialog.save(self._config)
             self._apply_settings_change(self._config)
             self.statusBar().showMessage("Einstellungen gespeichert.", 5000)
 
+    def _load_phonebook_list(self, dialog, key: str) -> None:
+        """Lädt die Telefonbuchliste über BackgroundTasks. Eigener Schlüssel je Dialog,
+        damit beide unabhängig voneinander laden; der Dialog ist Kontext - ein spätes
+        Ergebnis nach dem Zerstören des Dialogs wird verworfen."""
+        started = self.background_tasks.start(
+            self._list_phonebooks_fn,
+            dialog,
+            dialog.set_phonebooks,
+            lambda exc: dialog.set_phonebooks_unavailable(str(exc)),
+            key=key,
+        )
+        if not started and not self.background_tasks.is_running(key):
+            dialog.set_phonebooks_unavailable("Die App wird beendet")
+
     def _open_phonebook_import_dialog(self) -> None:
         dialog = PhonebookPickerDialog(parent=self)
         if self._list_phonebooks_fn is None:
             dialog.set_phonebooks_unavailable("Keine Zugangsdaten hinterlegt")
         else:
-            # Eigenes Thread-Attribut statt self._phonebook_list_thread (siehe
-            # _open_settings_dialog) - beide Dialoge können unabhängig
-            # voneinander geöffnet werden, ohne sich den laufenden Fetch
-            # gegenseitig wegzunehmen.
-            self._phonebook_import_list_thread = PhonebookListWorker(
-                self._list_phonebooks_fn, parent=self
-            )
-            self._phonebook_import_list_thread.finished_listing.connect(dialog.set_phonebooks)
-            self._phonebook_import_list_thread.listing_failed.connect(
-                dialog.set_phonebooks_unavailable
-            )
-            self._phonebook_import_list_thread.start()
+            self._load_phonebook_list(dialog, "phonebook-list-import")
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._phonebook_tab.import_from_box(dialog.selected_phonebook_ids())

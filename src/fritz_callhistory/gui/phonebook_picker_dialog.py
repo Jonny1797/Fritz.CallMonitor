@@ -4,7 +4,7 @@ Einstellungen-Auswahl mitzubenutzen, die nur die Namensauflösung im Hintergrund
 steuert (siehe settings_dialog.py).
 
 Kennt bewusst weder FritzBoxClient noch Worker-Threads - MainWindow holt die
-Telefonbuchliste selbst (PhonebookListWorker) und reicht das Ergebnis über
+Telefonbuchliste selbst (BackgroundTasks) und reicht das Ergebnis über
 set_phonebooks()/set_phonebooks_unavailable() synchron herein (siehe
 _open_phonebook_import_dialog()). Anders als SettingsDialog gibt es hier keinen
 manuellen ID-Fallback: ohne Box-Verbindung lässt sich ohnehin nichts importieren,
