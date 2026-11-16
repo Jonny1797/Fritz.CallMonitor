@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
 from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
+from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxError
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
@@ -35,12 +37,10 @@ from fritz_callhistory.gui.settings_dialog import SettingsDialog
 from fritz_callhistory.gui.voicemail_view import AudioFetchFn, VoicemailActionFn, VoicemailView
 from fritz_callhistory.gui.workers import (
     DialFn,
-    DialWorker,
     ImportFromBoxFn,
     ListPhonebooksFn,
     PhonebookListWorker,
     SyncFn,
-    SyncWorker,
     TestCredentialsFn,
 )
 from fritz_callhistory.sync.normalize import format_number_display, normalize_number
@@ -75,10 +75,12 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Fritz!Box Anrufhistorie")
         self.resize(900, 600)
 
+        # Besitzer aller einmaligen Hintergrundaufgaben (Sync, Wählen, Beenden-Ablauf).
+        self.background_tasks = BackgroundTasks(
+            self, failsafe_timeout_s=_SHUTDOWN_FAILSAFE_MS / 1000
+        )
         self._sync_fn = sync_fn
-        self._sync_thread: SyncWorker | None = None
         self._dial_fn = dial_fn
-        self._dial_thread: DialWorker | None = None
         self._config = config or Config()
         self._list_phonebooks_fn = list_phonebooks_fn
         self._phonebook_list_thread: PhonebookListWorker | None = None
@@ -241,21 +243,14 @@ class MainWindow(QMainWindow):
             self._call_monitor.connection_lost.connect(self._calls_tab.clear_live_calls)
             self._call_monitor.start()
 
-    def _busy_worker_threads(self) -> list[QThread]:
-        """SyncWorker/ImportFromBoxWorker/DialWorker/VoicemailAudioWorker/
-        VoicemailActionWorker/PhonebookListWorker (beide Instanzen) führen einen
-        einzelnen blockierenden Netzwerkaufruf ohne Abbruchpunkte aus - alle
-        müssen hier erkannt werden, damit closeEvent() das Fenster nicht
-        schliesst, während einer von ihnen noch läuft (siehe closeEvent() für
-        die Begründung)."""
+    def _legacy_busy_threads(self) -> list[QThread]:
+        """Übergangsbrücke: Threads, die noch nicht über BackgroundTasks laufen
+        (Telefonbuch-Import, Anrufbeantworter, Telefonbuchlisten). closeEvent()
+        muss auch auf sie warten; jedes Folge-Ticket entfernt seinen Teil."""
         threads: list[QThread] = []
-        if self._sync_thread is not None and self._sync_thread.isRunning():
-            threads.append(self._sync_thread)
         import_thread = self._phonebook_tab.import_thread
         if import_thread is not None and import_thread.isRunning():
             threads.append(import_thread)
-        if self._dial_thread is not None and self._dial_thread.isRunning():
-            threads.append(self._dial_thread)
         audio_thread = self._voicemail_view.audio_thread
         if audio_thread is not None and audio_thread.isRunning():
             threads.append(audio_thread)
@@ -281,6 +276,8 @@ class MainWindow(QMainWindow):
             self._close_requested = True
             if self._call_monitor is not None:
                 self._call_monitor.stop()
+            # Ab jetzt starten keine Hintergrundaufgaben mehr, ihre Callbacks entfallen.
+            self.background_tasks.begin_quit()
 
         # Ein festes wait(N) könnte ablaufen, während so ein Thread noch in
         # seinem HTTP-Request steckt, und Qt würde ihn beim Zerstören des
@@ -289,10 +286,13 @@ class MainWindow(QMainWindow):
         # letzte betroffene Thread von selbst fertig ist, löst sein
         # finished-Signal close() erneut aus - dann ist die Liste leer und der
         # eigentliche Schliessvorgang läuft durch.
-        busy_threads = self._busy_worker_threads()
-        if busy_threads:
+        busy_threads = self._legacy_busy_threads()
+        if busy_threads or not self.background_tasks.is_idle():
             self.hide()
             event.ignore()
+            self.background_tasks.all_finished.connect(
+                self.close, Qt.ConnectionType.UniqueConnection
+            )
             for thread in busy_threads:
                 thread.finished.connect(self.close, Qt.ConnectionType.UniqueConnection)
             if self._shutdown_failsafe_timer is None:
@@ -320,12 +320,13 @@ class MainWindow(QMainWindow):
             app_instance.quit()
 
     def _force_exit_if_still_busy(self) -> None:
+        # Nur für die Übergangsbrücke (BackgroundTasks hat seinen eigenen Failsafe).
         # Feuert nur, wenn ein Worker-Thread _SHUTDOWN_FAILSAFE_MS nach dem
         # ersten Schliessversuch immer noch läuft - regulär erfolgreiche
         # Sync-/Import-Vorgänge haben längst über ihr finished-Signal einen
         # erneuten, diesmal erfolgreichen close() ausgelöst und diese Methode
         # läuft dann entweder gar nicht mehr oder trifft auf eine leere Liste.
-        if self._busy_worker_threads():
+        if self._legacy_busy_threads():
             os._exit(1)
 
     def _on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
@@ -456,15 +457,19 @@ class MainWindow(QMainWindow):
                     "Anrufen nicht verfügbar (keine Zugangsdaten hinterlegt)", 5000
                 )
             return
-        if self._dial_thread is not None and self._dial_thread.isRunning():
+        if self.background_tasks.is_running("dial"):
             self.statusBar().showMessage("Es läuft bereits ein Anruf-Versuch …", 5000)
             return
-        self.statusBar().showMessage(f"Rufe {format_number_display(number)} an …")
-
-        self._dial_thread = DialWorker(lambda: self._dial_fn(number), parent=self)
-        self._dial_thread.dial_succeeded.connect(lambda: self._on_dial_succeeded(number))
-        self._dial_thread.dial_failed.connect(self._on_dial_failed)
-        self._dial_thread.start()
+        dial_fn = self._dial_fn
+        started = self.background_tasks.start(
+            lambda: dial_fn(number),
+            self,
+            lambda _result: self._on_dial_succeeded(number),
+            lambda exc: self._on_dial_failed(str(exc)),
+            key="dial",
+        )
+        if started:
+            self.statusBar().showMessage(f"Rufe {format_number_display(number)} an …")
 
     def _apply_settings_change(self, new_config: Config) -> None:
         """Wendet eine gerade im Einstellungsdialog gespeicherte Config sofort auf
@@ -538,29 +543,28 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Anruf fehlgeschlagen: {message}", 8000)
 
     def _trigger_sync(self, user_initiated: bool = False) -> None:
-        # _close_requested-Check ist nötig, weil der Start-Sync per
-        # singleShot(0, ...) erst in einem späteren Event-Loop-Durchlauf
-        # feuert - schliesst der Nutzer das Fenster, bevor dieser Zero-Delay-
-        # Timer dran war, sähe closeEvent() noch keinen laufenden Thread und
-        # würde sofort schliessen; der danach doch noch feuernde Sync würde
-        # dann einen neuen, von niemandem mehr erwarteten SyncWorker starten,
-        # der beim Interpreter-Shutdown wieder als laufender QThread zerstört
-        # wird (derselbe SIGABRT/Hänger wie beim ursprünglichen Bug).
-        if (
-            self._close_requested
-            or self._sync_fn is None
-            or (self._sync_thread is not None and self._sync_thread.isRunning())
-        ):
+        # Beim Beenden lehnt BackgroundTasks den Start ab (z.B. der per singleShot(0, ...)
+        # verzögerte Start-Sync nach einem sehr frühen Schliessen).
+        if self._sync_fn is None or self.background_tasks.is_running("sync"):
             return
-        self._sync_action.setEnabled(False)
-        self.statusBar().showMessage("Synchronisiere mit der Fritz!Box …")
         self._last_sync_user_initiated = user_initiated
+        started = self.background_tasks.start(
+            self._sync_fn,
+            self,
+            lambda result: self._on_sync_finished(*result),
+            self._on_sync_error,
+            key="sync",
+        )
+        if started:
+            self._sync_action.setEnabled(False)
+            self.statusBar().showMessage("Synchronisiere mit der Fritz!Box …")
 
-        self._sync_thread = SyncWorker(self._sync_fn, parent=self)
-        self._sync_thread.finished_sync.connect(self._on_sync_finished)
-        self._sync_thread.sync_failed.connect(self._on_sync_failed)
-        self._sync_thread.auth_failed.connect(self._on_sync_auth_failed)
-        self._sync_thread.start()
+    def _on_sync_error(self, exc: FritzBoxError) -> None:
+        # Login-Fehler separat, damit gezielt zur erneuten Eingabe aufgefordert wird.
+        if isinstance(exc, FritzBoxAuthError):
+            self._on_sync_auth_failed(str(exc))
+        else:
+            self._on_sync_failed(str(exc))
 
     def _on_sync_finished(self, inserted: int, updated: int) -> None:
         self._sync_action.setEnabled(True)

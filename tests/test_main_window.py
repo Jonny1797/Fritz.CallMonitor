@@ -174,13 +174,9 @@ def test_datei_menu_has_credentials_action(qtbot, connection):
     assert "Zugangsdaten ändern…" in action_texts
 
 
-def test_close_while_sync_running_defers_until_sync_finishes(qtbot, connection):
-    # Regression test: sync_fn (SyncWorker) is a single blocking network call
-    # with no cancellation point. closeEvent() used to just wait(2000) and then
-    # proceed regardless - if the sync (auto-triggered on startup) was still
-    # running past that timeout, the still-running QThread got destroyed and
-    # Qt aborted the process with SIGABRT. closeEvent() must instead hide the
-    # window and defer the real close until the thread finishes on its own.
+def test_close_while_task_running_hides_and_finishes_closing_when_task_ends(qtbot, connection):
+    # Ein laufender Sync darf das Schliessen nur aufschieben: Fenster sofort
+    # verstecken, echtes Schliessen erst, wenn BackgroundTasks idle meldet.
     release_sync = threading.Event()
 
     def slow_sync():
@@ -190,64 +186,48 @@ def test_close_while_sync_running_defers_until_sync_finishes(qtbot, connection):
     window = MainWindow(connection, sync_fn=slow_sync)
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(
-        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("sync"), timeout=2000)
 
-    closed = window.close()
+    try:
+        closed = window.close()
 
-    assert closed is False  # close event was ignored, not accepted
-    assert not window.isVisible()  # hidden immediately so it looks closed
-    assert window._sync_thread.isRunning()  # thread left running untouched, not destroyed
+        assert closed is False  # close event was ignored, not accepted
+        assert not window.isVisible()  # hidden immediately so it looks closed
+        assert window.background_tasks.is_running("sync")  # task left untouched
+    finally:
+        release_sync.set()
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("sync"), timeout=2000)
+    qtbot.wait(50)  # let the queued all_finished-triggered close() run
 
-    release_sync.set()
-    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
-    qtbot.wait(50)  # let the queued finished-signal-triggered close() run
-
-    # Thread is done now - a subsequent close attempt goes through immediately.
     assert window.close() is True
 
 
-def test_shutdown_failsafe_force_exits_if_worker_still_busy(qtbot, connection, mocker):
-    # Regression test: fritz/client.py's request timeout doesn't cover every
-    # possible hang (e.g. a blocking DNS lookup, which socket.getaddrinfo()
-    # has no timeout for) - closeEvent()'s hide-and-wait-for-finished
-    # mechanism must not be able to block forever if a worker thread never
-    # returns. The failsafe timer (normally _SHUTDOWN_FAILSAFE_MS after the
-    # first close attempt) must force an exit once it fires while still busy.
+def test_finished_sync_while_quitting_does_not_touch_ui(qtbot, connection):
     release_sync = threading.Event()
 
     def slow_sync():
         release_sync.wait(5)
-        return (0, 0)
+        return (1, 1)
 
     window = MainWindow(connection, sync_fn=slow_sync)
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(
-        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("sync"), timeout=2000)
     window.close()
-    assert window._shutdown_failsafe_timer is not None
+    release_sync.set()
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("sync"), timeout=2000)
 
-    force_exit = mocker.patch("fritz_callhistory.gui.main_window.os._exit")
-    window._force_exit_if_still_busy()
-    force_exit.assert_called_once_with(1)
-
-    release_sync.set()  # cleanup: let the thread actually finish
-    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
+    assert "abgeschlossen" not in window.statusBar().currentMessage()
 
 
-def test_shutdown_failsafe_does_nothing_once_worker_already_finished(qtbot, connection, mocker):
-    window = MainWindow(connection, sync_fn=lambda: (0, 0))
+def test_auth_error_in_sync_reprompts_via_sync_error_handler(qtbot, connection, mocker):
+    window = MainWindow(connection, sync_fn=lambda: (_ for _ in ()).throw(FritzBoxAuthError("x")))
     qtbot.addWidget(window)
-    window.show()
-    qtbot.waitUntil(lambda: "abgeschlossen" in window.statusBar().currentMessage(), timeout=3000)
+    reprompt = mocker.patch.object(window, "_on_sync_auth_failed")
 
-    force_exit = mocker.patch("fritz_callhistory.gui.main_window.os._exit")
-    window._force_exit_if_still_busy()
+    qtbot.waitUntil(lambda: reprompt.called, timeout=3000)
 
-    force_exit.assert_not_called()
+    reprompt.assert_called_once_with("x")
 
 
 def test_close_before_startup_sync_fires_prevents_new_sync_thread(qtbot, connection):
@@ -263,13 +243,13 @@ def test_close_before_startup_sync_fires_prevents_new_sync_thread(qtbot, connect
     qtbot.addWidget(window)
     window.show()
 
-    assert window._sync_thread is None
+    assert not window.background_tasks.is_running("sync")
     closed = window.close()
     assert closed is True  # nothing was running yet, closes immediately
 
     qtbot.wait(100)  # let the queued singleShot(0, _trigger_sync) fire, if it still would
 
-    assert window._sync_thread is None
+    assert not window.background_tasks.is_running("sync")
 
 
 def test_close_while_box_import_running_defers_until_import_finishes(qtbot, connection, mocker):
@@ -465,20 +445,18 @@ def test_tray_quit_action_defers_while_worker_busy_then_quits(qtbot, connection,
     )
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(
-        lambda: window._sync_thread is not None and window._sync_thread.isRunning(), timeout=2000
-    )
+    qtbot.waitUntil(lambda: window.background_tasks.is_running("sync"), timeout=2000)
 
     quit_spy = mocker.patch.object(QApplication.instance(), "quit")
 
     window._tray_quit_action.trigger()
 
     assert not window.isVisible()
-    assert window._sync_thread.isRunning()  # deferred, not force-closed
+    assert window.background_tasks.is_running("sync")  # deferred, not force-closed
     quit_spy.assert_not_called()
 
     release_sync.set()
-    qtbot.waitUntil(lambda: not window._sync_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("sync"), timeout=2000)
     qtbot.wait(50)  # let the queued finished-signal-triggered close() run
 
     quit_spy.assert_called_once()
@@ -860,7 +838,7 @@ def test_dial_number_shows_unavailable_message_without_dial_fn(qtbot, connection
     window._dial_number("+491234567")
 
     assert "nicht verfügbar" in window.statusBar().currentMessage()
-    assert window._dial_thread is None
+    assert not window.background_tasks.is_running("dial")
 
 
 def test_dial_number_shows_success_message_and_calls_dial_fn(qtbot, connection):
@@ -925,40 +903,21 @@ def test_dial_number_ignores_second_call_while_one_in_flight(qtbot, connection):
         assert "läuft bereits" in window.statusBar().currentMessage()
     finally:
         release_dial.set()
-        qtbot.waitUntil(
-            lambda: window._dial_thread is None or not window._dial_thread.isRunning(), timeout=2000
-        )
+        qtbot.waitUntil(lambda: not window.background_tasks.is_running("dial"), timeout=2000)
 
 
-def test_close_while_dial_running_defers_until_dial_finishes(qtbot, connection):
-    # Same bug class as test_close_while_sync_running_defers_until_sync_finishes,
-    # but for DialWorker - a right-click "Anrufen" triggers exactly the same
-    # single-blocking-network-call-with-no-cancellation-point pattern.
-    release_dial = threading.Event()
-
-    def slow_dial(number):
-        release_dial.wait(5)
-
-    window = MainWindow(connection, dial_fn=slow_dial)
+def test_dial_while_quitting_shows_no_message_and_starts_nothing(qtbot, connection):
+    dialed = []
+    window = MainWindow(connection, dial_fn=dialed.append)
     qtbot.addWidget(window)
-    window.show()
-    try:
-        window._dial_number("+491234567")
-        qtbot.waitUntil(
-            lambda: window._dial_thread is not None and window._dial_thread.isRunning(), timeout=2000
-        )
+    window.background_tasks.begin_quit()
+    window._close_requested = True
 
-        closed = window.close()
-
-        assert closed is False
-        assert not window.isVisible()
-        assert window._dial_thread.isRunning()
-    finally:
-        release_dial.set()
-        qtbot.waitUntil(lambda: not window._dial_thread.isRunning(), timeout=2000)
+    window._dial_number("+491234567")
     qtbot.wait(50)
 
-    assert window.close() is True
+    assert dialed == []
+    assert window.statusBar().currentMessage() == ""
 
 
 def test_datei_menu_has_settings_action(qtbot, connection):
