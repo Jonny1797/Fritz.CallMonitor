@@ -17,7 +17,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
-    QHeaderView,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -28,12 +27,13 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
 from fritz_callhistory.gui.models import (
+    PHONEBOOK_COLUMNS,
+    configure_table,
     DataclassSortProxy,
     PhonebookContactListModel,
     default_or_first_number,
     focus_search_edit,
     install_phonebook_call_context_menu,
-    install_tristate_sorting,
     selected_source_row,
 )
 from fritz_callhistory.fritz.exceptions import FritzBoxError
@@ -99,23 +99,13 @@ class PhonebookTab(QWidget):
         self._model = PhonebookContactListModel()
         self._proxy = DataclassSortProxy(
             row_getter=self._model.contact_at,
-            key_fns={
-                0: lambda c: (c.display_name or "").lower(),
-                1: lambda c: c.numbers[0].number_raw if c.numbers else "",
-                2: lambda c: c.notes or "",
-            },
+            columns=PHONEBOOK_COLUMNS,
         )
         self._proxy.setSourceModel(self._model)
 
         self._table = QTableView()
-        self._table.setModel(self._proxy)
-        self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        configure_table(self._table, self._proxy)
         self._table.doubleClicked.connect(lambda _index: self._on_edit_clicked())
-        install_tristate_sorting(self._table, self._proxy)
         install_phonebook_call_context_menu(
             self._table, self._proxy, self._model.contact_at, self.call_requested.emit
         )

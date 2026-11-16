@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Sorting now follows what a column shows: Telefonbuch → Nummern sorts by the first
+  displayed number (normalized), Alle Anrufe → Name/Nummer and Kontakte → Name sort by
+  the displayed label, case-insensitive (anonymous rows sort under "Anonym /
+  unterdrückt" instead of jumping to the top), and the contact detail → Nummer column
+  sorts by the normalized number.
 - Duplicate numbers in imported Telefonbuch contacts (e.g. a vCard listing the same TEL
   twice) are no longer stored twice, and Telefonbuch imports (file and Box) are now
   all-or-nothing: if one fails halfway, nothing from it is stored.

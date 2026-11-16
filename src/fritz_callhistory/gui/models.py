@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QLineEdit, QMenu, QTableView
+from PySide6.QtWidgets import QHeaderView, QLineEdit, QMenu, QTableView, QWidget
 
 from fritz_callhistory.db.repository import (
     CallRecord,
@@ -20,13 +21,7 @@ from fritz_callhistory.db.repository import (
 from fritz_callhistory.fritz.call_types import counterparty_number, is_missed
 from fritz_callhistory.fritz.call_types import display as call_type_display
 from fritz_callhistory.sync.caller_directory import CallerIdentity
-from fritz_callhistory.sync.normalize import format_number_display
-
-_CONTACT_COLUMNS = ("Name", "Letzter Kontakt", "Anrufe")
-_PHONEBOOK_CONTACT_COLUMNS = ("Name", "Nummern", "Notizen")
-_CALL_COLUMNS = ("Datum", "Richtung", "Nummer", "Dauer", "Port/Gerät")
-_ALL_CALLS_COLUMNS = ("Datum", "Richtung", "Name/Nummer", "Dauer", "Port/Gerät")
-_VOICEMAIL_COLUMNS = ("Datum", "Anrufer", "Dauer")
+from fritz_callhistory.sync.normalize import format_number_display, normalize_number
 
 # Nur für reguläre Anrufe (CallListModel/AllCallsListModel) - die Box liefert deren
 # Datum/Dauer ohnehin nur mit Minutengenauigkeit (siehe _format_call_date und
@@ -75,21 +70,153 @@ def contact_display_label(is_anonymous: bool, display_name: str | None, fallback
     return display_name or fallback
 
 
-class _SimpleTableModel(QAbstractTableModel):
-    """Gemeinsames rowCount/columnCount/headerData für Modelle, die eine flache
-    Liste von Items über feste Spaltennamen (Klassenattribut _columns)
-    anzeigen. Subklassen implementieren nur noch data()."""
+@dataclass(frozen=True)
+class Column:
+    """Eine Tabellenspalte, einmal definiert: Kopfzeile, Anzeigetext, Sortier-
+    schlüssel und Tooltip. *sort_key* None -> die Spalte sortiert nach ihrem
+    Anzeigetext."""
 
-    _columns: tuple[str, ...] = ()
-    # Optional Spaltenname -> Tooltip-Text, von Subklassen gezielt gesetzt (nicht
-    # alle Modelle mit einer gleichnamigen Spalte teilen dieselbe Einschraenkung -
-    # z.B. hat VoicemailListModel ebenfalls eine "Dauer"-Spalte, aber dort liefert
-    # die Box echte Sekundengenauigkeit, siehe fritz/client.py's _parse_duration_seconds).
-    _header_tooltips: dict[str, str] = {}
+    id: str
+    header: str
+    display: Callable[[Any], str]
+    sort_key: Callable[[Any], Any] | None = None
+    tooltip: str | None = None
 
-    def __init__(self, items: list | None = None) -> None:
+    def key(self, row: Any) -> Any:
+        return self.sort_key(row) if self.sort_key is not None else self.display(row)
+
+
+def _contact_name(contact: Contact) -> str:
+    return contact_display_label(contact.is_anonymous, contact.display_name)
+
+
+def _phonebook_numbers(contact: LocalPhonebookContact) -> str:
+    if not contact.numbers:
+        return "-"
+    return ", ".join(
+        f"{format_number_display(n.number_raw)} ({n.number_type})" for n in contact.numbers
+    )
+
+
+def _call_number_display(call: CallRecord) -> str:
+    return format_number_display(call_number(call))
+
+
+def _call_number_sort_key(call: CallRecord) -> str:
+    return normalize_number(call_number(call))[0]
+
+
+def _all_calls_name(call: CallWithContact) -> str:
+    return contact_display_label(
+        call.contact_is_anonymous,
+        call.contact_display_name,
+        format_number_display(call.contact_primary_number),
+    )
+
+
+def _call_columns(number: Column) -> tuple[Column, ...]:
+    return (
+        Column(
+            "date",
+            "Datum",
+            lambda c: _format_call_date(c.call_date),
+            lambda c: c.call_date,
+            _MINUTE_PRECISION_TOOLTIPS["Datum"],
+        ),
+        Column("direction", "Richtung", lambda c: call_type_display(c.call_type), lambda c: c.call_type),
+        number,
+        Column(
+            "duration",
+            "Dauer",
+            lambda c: _format_duration(c.duration_seconds),
+            lambda c: c.duration_seconds,
+            _MINUTE_PRECISION_TOOLTIPS["Dauer"],
+        ),
+        Column(
+            "port_device",
+            "Port/Gerät",
+            lambda c: port_device_display(c.device, c.port),
+        ),
+    )
+
+
+CONTACT_COLUMNS = (
+    Column("name", "Name", _contact_name, lambda c: _contact_name(c).lower()),
+    Column(
+        "last_call",
+        "Letzter Kontakt",
+        lambda c: _format_call_date(c.last_call_date) if c.last_call_date else "-",
+        lambda c: c.last_call_date,
+    ),
+    Column("call_count", "Anrufe", lambda c: str(c.call_count), lambda c: c.call_count),
+)
+
+PHONEBOOK_COLUMNS = (
+    Column(
+        "name",
+        "Name",
+        lambda c: c.display_name,
+        lambda c: (c.display_name or "").lower(),
+    ),
+    Column(
+        "numbers",
+        "Nummern",
+        _phonebook_numbers,
+        lambda c: c.numbers[0].number_normalized if c.numbers else "",
+    ),
+    Column("notes", "Notizen", lambda c: c.notes or "-", lambda c: c.notes or ""),
+)
+
+CALL_COLUMNS = _call_columns(
+    Column("number", "Nummer", _call_number_display, _call_number_sort_key)
+)
+
+ALL_CALLS_COLUMNS = _call_columns(
+    Column("name_number", "Name/Nummer", _all_calls_name, lambda c: _all_calls_name(c).lower())
+)
+
+
+def voicemail_columns(caller_label: Callable[[VoicemailMessageRecord], str]) -> tuple[Column, ...]:
+    """Anrufbeantworter-Spalten; *caller_label* liefert den Anzeigenamen je
+    Nachricht (kommt aus dem Caller directory, daher nicht Teil der Zeile)."""
+    return (
+        Column(
+            "date",
+            "Datum",
+            lambda m: _format_call_date(m.message_date),
+            lambda m: m.message_date,
+        ),
+        Column("caller", "Anrufer", caller_label, lambda m: caller_label(m).lower()),
+        Column(
+            "duration",
+            "Dauer",
+            lambda m: _format_duration(m.duration_seconds),
+            lambda m: m.duration_seconds,
+        ),
+    )
+
+
+class TableModel(QAbstractTableModel):
+    """Generisches Tabellenmodell aus einem Column-Tupel und einer flachen
+    Zeilenliste. *row_emphasis* markiert Zeilen, die fett/rot dargestellt werden."""
+
+    def __init__(
+        self,
+        columns: tuple[Column, ...],
+        items: list | None = None,
+        row_emphasis: Callable[[Any], bool] | None = None,
+    ) -> None:
         super().__init__()
+        self._columns = columns
         self._items: list = items or []
+        self._row_emphasis = row_emphasis
+
+    @property
+    def columns(self) -> tuple[Column, ...]:
+        return self._columns
+
+    def column_id(self, column: int) -> str:
+        return self._columns[column].id
 
     def _set_items(self, items: list) -> None:
         self.beginResetModel()
@@ -109,17 +236,31 @@ class _SimpleTableModel(QAbstractTableModel):
         if orientation != Qt.Orientation.Horizontal:
             return None
         if role == Qt.ItemDataRole.DisplayRole:
-            return self._columns[section]
+            return self._columns[section].header
         if role == Qt.ItemDataRole.ToolTipRole:
-            return self._header_tooltips.get(self._columns[section])
+            return self._columns[section].tooltip
         return None
 
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        row = self._items[index.row()]
+        if role in (Qt.ItemDataRole.FontRole, Qt.ItemDataRole.ForegroundRole):
+            if self._row_emphasis is None or not self._row_emphasis(row):
+                return None
+            if role == Qt.ItemDataRole.FontRole:
+                font = QFont()
+                font.setBold(True)
+                return font
+            return QColor(Qt.GlobalColor.red)
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        return self._columns[index.column()].display(row)
 
-class ContactListModel(_SimpleTableModel):
-    _columns = _CONTACT_COLUMNS
 
+class ContactListModel(TableModel):
     def __init__(self, contacts: list[Contact] | None = None) -> None:
-        super().__init__(contacts)
+        super().__init__(CONTACT_COLUMNS, contacts)
 
     def set_contacts(self, contacts: list[Contact]) -> None:
         self._set_items(contacts)
@@ -133,27 +274,12 @@ class ContactListModel(_SimpleTableModel):
                 return row
         return None
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
-            return None
-        contact = self._items[index.row()]
-        column = index.column()
-        if column == 0:
-            return contact_display_label(contact.is_anonymous, contact.display_name)
-        if column == 1:
-            return _format_call_date(contact.last_call_date) if contact.last_call_date else "-"
-        if column == 2:
-            return str(contact.call_count)
-        return None
 
-
-class PhonebookContactListModel(_SimpleTableModel):
+class PhonebookContactListModel(TableModel):
     """Lokales Telefonbuch (gui/phonebook_view.py) - Mehrfachnummern pro Kontakt."""
 
-    _columns = _PHONEBOOK_CONTACT_COLUMNS
-
     def __init__(self, contacts: list[LocalPhonebookContact] | None = None) -> None:
-        super().__init__(contacts)
+        super().__init__(PHONEBOOK_COLUMNS, contacts)
 
     def set_contacts(self, contacts: list[LocalPhonebookContact]) -> None:
         self._set_items(contacts)
@@ -161,32 +287,12 @@ class PhonebookContactListModel(_SimpleTableModel):
     def contact_at(self, row: int) -> LocalPhonebookContact:
         return self._item_at(row)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
-            return None
-        contact = self._items[index.row()]
-        column = index.column()
-        if column == 0:
-            return contact.display_name
-        if column == 1:
-            if not contact.numbers:
-                return "-"
-            return ", ".join(
-                f"{format_number_display(n.number_raw)} ({n.number_type})" for n in contact.numbers
-            )
-        if column == 2:
-            return contact.notes or "-"
-        return None
 
-
-class CallListModel(_SimpleTableModel):
+class CallListModel(TableModel):
     """Chronologische Anrufliste für einen einzelnen Kontakt (Detailansicht)."""
 
-    _columns = _CALL_COLUMNS
-    _header_tooltips = _MINUTE_PRECISION_TOOLTIPS
-
     def __init__(self, calls: list[CallRecord] | None = None) -> None:
-        super().__init__(calls)
+        super().__init__(CALL_COLUMNS, calls)
 
     def set_calls(self, calls: list[CallRecord]) -> None:
         self._set_items(calls)
@@ -194,40 +300,20 @@ class CallListModel(_SimpleTableModel):
     def call_at(self, row: int) -> CallRecord:
         return self._item_at(row)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
-            return None
-        call = self._items[index.row()]
-        column = index.column()
-        if column == 0:
-            return _format_call_date(call.call_date)
-        if column == 1:
-            return call_type_display(call.call_type)
-        if column == 2:
-            return format_number_display(call_number(call))
-        if column == 3:
-            return _format_duration(call.duration_seconds)
-        if column == 4:
-            return port_device_display(call.device, call.port)
-        return None
 
-
-class AllCallsListModel(_SimpleTableModel):
+class AllCallsListModel(TableModel):
     """Chronologische Anrufliste über alle Kontakte hinweg ("Alle Anrufe").
 
     Hebt neue verpasste Anrufe (call_date > last_seen_at) optisch hervor,
     unabhängig vom aktuell aktiven Datumsfilter/Preset in AllCallsView.
     """
 
-    _columns = _ALL_CALLS_COLUMNS
-    _header_tooltips = _MINUTE_PRECISION_TOOLTIPS
-
     def __init__(
         self,
         calls: list[CallWithContact] | None = None,
         last_seen_at: str | None = None,
     ) -> None:
-        super().__init__(calls)
+        super().__init__(ALL_CALLS_COLUMNS, calls, row_emphasis=self._is_new_missed)
         self._last_seen_at = last_seen_at
 
     def set_calls(self, calls: list[CallWithContact]) -> None:
@@ -254,35 +340,6 @@ class AllCallsListModel(_SimpleTableModel):
             and call.call_date > self._last_seen_at
         )
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-        call = self._items[index.row()]
-        if role == Qt.ItemDataRole.FontRole and self._is_new_missed(call):
-            font = QFont()
-            font.setBold(True)
-            return font
-        if role == Qt.ItemDataRole.ForegroundRole and self._is_new_missed(call):
-            return QColor(Qt.GlobalColor.red)
-        if role != Qt.ItemDataRole.DisplayRole:
-            return None
-        column = index.column()
-        if column == 0:
-            return _format_call_date(call.call_date)
-        if column == 1:
-            return call_type_display(call.call_type)
-        if column == 2:
-            return contact_display_label(
-                call.contact_is_anonymous,
-                call.contact_display_name,
-                format_number_display(call.contact_primary_number),
-            )
-        if column == 3:
-            return _format_duration(call.duration_seconds)
-        if column == 4:
-            return port_device_display(call.device, call.port)
-        return None
-
 
 def voicemail_caller_display(message: VoicemailMessageRecord) -> str:
     """Anzeige ohne Caller directory: dieselbe Rückfallkette wie CallerIdentity.label()."""
@@ -291,7 +348,7 @@ def voicemail_caller_display(message: VoicemailMessageRecord) -> str:
     return identity.label(fallback_name=message.raw_name)
 
 
-class VoicemailListModel(_SimpleTableModel):
+class VoicemailListModel(TableModel):
     """Anrufbeantworter-Nachrichtenliste ("Anrufbeantworter"-Tab).
 
     Hebt neue (noch nicht gehörte) Nachrichten optisch hervor, direkt anhand des
@@ -299,13 +356,13 @@ class VoicemailListModel(_SimpleTableModel):
     lokal verfolgtes last_seen_at gebraucht, die Box ist für "neu/gehört" allein
     massgeblich (siehe VoicemailRepository.insert_or_update)."""
 
-    _columns = _VOICEMAIL_COLUMNS
-
     def __init__(self, messages: list[VoicemailMessageRecord] | None = None) -> None:
         # Anzeigenamen je Nachrichten-id (aus dem Caller directory, via set_messages);
         # ohne Eintrag fällt die Anzeige auf voicemail_caller_display zurück.
         self._labels: dict[int, str] = {}
-        super().__init__(messages)
+        super().__init__(
+            voicemail_columns(self.caller_label), messages, row_emphasis=lambda m: m.is_new
+        )
 
     def set_messages(
         self, messages: list[VoicemailMessageRecord], labels: dict[int, str] | None = None
@@ -319,58 +376,57 @@ class VoicemailListModel(_SimpleTableModel):
     def message_at(self, row: int) -> VoicemailMessageRecord:
         return self._item_at(row)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-        message = self._items[index.row()]
-        if role == Qt.ItemDataRole.FontRole and message.is_new:
-            font = QFont()
-            font.setBold(True)
-            return font
-        if role == Qt.ItemDataRole.ForegroundRole and message.is_new:
-            return QColor(Qt.GlobalColor.red)
-        if role != Qt.ItemDataRole.DisplayRole:
-            return None
-        column = index.column()
-        if column == 0:
-            return _format_call_date(message.message_date)
-        if column == 1:
-            return self.caller_label(message)
-        if column == 2:
-            return _format_duration(message.duration_seconds)
-        return None
-
 
 class DataclassSortProxy(QSortFilterProxyModel):
-    """Sortiert nach typisierten Feldern der Quell-Dataclass statt der
-    angezeigten Text-Repräsentation (verhindert z.B. lexikographische
-    Fehlsortierung bei 'm:ss'-Dauer oder Anrufzahlen). row_getter ist die
-    bestehende contact_at()/call_at()-Methode des Quellmodells; key_fns bildet
-    Spaltenindex auf eine Funktion ab, die aus der Zeile einen vergleichbaren
-    Schlüssel extrahiert. Spalten ohne Eintrag fallen auf den Standard-
-    Textvergleich zurück."""
+    """Sortiert nach dem Sortierschlüssel der jeweiligen Column statt nach dem
+    Anzeigetext (verhindert z.B. lexikographische Fehlsortierung bei 'm:ss'-Dauer
+    oder Anrufzahlen). row_getter ist die bestehende contact_at()/call_at()-
+    Methode des Quellmodells; *columns* dasselbe Column-Tupel wie im Modell."""
 
     def __init__(
         self,
         row_getter: Callable[[int], Any],
-        key_fns: dict[int, Callable[[Any], Any]],
+        columns: tuple[Column, ...],
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._row_getter = row_getter
-        self._key_fns = key_fns
+        self._columns = columns
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        key_fn = self._key_fns.get(left.column())
-        if key_fn is None:
-            return super().lessThan(left, right)
-        a = key_fn(self._row_getter(left.row()))
-        b = key_fn(self._row_getter(right.row()))
+        column = self._columns[left.column()]
+        a = column.key(self._row_getter(left.row()))
+        b = column.key(self._row_getter(right.row()))
         if a is None:
             return True
         if b is None:
             return False
         return a < b
+
+
+def configure_table(
+    table: QTableView,
+    proxy: QSortFilterProxyModel,
+    selection_mode: QTableView.SelectionMode = QTableView.SelectionMode.SingleSelection,
+) -> None:
+    """Gemeinsame QTableView-Einrichtung aller Tabellen: Modell, Zeilenauswahl,
+    gestreckte Spalten, keine vertikale Kopfzeile, nicht editierbar, 3-stufige
+    Sortierung."""
+    table.setModel(proxy)
+    table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+    table.setSelectionMode(selection_mode)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+    table.verticalHeader().setVisible(False)
+    table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+    install_tristate_sorting(table, proxy)
+
+
+def focus_search_if_supported(widget: QWidget) -> None:
+    """Fokussiert das Suchfeld von *widget*, falls es eines hat (focus_search());
+    Tabs ohne Suche (Anrufbeantworter) tun nichts."""
+    focus = getattr(widget, "focus_search", None)
+    if focus is not None:
+        focus()
 
 
 def install_tristate_sorting(table: QTableView, proxy: QSortFilterProxyModel) -> None:

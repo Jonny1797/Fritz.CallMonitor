@@ -15,7 +15,6 @@ from PySide6.QtCore import QDate, QModelIndex, Signal
 from PySide6.QtWidgets import (
     QDateEdit,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -31,14 +30,14 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.fritz.call_types import CallType
 from fritz_callhistory.gui.models import (
+    ALL_CALLS_COLUMNS,
+    configure_table,
     AllCallsListModel,
     DataclassSortProxy,
     call_number,
     focus_search_edit,
     install_call_context_menu,
     install_debounced_search,
-    install_tristate_sorting,
-    port_device_display,
     selected_source_row,
     set_search_text_silently,
 )
@@ -47,7 +46,6 @@ from fritz_callhistory.sync.caller_directory import CallerDirectory, CallerIdent
 _ISO_DAY_START = "T00:00:00"
 _ISO_DAY_END = "T23:59:59"
 _LAST_SEEN_KEY = "missed_calls_last_seen_at"
-_NAME_NUMBER_COLUMN = 2
 _LIVE_CALL_SENTINEL_ID = -1
 
 
@@ -139,25 +137,13 @@ class AllCallsView(QWidget):
         self._model = AllCallsListModel()
         self._proxy = DataclassSortProxy(
             row_getter=self._model.call_at,
-            key_fns={
-                0: lambda c: c.call_date,
-                1: lambda c: c.call_type,
-                2: lambda c: (c.contact_display_name or c.contact_primary_number or "").lower(),
-                3: lambda c: c.duration_seconds,
-                4: lambda c: port_device_display(c.device, c.port),
-            },
+            columns=ALL_CALLS_COLUMNS,
         )
         self._proxy.setSourceModel(self._model)
 
         self._table = QTableView()
-        self._table.setModel(self._proxy)
-        self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        configure_table(self._table, self._proxy)
         self._table.doubleClicked.connect(self._on_row_double_clicked)
-        install_tristate_sorting(self._table, self._proxy)
         install_call_context_menu(
             self._table, self._proxy, self._number_for_row, self.call_requested.emit
         )
@@ -354,7 +340,7 @@ class AllCallsView(QWidget):
         self.new_missed_calls_changed.emit(count)
 
     def _on_row_double_clicked(self, index: QModelIndex) -> None:
-        if index.column() != _NAME_NUMBER_COLUMN:
+        if self._model.column_id(index.column()) != "name_number":
             return
         source_row = self._proxy.mapToSource(index).row()
         call = self._model.call_at(source_row)

@@ -328,11 +328,11 @@ def test_action_worker_shows_error_on_failure(qtbot, connection):
     assert view._model.rowCount() == 1
 
 
-def test_focus_search_is_a_noop(qtbot, connection):
+def test_view_has_no_search_to_focus(qtbot, connection):
     view = _make_view(connection)
     qtbot.addWidget(view)
 
-    view.focus_search()  # kein Suchfeld in diesem Tab - darf nicht crashen
+    assert not hasattr(view, "focus_search")
 
 
 def test_dial_selected_emits_call_requested_for_selected_message(qtbot, connection):
