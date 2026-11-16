@@ -11,8 +11,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
-import datetime as _dt
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TypeVar
 
 import requests
@@ -162,14 +161,14 @@ class FritzCallListEntry:
 
 def _call_duration_seconds(call: Call) -> int | None:
     duration = call.duration
-    if isinstance(duration, _dt.timedelta):
+    if isinstance(duration, timedelta):
         return int(duration.total_seconds())
     return None
 
 
 def _call_date_iso(call: Call) -> str:
     date = call.date
-    if isinstance(date, _dt.datetime):
+    if isinstance(date, datetime):
         return date.isoformat()
     return str(call.Date)
 
