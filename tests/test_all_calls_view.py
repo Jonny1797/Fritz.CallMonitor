@@ -757,7 +757,8 @@ def test_live_call_search_matches_same_queries_as_stored_call(qtbot, connection)
     view = _stored_and_live(qtbot, connection)
 
     for query in ("0176", "176", "+49176", "erika", "ERIKA MUSTER"):
-        view._search_edit.setText(query)
+        # Ohne textChanged: sonst feuert der Debounce-Timer erst nach dem Test (DB zu)
+        view.set_search_text(query)
         view._reload()
         ids = [view._model.call_at(i).id for i in range(view._model.rowCount())]
         assert -1 in ids, query
@@ -767,7 +768,7 @@ def test_live_call_search_matches_same_queries_as_stored_call(qtbot, connection)
 def test_live_call_hidden_with_non_matching_query_like_stored_call(qtbot, connection):
     view = _stored_and_live(qtbot, connection)
 
-    view._search_edit.setText("999")
+    view.set_search_text("999")
     view._reload()
 
     assert view._model.rowCount() == 0
