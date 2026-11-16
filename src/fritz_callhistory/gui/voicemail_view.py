@@ -25,12 +25,18 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
-from fritz_callhistory.db.repository import VoicemailMessageRecord, VoicemailRepository
+from fritz_callhistory.db.repository import (
+    ContactRepository,
+    LocalPhonebookRepository,
+    PhonebookRepository,
+    VoicemailMessageRecord,
+    VoicemailRepository,
+)
+from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.gui.models import (
     DataclassSortProxy,
     VoicemailListModel,
     install_tristate_sorting,
-    voicemail_caller_display,
 )
 
 _AUDIO_KEY = "voicemail-audio"
@@ -75,6 +81,11 @@ class VoicemailView(QWidget):
     ) -> None:
         super().__init__()
         self._voicemail_repo = VoicemailRepository(connection)
+        self._caller_directory = CallerDirectory(
+            ContactRepository(connection),
+            PhonebookRepository(connection),
+            LocalPhonebookRepository(connection),
+        )
         self._audio_fetch_fn = audio_fetch_fn
         self._mark_read_fn = mark_read_fn
         self._delete_fn = delete_fn
@@ -98,7 +109,7 @@ class VoicemailView(QWidget):
             row_getter=self._model.message_at,
             key_fns={
                 0: lambda m: m.message_date,
-                1: lambda m: voicemail_caller_display(m).lower(),
+                1: lambda m: self._model.caller_label(m).lower(),
                 2: lambda m: m.duration_seconds,
             },
         )
@@ -164,7 +175,12 @@ class VoicemailView(QWidget):
     def reload(self) -> None:
         """Lädt die Nachrichtenliste neu (z.B. nach einem Sync oder einer Aktion)."""
         messages = self._voicemail_repo.list_messages()
-        self._model.set_messages(messages)
+        # Eine gebatchte Abfrage für alle Nachrichten (rohe Box-Nummern)
+        identities = self._caller_directory.identify_many([m.caller_number for m in messages])
+        labels = {
+            m.id: identities[m.caller_number].label(fallback_name=m.raw_name) for m in messages
+        }
+        self._model.set_messages(messages, labels)
         self._new_voicemail_count = sum(1 for m in messages if m.is_new)
         self.new_voicemail_count_changed.emit(self._new_voicemail_count)
         self._update_action_buttons()
@@ -220,7 +236,7 @@ class VoicemailView(QWidget):
         confirmed = QMessageBox.question(
             self,
             "Nachricht löschen",
-            f"Nachricht von {voicemail_caller_display(message)} wirklich löschen?\n"
+            f"Nachricht von {self._model.caller_label(message)} wirklich löschen?\n"
             "Dies löscht sie auch auf der Fritz!Box und kann nicht rückgängig "
             "gemacht werden.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -242,11 +258,11 @@ class VoicemailView(QWidget):
         )
         if started:
             self._now_playing_label.setText(
-                f"Lade Nachricht von {voicemail_caller_display(message)} …"
+                f"Lade Nachricht von {self._model.caller_label(message)} …"
             )
 
     def _on_audio_ready(self, message: VoicemailMessageRecord, data: bytes) -> None:
-        self._now_playing_label.setText(f"Wird abgespielt: {voicemail_caller_display(message)}")
+        self._now_playing_label.setText(f"Wird abgespielt: {self._model.caller_label(message)}")
         # Playing already marks the message read on the box (see
         # app.py's _build_voicemail_audio_fn) - flip it locally too, right away,
         # so the unread styling clears immediately instead of waiting for the next

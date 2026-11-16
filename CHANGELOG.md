@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Anrufbeantworter shows names from the local Telefonbuch, the same as the
+  call list.
 - Caller names are now resolved in one place (the Caller directory): the
   incoming-call popup and the name refresh after syncs and Telefonbuch changes
   use the same rules.

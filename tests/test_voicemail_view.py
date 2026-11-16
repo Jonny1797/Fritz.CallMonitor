@@ -1,7 +1,11 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
-from fritz_callhistory.db.repository import VoicemailRepository
+from fritz_callhistory.db.repository import (
+    LocalPhonebookRepository,
+    PhonebookRepository,
+    VoicemailRepository,
+)
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.voicemail_view import VoicemailView
@@ -437,3 +441,62 @@ def test_action_buttons_reenabled_after_failed_action(qtbot, connection):
     qtbot.waitUntil(lambda: view._delete_button.isEnabled(), timeout=2000)
 
     assert "kaputt" in view._now_playing_label.text()
+
+
+def _labels(view):
+    return [view._model.index(r, 1).data() for r in range(view._model.rowCount())]
+
+
+def test_telefonbuch_name_beats_box_raw_name(qtbot, connection):
+    LocalPhonebookRepository(connection).create(
+        display_name="Georgia", notes=None, numbers=[("+491712345678", "+491712345678", "home", False)]
+    )
+    _insert_message(connection, raw_name="Georg")
+    view = _make_view(connection)
+    qtbot.addWidget(view)
+    view.reload()
+
+    assert _labels(view) == ["Georgia"]
+
+
+def test_box_telefonbuch_name_used_for_voicemail(qtbot, connection):
+    PhonebookRepository(connection).replace_entries(0, [("Boxname", "+491712345678")])
+    _insert_message(connection, raw_name=None)
+    view = _make_view(connection)
+    qtbot.addWidget(view)
+    view.reload()
+
+    assert _labels(view) == ["Boxname"]
+
+
+def test_unknown_number_falls_back_to_raw_name_number_then_anonymous(qtbot, connection):
+    _insert_message(connection, tam_index=0, box_path="a", caller_number="+491751111111",
+                    raw_name="Roh")
+    _insert_message(connection, tam_index=0, box_path="b", caller_number="+491752222222",
+                    raw_name=None, message_date="2026-06-02T10:00:00")
+    _insert_message(connection, tam_index=0, box_path="c", caller_number=None,
+                    raw_name=None, message_date="2026-06-03T10:00:00")
+    view = _make_view(connection)
+    qtbot.addWidget(view)
+    view.reload()
+
+    assert sorted(_labels(view)) == sorted(["Roh", "+49 175 2222222", "Anonym / unterdrückt"])
+
+
+def test_reload_resolves_identities_in_constant_queries(qtbot, connection):
+    view = _make_view(connection)
+    qtbot.addWidget(view)
+
+    def count(n):
+        for i in range(n):
+            _insert_message(connection, box_path=f"p{n}-{i}", caller_number=f"+4917000000{i:02d}",
+                            message_date=f"2026-06-01T10:{i:02d}:00")
+        statements = []
+        connection.set_trace_callback(statements.append)
+        view.reload()
+        connection.set_trace_callback(None)
+        return len(statements)
+
+    small = count(2)
+    large = count(10)
+    assert large == small

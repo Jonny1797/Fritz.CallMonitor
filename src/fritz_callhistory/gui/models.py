@@ -337,11 +337,24 @@ class VoicemailListModel(_SimpleTableModel):
 
     _columns = _VOICEMAIL_COLUMNS
 
-    def __init__(self, messages: list[VoicemailMessageRecord] | None = None) -> None:
+    def __init__(
+        self,
+        messages: list[VoicemailMessageRecord] | None = None,
+        labels: dict[int, str] | None = None,
+    ) -> None:
+        # Anzeigenamen je Nachrichten-id (aus dem Caller directory); ohne Eintrag
+        # fällt die Anzeige auf voicemail_caller_display zurück.
+        self._labels: dict[int, str] = dict(labels or {})
         super().__init__(messages)
 
-    def set_messages(self, messages: list[VoicemailMessageRecord]) -> None:
+    def set_messages(
+        self, messages: list[VoicemailMessageRecord], labels: dict[int, str] | None = None
+    ) -> None:
+        self._labels = dict(labels or {})
         self._set_items(messages)
+
+    def caller_label(self, message: VoicemailMessageRecord) -> str:
+        return self._labels.get(message.id) or voicemail_caller_display(message)
 
     def message_at(self, row: int) -> VoicemailMessageRecord:
         return self._item_at(row)
@@ -362,7 +375,7 @@ class VoicemailListModel(_SimpleTableModel):
         if column == 0:
             return _format_call_date(message.message_date)
         if column == 1:
-            return voicemail_caller_display(message)
+            return self.caller_label(message)
         if column == 2:
             return _format_duration(message.duration_seconds)
         return None
