@@ -46,9 +46,12 @@ def _run_first_start_dialog(cfg, gateway: BoxGateway):
     if not tasks.is_idle():
         # Abbruch während der Prüfung: den laufenden Thread zu Ende laufen lassen,
         # bevor die Instanz verworfen wird (sonst "QThread destroyed while running").
+        # Bewusst kein begin_quit(): dessen Failsafe würde die App per os._exit()
+        # beenden, wenn die Prüfung länger als der Failsafe dauert (Request-Timeout
+        # ist länger) - der Nutzer will aber ohne Zugangsdaten weitermachen. Das
+        # späte Ergebnis verwirft der geschlossene Dialog selbst (siehe done()).
         loop = QEventLoop()
         tasks.all_finished.connect(loop.quit)
-        tasks.begin_quit()
         loop.exec()
     return cfg
 
