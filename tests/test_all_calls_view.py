@@ -409,6 +409,7 @@ def test_ended_unanswered_live_call_is_highlighted_and_badge_unchanged(qtbot, co
     assert view._model.data(index, Qt.ItemDataRole.FontRole) is not None
     assert view._model.data(index, Qt.ItemDataRole.ForegroundRole) is not None
     assert all(count == 0 for count in badge)
+    assert view.new_missed_calls_count == 0
 
 
 def test_ended_answered_live_call_is_not_highlighted(qtbot, connection):
