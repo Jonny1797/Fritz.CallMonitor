@@ -784,11 +784,17 @@ def test_live_ring_creates_one_caller_only(qtbot, connection):
     assert len(ContactRepository(connection).search("")) == 1
 
 
-def test_anonymous_live_ring_shows_anonymous_label_without_caller(qtbot, connection):
+def test_anonymous_live_ring_shows_anonymous_label_and_opens_anonymous_history(
+    qtbot, connection
+):
     view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
     qtbot.addWidget(view)
 
     view.on_live_ring("1", "", "069987654")
 
     assert view._model.data(view._model.index(0, 2)) == "Anonym / unterdrückt"
-    assert ContactRepository(connection).search("") == []
+    [anonymous] = ContactRepository(connection).search("")
+    assert anonymous.is_anonymous
+    with qtbot.waitSignal(view.contact_selected, timeout=1000) as blocker:
+        view._on_row_double_clicked(view._model.index(0, 2))
+    assert blocker.args == [anonymous.id]

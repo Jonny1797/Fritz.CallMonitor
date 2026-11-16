@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Anrufbeantworter and Telefonbuch actions can no longer start while the app is
   quitting.
 - No message boxes appear while the app is quitting.
+- The settings and Box-import dialogs are freed when closed; a phonebook list that
+  arrives after closing is dropped instead of reaching the hidden dialog.
 
 ### Changed
 

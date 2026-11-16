@@ -27,9 +27,6 @@ from PySide6.QtWidgets import (
 from fritz_callhistory.db.repository import (
     CallRepository,
     CallWithContact,
-    ContactRepository,
-    LocalPhonebookRepository,
-    PhonebookRepository,
     SyncStateRepository,
 )
 from fritz_callhistory.gui.models import (
@@ -81,11 +78,7 @@ class AllCallsView(QWidget):
     ) -> None:
         super().__init__()
         self._calls_repo = CallRepository(connection)
-        self._caller_directory = CallerDirectory(
-            ContactRepository(connection),
-            PhonebookRepository(connection),
-            LocalPhonebookRepository(connection),
-        )
+        self._caller_directory = CallerDirectory.for_connection(connection)
         self._sync_state = SyncStateRepository(connection)
         self._today_provider = today_provider
         self._now_provider = now_provider
@@ -368,7 +361,7 @@ class AllCallsView(QWidget):
         source_row = self._proxy.mapToSource(index).row()
         call = self._model.call_at(source_row)
         if call.contact_id == _LIVE_CALL_SENTINEL_ID:
-            return  # anonymer Live-Anruf: noch kein Caller vorhanden
+            return  # Live-Anruf ohne Caller (sollte nach register() nicht vorkommen)
         self.contact_selected.emit(call.contact_id)
 
     def _number_for_row(self, row: int) -> str | None:

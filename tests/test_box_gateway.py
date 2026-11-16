@@ -63,6 +63,7 @@ def test_has_credentials_needs_username_and_password(tmp_path):
     h.gateway.apply_config(Config(username="admin"))
     assert h.gateway.has_credentials
     h.password = None
+    h.gateway.apply_config(Config(username="admin"))
     assert not h.gateway.has_credentials
 
 
@@ -71,7 +72,26 @@ def test_has_credentials_flips_after_apply_config_once_password_exists(tmp_path)
     h.gateway.apply_config(Config(username="admin"))
     assert not h.gateway.has_credentials
     h.password = "pw"
+    h.gateway.apply_config(Config(username="admin"))
     assert h.gateway.has_credentials
+
+
+def test_has_credentials_does_not_read_keyring(tmp_path):
+    # has_credentials wird im GUI-Thread oft abgefragt - ein langsamer oder
+    # gesperrter Schlüsselbund darf die Oberfläche nicht blockieren.
+    lookups = []
+    gateway = BoxGateway(
+        Config(address="192.168.178.1", username="admin"),
+        db_path=tmp_path / "db.sqlite3",
+        client_factory=lambda *a: FakeClient(),
+        get_password=lambda user: lookups.append(user) or "secret",
+    )
+    lookups.clear()
+
+    for _ in range(3):
+        assert gateway.has_credentials
+
+    assert lookups == []
 
 
 def test_config_property_returns_applied_config(tmp_path):

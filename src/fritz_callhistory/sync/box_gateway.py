@@ -50,6 +50,7 @@ class BoxGateway:
         self._db_path = db_path
         self._client_factory = client_factory
         self._get_password = get_password
+        self._has_credentials = self._read_has_credentials()
 
     @property
     def config(self) -> Config:
@@ -57,11 +58,19 @@ class BoxGateway:
 
     def apply_config(self, new_config: Config) -> None:
         """Ersetzt die Config (Zugangsdaten oder Einstellungen); laufende Operationen
-        behalten ihren Schnappschuss."""
+        behalten ihren Schnappschuss. Liest den Schlüsselbund neu - daher erst nach
+        dem Speichern eines neuen Passworts aufrufen."""
         self._config = new_config
+        self._has_credentials = self._read_has_credentials()
 
     @property
     def has_credentials(self) -> bool:
+        """Zwischengespeichert (Stand des letzten apply_config()): wird im GUI-Thread
+        oft abgefragt, ein langsamer oder gesperrter Schlüsselbund darf ihn nicht
+        blockieren. Die Operationen selbst lesen das Passwort weiterhin frisch."""
+        return self._has_credentials
+
+    def _read_has_credentials(self) -> bool:
         config = self._config
         return bool(config.username and self._get_password(config.username))
 

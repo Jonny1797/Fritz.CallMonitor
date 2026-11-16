@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import shiboken6
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
@@ -42,7 +42,6 @@ class _Task:
     context: QObject
     on_success: Callable[[object], None]
     on_error: Callable[[FritzBoxError], None]
-    extra: dict = field(default_factory=dict)
 
 
 class BackgroundTasks(QObject):
@@ -92,6 +91,11 @@ class BackgroundTasks(QObject):
 
     def is_idle(self) -> bool:
         return not self._tasks
+
+    @property
+    def is_quitting(self) -> bool:
+        """True, sobald begin_quit() aufgerufen wurde."""
+        return self._quitting
 
     def begin_quit(self) -> None:
         """Ab jetzt keine neuen Aufgaben mehr und keine Callbacks; Failsafe wird gestartet."""

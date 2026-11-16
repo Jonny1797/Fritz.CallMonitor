@@ -27,9 +27,6 @@ from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.sync.box_gateway import BoxGateway
 from fritz_callhistory.db.repository import (
-    ContactRepository,
-    LocalPhonebookRepository,
-    PhonebookRepository,
     VoicemailMessageRecord,
     VoicemailRepository,
 )
@@ -78,11 +75,7 @@ class VoicemailView(QWidget):
     ) -> None:
         super().__init__()
         self._voicemail_repo = VoicemailRepository(connection)
-        self._caller_directory = CallerDirectory(
-            ContactRepository(connection),
-            PhonebookRepository(connection),
-            LocalPhonebookRepository(connection),
-        )
+        self._caller_directory = CallerDirectory.for_connection(connection)
         self._gateway = gateway
         self._background_tasks = background_tasks
         self._new_voicemail_count = 0

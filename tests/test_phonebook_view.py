@@ -10,11 +10,11 @@ from fritz_callhistory.gui.phonebook_view import PhonebookTab
 from tests.fakes import FakeGateway
 
 
-def _make_tab(connection, import_from_box_fn=None, gateway=None):
-    """import_from_box_fn ersetzt die Gateway-Operation; None = keine Zugangsdaten."""
+def _make_tab(connection, import_from_box=None, gateway=None):
+    """import_from_box ersetzt die gleichnamige Gateway-Operation; None = keine Zugangsdaten."""
     if gateway is None:
-        handlers = {"import_from_box": import_from_box_fn} if import_from_box_fn else {}
-        gateway = FakeGateway(handlers=handlers, has_credentials=import_from_box_fn is not None)
+        handlers = {"import_from_box": import_from_box} if import_from_box else {}
+        gateway = FakeGateway(handlers=handlers, has_credentials=import_from_box is not None)
     tasks = BackgroundTasks()
     tab = PhonebookTab(connection, tasks, gateway)
     tasks.setParent(tab)
@@ -135,13 +135,13 @@ def test_dial_selected_does_nothing_for_contact_without_numbers(qtbot, connectio
 
 
 def test_import_from_box_disabled_without_fn(qtbot, connection):
-    tab = _make_tab(connection, import_from_box_fn=None)
+    tab = _make_tab(connection, import_from_box=None)
     qtbot.addWidget(tab)
     assert tab.can_import_from_box is False
 
 
 def test_import_from_box_enabled_with_fn(qtbot, connection):
-    tab = _make_tab(connection, import_from_box_fn=lambda phonebook_ids: 0)
+    tab = _make_tab(connection, import_from_box=lambda phonebook_ids: 0)
     qtbot.addWidget(tab)
     assert tab.can_import_from_box is True
 
@@ -337,7 +337,7 @@ def test_adding_local_contact_renames_matching_call_history_contact(qtbot, conne
 
 def test_box_import_does_not_start_once_quitting_has_begun(qtbot, connection):
     calls = []
-    tab = _make_tab(connection, import_from_box_fn=lambda ids: calls.append(ids) or 0)
+    tab = _make_tab(connection, import_from_box=lambda ids: calls.append(ids) or 0)
     qtbot.addWidget(tab)
     signal_spy = []
     tab.import_from_box_availability_changed.connect(signal_spy.append)
@@ -360,7 +360,7 @@ def test_box_import_error_after_quit_shows_no_message_box(qtbot, connection, moc
         raise FritzBoxError("weg")
 
     critical = mocker.patch("fritz_callhistory.gui.phonebook_view.QMessageBox.critical")
-    tab = _make_tab(connection, import_from_box_fn=slow_import)
+    tab = _make_tab(connection, import_from_box=slow_import)
     qtbot.addWidget(tab)
     tab.import_from_box([0])
     assert tab._background_tasks.is_running("box-import")

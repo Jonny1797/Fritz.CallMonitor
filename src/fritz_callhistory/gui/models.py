@@ -17,6 +17,7 @@ from fritz_callhistory.db.repository import (
     LocalPhonebookContact,
     VoicemailMessageRecord,
 )
+from fritz_callhistory.sync.caller_directory import CallerIdentity
 from fritz_callhistory.sync.normalize import format_number_display
 
 _MISSED_CALL_TYPE = 2
@@ -320,11 +321,10 @@ class AllCallsListModel(_SimpleTableModel):
 
 
 def voicemail_caller_display(message: VoicemailMessageRecord) -> str:
-    if message.raw_name:
-        return message.raw_name
-    if message.caller_number:
-        return format_number_display(message.caller_number)
-    return "Anonym / unterdrückt"
+    """Anzeige ohne Caller directory: dieselbe Rückfallkette wie CallerIdentity.label()."""
+    number = message.caller_number or ""
+    identity = CallerIdentity(number, not number, None, None, None)
+    return identity.label(fallback_name=message.raw_name)
 
 
 class VoicemailListModel(_SimpleTableModel):
@@ -337,14 +337,10 @@ class VoicemailListModel(_SimpleTableModel):
 
     _columns = _VOICEMAIL_COLUMNS
 
-    def __init__(
-        self,
-        messages: list[VoicemailMessageRecord] | None = None,
-        labels: dict[int, str] | None = None,
-    ) -> None:
-        # Anzeigenamen je Nachrichten-id (aus dem Caller directory); ohne Eintrag
-        # fällt die Anzeige auf voicemail_caller_display zurück.
-        self._labels: dict[int, str] = dict(labels or {})
+    def __init__(self, messages: list[VoicemailMessageRecord] | None = None) -> None:
+        # Anzeigenamen je Nachrichten-id (aus dem Caller directory, via set_messages);
+        # ohne Eintrag fällt die Anzeige auf voicemail_caller_display zurück.
+        self._labels: dict[int, str] = {}
         super().__init__(messages)
 
     def set_messages(

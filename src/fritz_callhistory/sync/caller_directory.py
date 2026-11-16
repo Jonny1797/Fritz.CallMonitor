@@ -8,6 +8,7 @@ Notizen). Notizen kommen nur aus dem Telefonbuch-Kontakt. Kein Cache.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 
 from fritz_callhistory.db.repository import (
@@ -53,35 +54,47 @@ class CallerDirectory:
         self._phonebook = phonebook
         self._local_phonebook = local_phonebook
 
+    @classmethod
+    def for_connection(cls, connection: sqlite3.Connection) -> CallerDirectory:
+        """Directory über die drei Repositories einer Connection."""
+        return cls(
+            ContactRepository(connection),
+            PhonebookRepository(connection),
+            LocalPhonebookRepository(connection),
+        )
+
     def identify(self, raw_number: str | None) -> CallerIdentity:
         """Read-only: legt nie einen Caller an."""
         return self.identify_many([raw_number])[raw_number]
 
     def register(self, raw_number: str | None) -> CallerIdentity:
-        """Wie identify, legt den Caller aber an, falls er fehlt (idempotent)."""
+        """Wie identify, legt den Caller aber an, falls er fehlt (idempotent).
+
+        Unterdrückte Nummern teilen sich - wie beim Sync - einen anonymen Pseudo-Caller."""
         identity = self.identify(raw_number)
-        if identity.is_anonymous or identity.caller_id is not None:
+        if identity.caller_id is not None:
             return identity
-        caller_id = self._contacts.upsert(identity.number)
+        caller_id = self._contacts.upsert(identity.number, is_anonymous=identity.is_anonymous)
         return CallerIdentity(
-            identity.number, False, identity.name, identity.notes, caller_id
+            identity.number, identity.is_anonymous, identity.name, identity.notes, caller_id
         )
 
     def identify_many(self, raw_numbers: list[str | None]) -> dict[str | None, CallerIdentity]:
         """Batched (konstant viele Queries); Schlüssel sind die rohen Eingaben."""
         normalized = {raw: normalize_number(raw) for raw in raw_numbers}
         real_numbers = sorted({n for n, anon in normalized.values() if not anon})
+        all_numbers = sorted({n for n, _ in normalized.values()})
         local = self._local_phonebook.all_entries() if real_numbers else {}
         box = self._phonebook.all_names() if real_numbers else {}
-        ids = self._contacts.ids_for_numbers(real_numbers) if real_numbers else {}
+        ids = self._contacts.ids_for_numbers(all_numbers) if all_numbers else {}
         result: dict[str | None, CallerIdentity] = {}
         for raw, (number, is_anonymous) in normalized.items():
             if is_anonymous:
-                result[raw] = CallerIdentity(number, True, None, None, None)
+                result[raw] = CallerIdentity(number, True, None, None, ids.get(number))
                 continue
-            local_name, notes = local.get(number, (None, None))
+            notes = local.get(number, (None, None))[1]
             result[raw] = CallerIdentity(
-                number, False, local_name or box.get(number), notes, ids.get(number)
+                number, False, _resolve_name(number, local, box), notes, ids.get(number)
             )
         return result
 
@@ -94,8 +107,7 @@ class CallerDirectory:
         box = self._phonebook.all_names()
         updates: dict[int, str | None] = {}
         for contact in self._contacts.search(""):
-            local_entry = local.get(contact.primary_number)
-            name = local_entry[0] if local_entry else box.get(contact.primary_number)
+            name = _resolve_name(contact.primary_number, local, box)
             if name != contact.display_name:
                 updates[contact.id] = name
         self._contacts.set_display_names(updates)
@@ -107,3 +119,11 @@ class CallerDirectory:
         if identity.name and query.lower() in identity.name.lower():
             return True
         return any(s in identity.number for s in number_search_spellings(query))
+
+
+def _resolve_name(
+    number: str, local: dict[str, tuple[str | None, str | None]], box: dict[str, str]
+) -> str | None:
+    """Namensvorrang an einer Stelle: Telefonbuch-Kontakt, dann Box-Telefonbuch."""
+    local_name = local.get(number, (None, None))[0]
+    return local_name or box.get(number)

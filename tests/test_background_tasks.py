@@ -122,7 +122,9 @@ def test_starts_refused_and_callbacks_skipped_after_quit_begins(qtbot, tasks):
     ran = []
     tasks.start(lambda: ran.append("work") or release.wait(), ctx, rec.ok, rec.err, key="k")
     qtbot.waitUntil(lambda: ran == ["work"], timeout=3000)
+    assert tasks.is_quitting is False
     tasks.begin_quit()
+    assert tasks.is_quitting is True
     assert tasks.start(lambda: 1, ctx, rec.ok, rec.err, key="other") is False
     with qtbot.waitSignal(tasks.all_finished, timeout=3000):
         release.set()

@@ -45,13 +45,19 @@ def test_lowest_id_wins_for_name_and_notes(connection):
     assert (identity.name, identity.notes) == ("Erster", "n1")
 
 
-def test_anonymous_and_empty_have_no_caller(connection):
+def test_anonymous_and_empty_share_one_anonymous_caller(connection):
+    # Wie beim Sync: alle unterdrückten Nummern gehören zu einem Pseudo-Caller,
+    # damit ein Doppelklick dessen Verlauf öffnen kann.
     contacts, _, _, directory = _setup(connection)
+    assert directory.identify(None).caller_id is None
 
-    for raw in (None, "", "  "):
-        identity = directory.register(raw)
-        assert identity.is_anonymous and identity.caller_id is None
-    assert contacts.search("") == []
+    ids = {directory.register(raw).caller_id for raw in (None, "", "  ")}
+
+    assert len(ids) == 1 and None not in ids
+    [anonymous] = contacts.search("")
+    assert anonymous.is_anonymous and anonymous.id in ids
+    identity = directory.identify("")
+    assert identity.is_anonymous and identity.caller_id == anonymous.id
 
 
 def test_identify_never_writes_but_register_creates_once(connection):
