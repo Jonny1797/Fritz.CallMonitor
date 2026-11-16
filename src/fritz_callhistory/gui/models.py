@@ -445,7 +445,7 @@ class VoicemailListModel(TableModel):
         return self._item_at(row)
 
 
-class DataclassSortProxy(QSortFilterProxyModel):
+class ColumnSortProxy(QSortFilterProxyModel):
     """Sortiert nach dem Sortierschlüssel der jeweiligen Column statt nach dem
     Anzeigetext (verhindert z.B. lexikographische Fehlsortierung bei 'm:ss'-Dauer
     oder Anrufzahlen). row_getter ist die bestehende contact_at()/call_at()-

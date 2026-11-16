@@ -21,7 +21,7 @@ from fritz_callhistory.gui.models import (
     CALL_COLUMNS,
     CONTACT_COLUMNS,
     PHONEBOOK_COLUMNS,
-    DataclassSortProxy,
+    ColumnSortProxy,
     PhonebookContactListModel,
     VoicemailListModel,
     _format_call_date,
@@ -299,7 +299,7 @@ def test_dataclass_sort_proxy_sorts_duration_numerically_not_lexicographically(q
     long_call = _call_record(call_type=1)
     long_call.duration_seconds = 605
     model = CallListModel([long_call, short_call])
-    proxy = DataclassSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
 
     proxy.sort(3, Qt.SortOrder.AscendingOrder)
@@ -314,7 +314,7 @@ def test_dataclass_sort_proxy_none_keys_sort_first(qtbot):
     without_duration = _call_record(call_type=2)
     without_duration.duration_seconds = None
     model = CallListModel([with_duration, without_duration])
-    proxy = DataclassSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
 
     proxy.sort(3, Qt.SortOrder.AscendingOrder)
@@ -328,7 +328,7 @@ def test_install_tristate_sorting_cycles_ascending_descending_unsorted(qtbot):
     second = _call_record(call_type=1)
     second.call_date = "2026-06-02T10:00:00"
     model = CallListModel([first, second])
-    proxy = DataclassSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
     table = QTableView()
     table.setModel(proxy)
@@ -412,9 +412,9 @@ def _capture_fake_menus(mocker) -> list[_FakeMenu]:
     return created
 
 
-def _table_with_one_row(qtbot) -> tuple[QTableView, DataclassSortProxy]:
+def _table_with_one_row(qtbot) -> tuple[QTableView, ColumnSortProxy]:
     model = CallListModel([_call_record(call_type=1)])
-    proxy = DataclassSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
+    proxy = ColumnSortProxy(row_getter=model.call_at, columns=CALL_COLUMNS)
     proxy.setSourceModel(model)
     table = QTableView()
     table.setModel(proxy)
@@ -451,9 +451,9 @@ def test_install_call_context_menu_shows_no_menu_when_number_missing(qtbot, mock
 
 def _phonebook_table_with_contacts(
     qtbot, contacts: list[LocalPhonebookContact]
-) -> tuple[QTableView, DataclassSortProxy]:
+) -> tuple[QTableView, ColumnSortProxy]:
     model = PhonebookContactListModel(contacts)
-    proxy = DataclassSortProxy(row_getter=model.contact_at, columns=PHONEBOOK_COLUMNS)
+    proxy = ColumnSortProxy(row_getter=model.contact_at, columns=PHONEBOOK_COLUMNS)
     proxy.setSourceModel(model)
     table = QTableView()
     table.setModel(proxy)
@@ -739,7 +739,7 @@ def test_column_spec_has_headers_unique_ids_and_display_functions(columns, heade
 
 
 def _sorted_texts(model, row_getter, columns, column: int) -> list[str]:
-    proxy = DataclassSortProxy(row_getter=row_getter, columns=columns)
+    proxy = ColumnSortProxy(row_getter=row_getter, columns=columns)
     proxy.setSourceModel(model)
     proxy.sort(column, Qt.SortOrder.AscendingOrder)
     return [proxy.data(proxy.index(r, column)) for r in range(proxy.rowCount())]
@@ -897,7 +897,7 @@ def test_all_calls_mixed_stored_and_live_rows_sort_by_every_column(qtbot, column
         _live_call(LiveCallState.ENDED),
     ]
     model = AllCallsListModel(rows)
-    proxy = DataclassSortProxy(model.call_at, ALL_CALLS_COLUMNS)
+    proxy = ColumnSortProxy(model.call_at, ALL_CALLS_COLUMNS)
     proxy.setSourceModel(model)
 
     for order in (Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder):

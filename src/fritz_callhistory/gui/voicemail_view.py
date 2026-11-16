@@ -32,7 +32,7 @@ from fritz_callhistory.db.repository import (
 from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.gui.models import (
     configure_table,
-    DataclassSortProxy,
+    ColumnSortProxy,
     VoicemailListModel,
 )
 
@@ -92,7 +92,7 @@ class VoicemailView(QWidget):
         self._player.playbackStateChanged.connect(self._on_playback_state_changed)
 
         self._model = VoicemailListModel()
-        self._proxy = DataclassSortProxy(
+        self._proxy = ColumnSortProxy(
             row_getter=self._model.message_at,
             columns=self._model.columns,
         )

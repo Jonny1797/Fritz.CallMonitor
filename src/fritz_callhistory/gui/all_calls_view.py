@@ -31,7 +31,7 @@ from fritz_callhistory.gui.models import (
     ALL_CALLS_COLUMNS,
     configure_table,
     AllCallsListModel,
-    DataclassSortProxy,
+    ColumnSortProxy,
     call_number,
     focus_search_edit,
     install_call_context_menu,
@@ -123,7 +123,7 @@ class AllCallsView(QWidget):
         action_row.addWidget(self._mark_seen_button)
 
         self._model = AllCallsListModel()
-        self._proxy = DataclassSortProxy(
+        self._proxy = ColumnSortProxy(
             row_getter=self._model.call_at,
             columns=ALL_CALLS_COLUMNS,
         )

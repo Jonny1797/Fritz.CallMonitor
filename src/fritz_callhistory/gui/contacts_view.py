@@ -28,7 +28,7 @@ from fritz_callhistory.gui.models import (
     CONTACT_COLUMNS,
     configure_table,
     ContactListModel,
-    DataclassSortProxy,
+    ColumnSortProxy,
     focus_search_edit,
     install_call_context_menu,
     install_debounced_search,
@@ -51,7 +51,7 @@ class GroupedContactsView(QWidget):
         self._search_timer = install_debounced_search(self._search_edit, self.reload_contacts)
         self._search_edit.textChanged.connect(self.search_changed.emit)
 
-        self._contact_proxy = DataclassSortProxy(
+        self._contact_proxy = ColumnSortProxy(
             row_getter=self._contact_model.contact_at,
             columns=CONTACT_COLUMNS,
         )

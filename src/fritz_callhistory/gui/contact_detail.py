@@ -12,7 +12,7 @@ from fritz_callhistory.gui.models import (
     CALL_COLUMNS,
     configure_table,
     CallListModel,
-    DataclassSortProxy,
+    ColumnSortProxy,
     call_number,
     contact_display_label,
     install_call_context_menu,
@@ -40,7 +40,7 @@ class ContactDetailWidget(QWidget):
         self._subtitle_label = QLabel()
 
         self._call_model = CallListModel()
-        self._call_proxy = DataclassSortProxy(
+        self._call_proxy = ColumnSortProxy(
             row_getter=self._call_model.call_at,
             columns=CALL_COLUMNS,
         )

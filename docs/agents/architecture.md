@@ -10,7 +10,7 @@ Package: `src/fritz_callhistory/`.
 | `fritz/callmonitor.py` | Raw TCP call-monitor protocol (port 1012). See [fritzbox.md](fritzbox.md). |
 | `sync/` | Bridges `fritz/` and `db/`. `normalize.py` (phone numbers), `service.py` (`SyncService.sync_calls()` / `sync_phonebook()`), `phonebook_io.py` (file formats only: parse/write XML, CSV, vCard), `telefonbuch.py` (`Telefonbuch`: the only write path to the local Telefonbuch; owns normalization, dedupe, Default number rule, file import and Box import policies; works on `ContactDraft`/`NumberDraft`), `caller_directory.py` (`CallerDirectory`: who is behind a number), `box_gateway.py` (`BoxGateway`: the app's one way to act on the Fritz!Box with the stored login). |
 | `db/` | Raw `sqlite3` + repository pattern in `db/repository.py`. No ORM. See [database.md](database.md). |
-| `gui/` | PySide6 widgets, table models (`gui/models.py`: each table is one `Column` tuple — header, display, sort key, tooltip — feeding `TableModel`, `DataclassSortProxy` and `configure_table`), Background tasks (`gui/background_tasks.py`), call monitor thread (`gui/callmonitor_worker.py`). |
+| `gui/` | PySide6 widgets, table models (`gui/models.py`: each table is one `Column` tuple — header, display, sort key, tooltip — feeding `TableModel`, `ColumnSortProxy` and `configure_table`), Background tasks (`gui/background_tasks.py`), call monitor thread (`gui/callmonitor_worker.py`). |
 | `app.py` | Entry point; builds one `BoxGateway` and passes it to `MainWindow(connection, config, gateway)`. See [threading.md](threading.md). |
 | `credentials.py` / `config.py` / `paths.py` | Password in OS keyring; everything else in a TOML file under a `platformdirs` path. |
 

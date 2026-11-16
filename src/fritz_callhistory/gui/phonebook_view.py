@@ -29,7 +29,7 @@ from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
 from fritz_callhistory.gui.models import (
     PHONEBOOK_COLUMNS,
     configure_table,
-    DataclassSortProxy,
+    ColumnSortProxy,
     PhonebookContactListModel,
     default_or_first_number,
     focus_search_edit,
@@ -97,7 +97,7 @@ class PhonebookTab(QWidget):
         button_row.addStretch()
 
         self._model = PhonebookContactListModel()
-        self._proxy = DataclassSortProxy(
+        self._proxy = ColumnSortProxy(
             row_getter=self._model.contact_at,
             columns=PHONEBOOK_COLUMNS,
         )
