@@ -14,7 +14,7 @@ Package: `src/fritz_callhistory/`.
 
 ## Layering rules
 
-- `gui/` **never calls `FritzBoxClient` (TR-064) directly** — network work goes through the Box gateway (`sync/box_gateway.py`), run as a Background task via `BackgroundTasks`. Views and dialogs receive the gateway and check `gateway.has_credentials` when needed.
+- `gui/` **never calls `FritzBoxClient` (TR-064) directly** — network work goes through the Box gateway (`sync/box_gateway.py`), run as a Background task via `BackgroundTasks`. Views and `CredentialsDialog` receive the gateway and check `gateway.has_credentials` when needed; `SettingsDialog` and `PhonebookPickerDialog` stay gateway-free — `MainWindow` loads the phonebook list for them and hands it over.
 - `gui/` may use: `db/` repositories, pure helpers from `sync/` (`normalize`, `phonebook_io`, `caller_directory`, `box_gateway`), `fritz.exceptions`, and the call monitor via `gui/callmonitor_worker.py`.
 - Nothing above `fritz/` imports `fritzconnection` or catches its/`requests`' exceptions — `fritz/client.py` translates them into `fritz/exceptions.py` types.
 - Caller identity always comes from the Caller directory (`sync/caller_directory.py`) — don't add a separate matching path. (The Telefonbuch tab's "edit the contact that owns this number" via `find_by_number` is Telefonbuch editing, not identity.)
