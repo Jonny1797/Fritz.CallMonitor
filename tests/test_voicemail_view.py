@@ -2,7 +2,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from fritz_callhistory.db.repository import VoicemailRepository
+from fritz_callhistory.fritz.exceptions import FritzBoxError
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.voicemail_view import VoicemailView
+
+
+def _make_view(connection, **kwargs):
+    tasks = BackgroundTasks()
+    view = VoicemailView(connection, tasks, **kwargs)
+    tasks.setParent(view)
+    return view
 
 
 def _insert_message(connection, **overrides):
@@ -32,7 +41,7 @@ def _select_row(view, row: int) -> None:
 def test_view_lists_visible_messages(qtbot, connection):
     _insert_message(connection)
 
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     assert view._model.rowCount() == 1
@@ -41,12 +50,12 @@ def test_view_lists_visible_messages(qtbot, connection):
 def test_delete_message_removes_local_row(qtbot, connection):
     _insert_message(connection, box_path="/download.lua?path=/data/tam/rec/rec.0.000")
     _insert_message(connection, box_path="/download.lua?path=/data/tam/rec/rec.0.001")
-    view = VoicemailView(connection, delete_fn=lambda message: None)
+    view = _make_view(connection, delete_fn=lambda message: None)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view._delete_message(message)
-    qtbot.waitUntil(lambda: view._action_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-action'), timeout=2000)
 
     assert view._model.rowCount() == 1
     assert view._model.message_at(0).box_path != message.box_path
@@ -54,12 +63,12 @@ def test_delete_message_removes_local_row(qtbot, connection):
 
 def test_delete_message_persists_across_reload(qtbot, connection):
     _insert_message(connection)
-    view = VoicemailView(connection, delete_fn=lambda message: None)
+    view = _make_view(connection, delete_fn=lambda message: None)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view._delete_message(message)
-    qtbot.waitUntil(lambda: view._action_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-action'), timeout=2000)
     view.reload()
 
     assert view._model.rowCount() == 0
@@ -69,14 +78,14 @@ def test_new_voicemail_count_reflects_unheard_messages(qtbot, connection):
     _insert_message(connection, box_path="/download.lua?path=/data/tam/rec/rec.0.000", is_new=True)
     _insert_message(connection, box_path="/download.lua?path=/data/tam/rec/rec.0.001", is_new=False)
 
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     assert view.new_voicemail_count == 1
 
 
 def test_new_voicemail_count_changed_signal_emits_on_reload(qtbot, connection):
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     _insert_message(connection, is_new=True)
@@ -89,23 +98,23 @@ def test_new_voicemail_count_changed_signal_emits_on_reload(qtbot, connection):
 
 def test_play_message_does_nothing_without_audio_fetch_fn(qtbot, connection):
     _insert_message(connection)
-    view = VoicemailView(connection, audio_fetch_fn=None)
+    view = _make_view(connection, audio_fetch_fn=None)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view.play_message(message)
 
-    assert view._audio_thread is None
+    assert not view._background_tasks.is_running('voicemail-audio')
 
 
 def test_play_message_fetches_audio_in_background_worker(qtbot, connection):
     _insert_message(connection)
-    view = VoicemailView(connection, audio_fetch_fn=lambda message: b"RIFF...")
+    view = _make_view(connection, audio_fetch_fn=lambda message: b"RIFF...")
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view.play_message(message)
-    qtbot.waitUntil(lambda: view._audio_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-audio'), timeout=2000)
 
     assert view._audio_bytes is not None
     assert view._audio_bytes.data() == b"RIFF..."
@@ -129,7 +138,7 @@ def test_hung_audio_fetch_does_not_block_gui_thread(qtbot, connection):
         return b"RIFF..."
 
     _insert_message(connection)
-    view = VoicemailView(connection, audio_fetch_fn=hanging_fetch)
+    view = _make_view(connection, audio_fetch_fn=hanging_fetch)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
@@ -142,12 +151,12 @@ def test_hung_audio_fetch_does_not_block_gui_thread(qtbot, connection):
     timer.start(50)
     qtbot.waitUntil(lambda: bool(ticked), timeout=1000)
 
-    assert view._audio_thread is not None
+    assert view._background_tasks.is_running('voicemail-audio')
     view.play_message(message)  # guarded no-op while a fetch is already in flight
-    assert view._audio_thread is not None
+    assert view._background_tasks.is_running('voicemail-audio')
 
     release_event.set()
-    qtbot.waitUntil(lambda: view._audio_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-audio'), timeout=2000)
 
 
 def test_play_message_shows_error_on_fetch_failure(qtbot, connection):
@@ -157,31 +166,31 @@ def test_play_message_shows_error_on_fetch_failure(qtbot, connection):
         raise FritzBoxConnectionError("Box nicht erreichbar")
 
     _insert_message(connection)
-    view = VoicemailView(connection, audio_fetch_fn=failing_fetch)
+    view = _make_view(connection, audio_fetch_fn=failing_fetch)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view.play_message(message)
-    qtbot.waitUntil(lambda: view._audio_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-audio'), timeout=2000)
 
     assert "Box nicht erreichbar" in view._now_playing_label.text()
 
 
 def test_playing_a_message_clears_unread_styling_immediately(qtbot, connection):
     _insert_message(connection, is_new=True)
-    view = VoicemailView(connection, audio_fetch_fn=lambda message: b"RIFF...")
+    view = _make_view(connection, audio_fetch_fn=lambda message: b"RIFF...")
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view.play_message(message)
-    qtbot.waitUntil(lambda: view._audio_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-audio'), timeout=2000)
 
     assert view._model.message_at(0).is_new is False
 
 
 def test_action_buttons_disabled_without_selection(qtbot, connection):
     _insert_message(connection)
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     assert view._play_button.isEnabled() is False
@@ -192,7 +201,7 @@ def test_action_buttons_disabled_without_selection(qtbot, connection):
 
 def test_action_buttons_enabled_for_selected_unread_message_with_number(qtbot, connection):
     _insert_message(connection, caller_number="+491712345678", is_new=True)
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     _select_row(view, 0)
@@ -205,7 +214,7 @@ def test_action_buttons_enabled_for_selected_unread_message_with_number(qtbot, c
 
 def test_call_button_disabled_without_caller_number(qtbot, connection):
     _insert_message(connection, caller_number=None)
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     _select_row(view, 0)
@@ -215,7 +224,7 @@ def test_call_button_disabled_without_caller_number(qtbot, connection):
 
 def test_read_button_disabled_for_already_read_message(qtbot, connection):
     _insert_message(connection, is_new=False)
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     _select_row(view, 0)
@@ -225,24 +234,24 @@ def test_read_button_disabled_for_already_read_message(qtbot, connection):
 
 def test_mark_read_does_nothing_without_mark_read_fn(qtbot, connection):
     _insert_message(connection)
-    view = VoicemailView(connection, mark_read_fn=None)
+    view = _make_view(connection, mark_read_fn=None)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view._mark_read(message)
 
-    assert view._action_thread is None
+    assert not view._background_tasks.is_running('voicemail-action')
 
 
 def test_mark_read_updates_local_state_via_background_worker(qtbot, connection):
     calls = []
     _insert_message(connection, is_new=True)
-    view = VoicemailView(connection, mark_read_fn=lambda message: calls.append(message.id))
+    view = _make_view(connection, mark_read_fn=lambda message: calls.append(message.id))
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view._mark_read(message)
-    qtbot.waitUntil(lambda: view._action_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-action'), timeout=2000)
 
     assert calls == [message.id]
     assert view._model.message_at(0).is_new is False
@@ -260,32 +269,32 @@ def test_action_buttons_disabled_while_action_in_flight(qtbot, connection):
         release_event.wait(timeout=5)
 
     _insert_message(connection, is_new=True)
-    view = VoicemailView(connection, mark_read_fn=hanging_mark_read)
+    view = _make_view(connection, mark_read_fn=hanging_mark_read)
     qtbot.addWidget(view)
     _select_row(view, 0)
     assert view._read_button.isEnabled() is True
 
     view._on_read_button_clicked()
 
-    assert view._action_thread is not None
+    assert view._background_tasks.is_running('voicemail-action')
     assert view._play_button.isEnabled() is False
     assert view._call_button.isEnabled() is False
     assert view._read_button.isEnabled() is False
     assert view._delete_button.isEnabled() is False
 
     release_event.set()
-    qtbot.waitUntil(lambda: view._action_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-action'), timeout=2000)
 
 
 def test_delete_does_nothing_without_delete_fn(qtbot, connection):
     _insert_message(connection)
-    view = VoicemailView(connection, delete_fn=None)
+    view = _make_view(connection, delete_fn=None)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view._delete_message(message)
 
-    assert view._action_thread is None
+    assert not view._background_tasks.is_running('voicemail-action')
 
 
 def test_action_worker_shows_error_on_failure(qtbot, connection):
@@ -295,12 +304,12 @@ def test_action_worker_shows_error_on_failure(qtbot, connection):
         raise FritzBoxConnectionError("Box nicht erreichbar")
 
     _insert_message(connection)
-    view = VoicemailView(connection, delete_fn=failing_delete)
+    view = _make_view(connection, delete_fn=failing_delete)
     qtbot.addWidget(view)
     message = view._model.message_at(0)
 
     view._delete_message(message)
-    qtbot.waitUntil(lambda: view._action_thread is None, timeout=2000)
+    qtbot.waitUntil(lambda: not view._background_tasks.is_running('voicemail-action'), timeout=2000)
 
     assert "Box nicht erreichbar" in view._now_playing_label.text()
     # a failed box call must not remove the local row
@@ -308,7 +317,7 @@ def test_action_worker_shows_error_on_failure(qtbot, connection):
 
 
 def test_focus_search_is_a_noop(qtbot, connection):
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
 
     view.focus_search()  # kein Suchfeld in diesem Tab - darf nicht crashen
@@ -316,7 +325,7 @@ def test_focus_search_is_a_noop(qtbot, connection):
 
 def test_dial_selected_emits_call_requested_for_selected_message(qtbot, connection):
     _insert_message(connection, caller_number="+491712345678")
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
     _select_row(view, 0)
 
@@ -328,7 +337,7 @@ def test_dial_selected_emits_call_requested_for_selected_message(qtbot, connecti
 
 def test_dial_selected_does_nothing_without_selection(qtbot, connection):
     _insert_message(connection, caller_number="+491712345678")
-    view = VoicemailView(connection)
+    view = _make_view(connection)
     qtbot.addWidget(view)
     signal_spy = []
     view.call_requested.connect(signal_spy.append)
@@ -345,14 +354,14 @@ def test_delete_button_click_asks_for_confirmation_before_deleting(qtbot, connec
     )
     calls = []
     _insert_message(connection)
-    view = VoicemailView(connection, delete_fn=lambda message: calls.append(message.id))
+    view = _make_view(connection, delete_fn=lambda message: calls.append(message.id))
     qtbot.addWidget(view)
     _select_row(view, 0)
 
     view._on_delete_button_clicked()
 
     assert calls == []
-    assert view._action_thread is None
+    assert not view._background_tasks.is_running('voicemail-action')
 
 
 def test_seek_slider_click_jumps_to_clicked_position(qtbot):
@@ -385,3 +394,46 @@ def test_seek_slider_click_jumps_to_clicked_position(qtbot):
     assert moved
     assert slider.value() == moved[-1]
     assert moved[-1] > 500  # clicked past the midpoint
+
+
+def test_voicemail_actions_do_not_start_once_quitting_has_begun(qtbot, connection, mocker):
+    calls = []
+    _insert_message(connection)
+    view = _make_view(
+        connection,
+        audio_fetch_fn=lambda m: calls.append("audio") or b"x",
+        mark_read_fn=lambda m: calls.append("read"),
+        delete_fn=lambda m: calls.append("delete"),
+    )
+    qtbot.addWidget(view)
+    mocker.patch(
+        "fritz_callhistory.gui.voicemail_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    )
+    _select_row(view, 0)
+    view._background_tasks.begin_quit()
+
+    view._play_button.click()
+    view._read_button.click()
+    view._delete_button.click()
+    qtbot.wait(100)
+
+    assert calls == []
+    assert not view._background_tasks.is_running("voicemail-audio")
+    assert not view._background_tasks.is_running("voicemail-action")
+
+
+def test_action_buttons_reenabled_after_failed_action(qtbot, connection):
+    def failing(message):
+        raise FritzBoxError("kaputt")
+
+    _insert_message(connection)
+    view = _make_view(connection, mark_read_fn=failing)
+    qtbot.addWidget(view)
+    _select_row(view, 0)
+
+    view._read_button.click()
+    assert not view._delete_button.isEnabled()
+    qtbot.waitUntil(lambda: view._delete_button.isEnabled(), timeout=2000)
+
+    assert "kaputt" in view._now_playing_label.text()

@@ -3,11 +3,10 @@ Suche, Detailansicht und Sync-Aktion im Menü (im Hintergrund-Thread)."""
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from collections.abc import Callable
 
-from PySide6.QtCore import QThread, QTimer, Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -84,7 +83,6 @@ class MainWindow(QMainWindow):
         self._list_phonebooks_fn = list_phonebooks_fn
         self._close_requested = False
         self._quit_requested = False
-        self._shutdown_failsafe_timer: QTimer | None = None
         self._update_credentials_fn = update_credentials_fn
         self._test_credentials_fn = test_credentials_fn
         self._sync_auth_declined = False
@@ -107,6 +105,7 @@ class MainWindow(QMainWindow):
 
         self._voicemail_view = VoicemailView(
             connection,
+            self.background_tasks,
             audio_fetch_fn=voicemail_audio_fn,
             mark_read_fn=voicemail_mark_read_fn,
             delete_fn=voicemail_delete_fn,
@@ -116,7 +115,9 @@ class MainWindow(QMainWindow):
             self._on_new_voicemail_count_changed
         )
 
-        self._phonebook_tab = PhonebookTab(connection, import_from_box_fn=import_from_box_fn)
+        self._phonebook_tab = PhonebookTab(
+            connection, self.background_tasks, import_from_box_fn=import_from_box_fn
+        )
         self._phonebook_tab.contacts_changed.connect(self._calls_tab.reload_contacts)
         self._phonebook_tab.call_requested.connect(self._dial_number)
         self._calls_tab.number_double_clicked.connect(self._phonebook_tab.add_or_edit_number)
@@ -240,22 +241,6 @@ class MainWindow(QMainWindow):
             self._call_monitor.connection_lost.connect(self._calls_tab.clear_live_calls)
             self._call_monitor.start()
 
-    def _legacy_busy_threads(self) -> list[QThread]:
-        """Übergangsbrücke: Threads, die noch nicht über BackgroundTasks laufen
-        (Telefonbuch-Import, Anrufbeantworter). closeEvent()
-        muss auch auf sie warten; jedes Folge-Ticket entfernt seinen Teil."""
-        threads: list[QThread] = []
-        import_thread = self._phonebook_tab.import_thread
-        if import_thread is not None and import_thread.isRunning():
-            threads.append(import_thread)
-        audio_thread = self._voicemail_view.audio_thread
-        if audio_thread is not None and audio_thread.isRunning():
-            threads.append(audio_thread)
-        action_thread = self._voicemail_view.action_thread
-        if action_thread is not None and action_thread.isRunning():
-            threads.append(action_thread)
-        return threads
-
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._config.minimize_to_tray_on_close and not self._quit_requested:
             event.ignore()
@@ -269,27 +254,15 @@ class MainWindow(QMainWindow):
             # Ab jetzt starten keine Hintergrundaufgaben mehr, ihre Callbacks entfallen.
             self.background_tasks.begin_quit()
 
-        # Ein festes wait(N) könnte ablaufen, während so ein Thread noch in
-        # seinem HTTP-Request steckt, und Qt würde ihn beim Zerstören des
-        # Fensters mit SIGABRT abbrechen. Stattdessen wird das Fenster nur
-        # versteckt (wirkt für den Nutzer bereits geschlossen); sobald der
-        # letzte betroffene Thread von selbst fertig ist, löst sein
-        # finished-Signal close() erneut aus - dann ist die Liste leer und der
-        # eigentliche Schliessvorgang läuft durch.
-        busy_threads = self._legacy_busy_threads()
-        if busy_threads or not self.background_tasks.is_idle():
+        # Läuft noch eine Hintergrundaufgabe, wird das Fenster nur versteckt (wirkt für
+        # den Nutzer bereits geschlossen); sobald die letzte fertig ist, löst
+        # all_finished close() erneut aus. Der Failsafe liegt in BackgroundTasks.
+        if not self.background_tasks.is_idle():
             self.hide()
             event.ignore()
             self.background_tasks.all_finished.connect(
                 self.close, Qt.ConnectionType.UniqueConnection
             )
-            for thread in busy_threads:
-                thread.finished.connect(self.close, Qt.ConnectionType.UniqueConnection)
-            if self._shutdown_failsafe_timer is None:
-                self._shutdown_failsafe_timer = QTimer(self)
-                self._shutdown_failsafe_timer.setSingleShot(True)
-                self._shutdown_failsafe_timer.timeout.connect(self._force_exit_if_still_busy)
-                self._shutdown_failsafe_timer.start(_SHUTDOWN_FAILSAFE_MS)
             return
 
         if self._call_monitor is not None:
@@ -308,16 +281,6 @@ class MainWindow(QMainWindow):
         app_instance = QApplication.instance()
         if app_instance is not None:
             app_instance.quit()
-
-    def _force_exit_if_still_busy(self) -> None:
-        # Nur für die Übergangsbrücke (BackgroundTasks hat seinen eigenen Failsafe).
-        # Feuert nur, wenn ein Worker-Thread _SHUTDOWN_FAILSAFE_MS nach dem
-        # ersten Schliessversuch immer noch läuft - regulär erfolgreiche
-        # Sync-/Import-Vorgänge haben längst über ihr finished-Signal einen
-        # erneuten, diesmal erfolgreichen close() ausgelöst und diese Methode
-        # läuft dann entweder gar nicht mehr oder trifft auf eine leere Liste.
-        if self._legacy_busy_threads():
-            os._exit(1)
 
     def _on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (

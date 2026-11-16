@@ -3,14 +3,23 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 from fritz_callhistory.db.repository import ContactRepository, LocalPhonebookRepository
 from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
 from fritz_callhistory.gui.main_window import MainWindow
+from fritz_callhistory.fritz.exceptions import FritzBoxError
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.phonebook_view import PhonebookTab
+
+
+def _make_tab(connection, **kwargs):
+    tasks = BackgroundTasks()
+    tab = PhonebookTab(connection, tasks, **kwargs)
+    tasks.setParent(tab)
+    return tab
 
 
 def test_phonebook_tab_shows_seeded_contacts(qtbot, connection):
     repo = LocalPhonebookRepository(connection)
     repo.create(display_name="Max Mustermann", notes=None, numbers=[])
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
 
     assert tab._model.rowCount() == 1
@@ -22,7 +31,7 @@ def test_phonebook_tab_search_filters_by_name(qtbot, connection):
     repo.create(display_name="Max Mustermann", notes=None, numbers=[])
     repo.create(display_name="Erika Musterfrau", notes=None, numbers=[])
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
 
     tab._search_edit.setText("Mustermann")
@@ -32,7 +41,7 @@ def test_phonebook_tab_search_filters_by_name(qtbot, connection):
 
 
 def test_focus_search_focuses_search_edit(qtbot, connection):
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     tab.show()
     qtbot.waitExposed(tab)
@@ -55,7 +64,7 @@ def test_dial_selected_emits_call_requested_for_single_number_contact(qtbot, con
         numbers=[("0151 1234567", "+491511234567", "mobile", False)],
     )
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     tab._table.selectRow(0)
 
@@ -76,7 +85,7 @@ def test_dial_selected_prefers_default_number_over_first(qtbot, connection):
         ],
     )
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     tab._table.selectRow(0)
 
@@ -94,7 +103,7 @@ def test_dial_selected_does_nothing_without_selection(qtbot, connection):
         numbers=[("0151 1234567", "+491511234567", "mobile", False)],
     )
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     signal_spy = []
     tab.call_requested.connect(signal_spy.append)
@@ -108,7 +117,7 @@ def test_dial_selected_does_nothing_for_contact_without_numbers(qtbot, connectio
     repo = LocalPhonebookRepository(connection)
     repo.create(display_name="Max Mustermann", notes=None, numbers=[])
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     tab._table.selectRow(0)
     signal_spy = []
@@ -120,19 +129,19 @@ def test_dial_selected_does_nothing_for_contact_without_numbers(qtbot, connectio
 
 
 def test_import_from_box_disabled_without_fn(qtbot, connection):
-    tab = PhonebookTab(connection, import_from_box_fn=None)
+    tab = _make_tab(connection, import_from_box_fn=None)
     qtbot.addWidget(tab)
     assert tab.can_import_from_box is False
 
 
 def test_import_from_box_enabled_with_fn(qtbot, connection):
-    tab = PhonebookTab(connection, import_from_box_fn=lambda phonebook_ids: 0)
+    tab = _make_tab(connection, import_from_box_fn=lambda phonebook_ids: 0)
     qtbot.addWidget(tab)
     assert tab.can_import_from_box is True
 
 
 def test_add_contact_via_dialog_persists_and_reloads(qtbot, connection, mocker):
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
 
     def fake_exec(self):
@@ -151,7 +160,7 @@ def test_edit_contact_updates_existing_entry(qtbot, connection, mocker):
     repo = LocalPhonebookRepository(connection)
     contact_id = repo.create(display_name="Max Mustermann", notes=None, numbers=[])
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     tab._table.selectRow(0)
 
@@ -170,7 +179,7 @@ def test_delete_contact_removes_it(qtbot, connection, mocker):
     repo = LocalPhonebookRepository(connection)
     repo.create(display_name="Max Mustermann", notes=None, numbers=[])
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     tab._table.selectRow(0)
 
@@ -198,7 +207,7 @@ def test_delete_contact_reruns_name_resolution_and_emits_contacts_changed(
     )
     contacts.set_display_names({caller_id: "Max Mustermann"})
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     tab._table.selectRow(0)
     mocker.patch(
@@ -213,7 +222,7 @@ def test_delete_contact_reruns_name_resolution_and_emits_contacts_changed(
 
 
 def test_add_or_edit_number_creates_new_contact_with_prefilled_number(qtbot, connection, mocker):
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
 
     captured_prefill = {}
@@ -240,7 +249,7 @@ def test_add_or_edit_number_edits_existing_contact_for_matching_number(qtbot, co
         numbers=[("0171 2345678", "+491712345678", "mobile", False)],
     )
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
 
     def fake_exec(self):
@@ -257,7 +266,7 @@ def test_add_or_edit_number_edits_existing_contact_for_matching_number(qtbot, co
 
 
 def test_add_or_edit_number_ignores_anonymous_number(qtbot, connection, mocker):
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     exec_spy = mocker.patch.object(ContactEditDialog, "exec")
 
@@ -272,7 +281,7 @@ def test_table_sorting_cycles_and_edit_still_resolves_correct_contact(qtbot, con
     id_a = repo.create(display_name="Bertha", notes=None, numbers=[])
     id_b = repo.create(display_name="Anton", notes=None, numbers=[])
 
-    tab = PhonebookTab(connection)
+    tab = _make_tab(connection)
     qtbot.addWidget(tab)
     header = tab._table.horizontalHeader()
 
@@ -318,3 +327,39 @@ def test_adding_local_contact_renames_matching_call_history_contact(qtbot, conne
     window._phonebook_tab._after_local_change()
 
     assert contacts_repo.get(contact_id).display_name == "Neu Erkannt"
+
+
+def test_box_import_does_not_start_once_quitting_has_begun(qtbot, connection):
+    calls = []
+    tab = _make_tab(connection, import_from_box_fn=lambda ids: calls.append(ids) or 0)
+    qtbot.addWidget(tab)
+    signal_spy = []
+    tab.import_from_box_availability_changed.connect(signal_spy.append)
+    tab._background_tasks.begin_quit()
+
+    tab.import_from_box([0])
+    qtbot.wait(100)
+
+    assert calls == []
+    assert signal_spy == []
+
+
+def test_box_import_error_after_quit_shows_no_message_box(qtbot, connection, mocker):
+    import threading
+
+    release = threading.Event()
+
+    def slow_import(ids):
+        release.wait(5)
+        raise FritzBoxError("weg")
+
+    critical = mocker.patch("fritz_callhistory.gui.phonebook_view.QMessageBox.critical")
+    tab = _make_tab(connection, import_from_box_fn=slow_import)
+    qtbot.addWidget(tab)
+    tab.import_from_box([0])
+    assert tab._background_tasks.is_running("box-import")
+    tab._background_tasks.begin_quit()
+    with qtbot.waitSignal(tab._background_tasks.all_finished, timeout=3000):
+        release.set()
+
+    critical.assert_not_called()

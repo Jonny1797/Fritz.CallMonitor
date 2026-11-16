@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fritz_callhistory.fritz.exceptions import FritzBoxError
+from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.db.repository import VoicemailMessageRecord, VoicemailRepository
 from fritz_callhistory.gui.models import (
     DataclassSortProxy,
@@ -30,7 +32,9 @@ from fritz_callhistory.gui.models import (
     install_tristate_sorting,
     voicemail_caller_display,
 )
-from fritz_callhistory.gui.workers import VoicemailActionWorker, VoicemailAudioWorker
+
+_AUDIO_KEY = "voicemail-audio"
+_ACTION_KEY = "voicemail-action"
 
 AudioFetchFn = Callable[[VoicemailMessageRecord], bytes]
 VoicemailActionFn = Callable[[VoicemailMessageRecord], None]
@@ -64,6 +68,7 @@ class VoicemailView(QWidget):
     def __init__(
         self,
         connection: sqlite3.Connection,
+        background_tasks: BackgroundTasks,
         audio_fetch_fn: AudioFetchFn | None = None,
         mark_read_fn: VoicemailActionFn | None = None,
         delete_fn: VoicemailActionFn | None = None,
@@ -73,8 +78,7 @@ class VoicemailView(QWidget):
         self._audio_fetch_fn = audio_fetch_fn
         self._mark_read_fn = mark_read_fn
         self._delete_fn = delete_fn
-        self._audio_thread: VoicemailAudioWorker | None = None
-        self._action_thread: VoicemailActionWorker | None = None
+        self._background_tasks = background_tasks
         self._new_voicemail_count = 0
         # Player-Quelle (QByteArray/QBuffer) als Instanzattribute halten, damit sie
         # während der Wiedergabe nicht vom GC eingesammelt werden (QMediaPlayer
@@ -154,14 +158,6 @@ class VoicemailView(QWidget):
         self.reload()
 
     @property
-    def audio_thread(self) -> VoicemailAudioWorker | None:
-        return self._audio_thread
-
-    @property
-    def action_thread(self) -> VoicemailActionWorker | None:
-        return self._action_thread
-
-    @property
     def new_voicemail_count(self) -> int:
         return self._new_voicemail_count
 
@@ -189,9 +185,10 @@ class VoicemailView(QWidget):
         # Während eine Gelesen-/Löschen-Aktion noch läuft, bleiben alle vier
         # Buttons deaktiviert - sonst könnte z.B. eine Löschen-Bestätigung
         # über eine noch laufende Gelesen-Aktion hinweg bestätigt werden und
-        # danach durch den geteilten _action_thread-Guard stillschweigend nichts
+        # danach durch den geteilten Aufgaben-Schlüssel stillschweigend nichts
         # mehr tun.
-        message = None if self._action_thread is not None else self._selected_message()
+        action_running = self._background_tasks.is_running(_ACTION_KEY)
+        message = None if action_running else self._selected_message()
         self._play_button.setEnabled(message is not None)
         self._call_button.setEnabled(message is not None and bool(message.caller_number))
         self._read_button.setEnabled(message is not None and message.is_new)
@@ -233,18 +230,20 @@ class VoicemailView(QWidget):
             self._delete_message(message)
 
     def play_message(self, message: VoicemailMessageRecord) -> None:
-        if self._audio_fetch_fn is None or self._audio_thread is not None:
+        if self._audio_fetch_fn is None or self._background_tasks.is_running(_AUDIO_KEY):
             return
-        self._now_playing_label.setText(f"Lade Nachricht von {voicemail_caller_display(message)} …")
-        self._audio_thread = VoicemailAudioWorker(
-            lambda: self._audio_fetch_fn(message), parent=self
+        fetch_fn = self._audio_fetch_fn
+        started = self._background_tasks.start(
+            lambda: fetch_fn(message),
+            self,
+            lambda data: self._on_audio_ready(message, data),
+            self._on_audio_failed,
+            key=_AUDIO_KEY,
         )
-        self._audio_thread.audio_ready.connect(
-            lambda data: self._on_audio_ready(message, data)
-        )
-        self._audio_thread.audio_failed.connect(self._on_audio_failed)
-        self._audio_thread.finished.connect(self._on_audio_thread_finished)
-        self._audio_thread.start()
+        if started:
+            self._now_playing_label.setText(
+                f"Lade Nachricht von {voicemail_caller_display(message)} …"
+            )
 
     def _on_audio_ready(self, message: VoicemailMessageRecord, data: bytes) -> None:
         self._now_playing_label.setText(f"Wird abgespielt: {voicemail_caller_display(message)}")
@@ -261,53 +260,45 @@ class VoicemailView(QWidget):
         self._player.setSourceDevice(self._audio_buffer)
         self._player.play()
 
-    def _on_audio_failed(self, message: str) -> None:
-        self._now_playing_label.setText(f"Abspielen fehlgeschlagen: {message}")
-
-    def _on_audio_thread_finished(self) -> None:
-        self._audio_thread = None
+    def _on_audio_failed(self, error: FritzBoxError) -> None:
+        self._now_playing_label.setText(f"Abspielen fehlgeschlagen: {error}")
 
     def _mark_read(self, message: VoicemailMessageRecord) -> None:
-        if self._mark_read_fn is None or self._action_thread is not None:
+        if self._mark_read_fn is None:
             return
-        self._action_thread = VoicemailActionWorker(
-            lambda: self._mark_read_fn(message), parent=self
+        mark_read_fn = self._mark_read_fn
+        self._run_action(
+            lambda: mark_read_fn(message), lambda: self._on_mark_read_succeeded(message)
         )
-        self._action_thread.action_succeeded.connect(
-            lambda: self._on_mark_read_succeeded(message)
-        )
-        self._action_thread.action_failed.connect(self._on_action_failed)
-        self._action_thread.finished.connect(self._on_action_thread_finished)
-        self._action_thread.start()
-        self._update_action_buttons()
 
     def _on_mark_read_succeeded(self, message: VoicemailMessageRecord) -> None:
         self._voicemail_repo.mark_read_locally(message.id)
         self.reload()
 
     def _delete_message(self, message: VoicemailMessageRecord) -> None:
-        if self._delete_fn is None or self._action_thread is not None:
+        if self._delete_fn is None:
             return
-        self._action_thread = VoicemailActionWorker(
-            lambda: self._delete_fn(message), parent=self
-        )
-        self._action_thread.action_succeeded.connect(
-            lambda: self._on_delete_succeeded(message)
-        )
-        self._action_thread.action_failed.connect(self._on_action_failed)
-        self._action_thread.finished.connect(self._on_action_thread_finished)
-        self._action_thread.start()
-        self._update_action_buttons()
+        delete_fn = self._delete_fn
+        self._run_action(lambda: delete_fn(message), lambda: self._on_delete_succeeded(message))
 
     def _on_delete_succeeded(self, message: VoicemailMessageRecord) -> None:
         self._voicemail_repo.delete(message.id)
         self.reload()
 
-    def _on_action_failed(self, message: str) -> None:
-        self._now_playing_label.setText(f"Aktion fehlgeschlagen: {message}")
+    def _run_action(self, fn: Callable[[], None], on_done: Callable[[], None]) -> None:
+        """Startet eine Gelesen-/Löschen-Aktion; es läuft immer nur eine."""
+        started = self._background_tasks.start(
+            fn,
+            self,
+            lambda _result: on_done(),
+            self._on_action_failed,
+            key=_ACTION_KEY,
+        )
+        if started:
+            self._update_action_buttons()
 
-    def _on_action_thread_finished(self) -> None:
-        self._action_thread = None
+    def _on_action_failed(self, error: FritzBoxError) -> None:
+        self._now_playing_label.setText(f"Aktion fehlgeschlagen: {error}")
         self._update_action_buttons()
 
     def _on_play_pause_clicked(self) -> None:

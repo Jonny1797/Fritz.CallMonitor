@@ -275,19 +275,17 @@ def test_close_while_box_import_running_defers_until_import_finishes(qtbot, conn
     window.show()
     window._phonebook_tab.import_from_box([0])
     qtbot.waitUntil(
-        lambda: window._phonebook_tab.import_thread is not None
-        and window._phonebook_tab.import_thread.isRunning(),
-        timeout=2000,
+        lambda: window.background_tasks.is_running("box-import"), timeout=2000
     )
 
     closed = window.close()
 
     assert closed is False
     assert not window.isVisible()
-    assert window._phonebook_tab.import_thread.isRunning()
+    assert window.background_tasks.is_running("box-import")
 
     release_import.set()
-    qtbot.waitUntil(lambda: not window._phonebook_tab.import_thread.isRunning(), timeout=2000)
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("box-import"), timeout=2000)
     qtbot.wait(50)
 
     assert window.close() is True
