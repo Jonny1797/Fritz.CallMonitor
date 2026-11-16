@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A live call that ended without ever being answered now shows as "Verpasst" (highlighted
+  like a new missed call) instead of "Eingehend" until the next sync.
 - Credentials entered after cancelling the startup dialog now enable sync, dialing, Box
   import and Anrufbeantworter actions without a restart.
 - Searching by number now also finds calls that are ringing or in progress (same

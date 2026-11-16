@@ -364,20 +364,61 @@ def test_on_live_connected_ignores_unknown_connection_id(qtbot, connection):
     assert view._model.rowCount() == 0
 
 
-def test_on_live_disconnected_keeps_row_relabeled_as_incoming(qtbot, connection):
-    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=_fixed_now)
+def _view_with_clock(qtbot, connection):
+    clock = [datetime(2026, 6, 15, 12, 0, 0)]
+    view = AllCallsView(connection, today_provider=_fixed_today, now_provider=lambda: clock[0])
     qtbot.addWidget(view)
+    clock[0] = datetime(2026, 6, 15, 12, 5, 0)  # Anruf beginnt nach "zuletzt gesehen"
+    return view
+
+
+def test_on_live_disconnected_without_connect_shows_missed(qtbot, connection):
+    view = _view_with_clock(qtbot, connection)
     view.on_live_ring("1", "030 1234567", "069987654")
     assert view._model.rowCount() == 1
 
     with qtbot.waitSignal(view.live_call_ended, timeout=1000):
         view.on_live_disconnected("1")
 
-    # Zeile bleibt sichtbar (id=-1-Sentinel), statt zu verschwinden - jetzt
-    # als normaler "Eingehend"-Anruf dargestellt, bis der Sync abschliesst.
+    # Zeile bleibt sichtbar (id=-1-Sentinel) und zeigt den nie angenommenen Anruf als Verpasst.
+    assert view._model.rowCount() == 1
+    assert view._model.call_at(0).call_type == 2
+    assert view._model.call_at(0).id == -1
+
+
+def test_on_live_disconnected_after_connect_shows_incoming(qtbot, connection):
+    view = _view_with_clock(qtbot, connection)
+    view.on_live_ring("1", "030 1234567", "069987654")
+    view.on_live_connected("1")
+
+    view.on_live_disconnected("1")
+
     assert view._model.rowCount() == 1
     assert view._model.call_at(0).call_type == 1
     assert view._model.call_at(0).id == -1
+
+
+def test_ended_unanswered_live_call_is_highlighted_and_badge_unchanged(qtbot, connection):
+    view = _view_with_clock(qtbot, connection)
+    badge = []
+    view.new_missed_calls_changed.connect(badge.append)
+    view.on_live_ring("1", "030 1234567", "069987654")
+    view.on_live_disconnected("1")
+
+    index = view._model.index(0, 0)
+    assert view._model.data(index, Qt.ItemDataRole.FontRole) is not None
+    assert view._model.data(index, Qt.ItemDataRole.ForegroundRole) is not None
+    assert all(count == 0 for count in badge)
+
+
+def test_ended_answered_live_call_is_not_highlighted(qtbot, connection):
+    view = _view_with_clock(qtbot, connection)
+    view.on_live_ring("1", "030 1234567", "069987654")
+    view.on_live_connected("1")
+    view.on_live_disconnected("1")
+
+    index = view._model.index(0, 0)
+    assert view._model.data(index, Qt.ItemDataRole.FontRole) is None
 
 
 def test_clear_ended_live_calls_removes_only_ended_entries(qtbot, connection):

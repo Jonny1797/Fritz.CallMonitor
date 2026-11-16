@@ -56,6 +56,7 @@ class _LiveCall:
     identity: CallerIdentity
     call_type: int  # CallType.LIVE_RINGING oder CallType.LIVE_CONNECTED
     started_at: str
+    connected: bool = False  # war der Anruf je verbunden (Verbunden), auch nach dem Ende
     ended: bool = False  # Anruf beendet, wartet auf den nächsten erfolgreichen Sync (siehe on_live_disconnected)
 
 
@@ -262,11 +263,10 @@ class AllCallsView(QWidget):
                 CallWithContact(
                     id=_LIVE_CALL_SENTINEL_ID,  # Sentinel: kein echter DB-Eintrag, nur zur Anzeige
                     contact_id=live.identity.caller_id or _LIVE_CALL_SENTINEL_ID,
-                    # Beendete Anrufe werden generisch als "Eingehend" dargestellt,
-                    # statt sofort zu verschwinden - CallMonitor verfolgt ohnehin
-                    # ausschliesslich eingehende RING-Ereignisse (siehe
-                    # fritz/callmonitor.py's parse_event), daher immer korrekt.
-                    call_type=CallType.INCOMING if live.ended else live.call_type,
+                    # Beendete Anrufe verschwinden nicht sofort: angenommene zeigen
+                    # "Eingehend", nie angenommene "Verpasst" (wie der echte Eintrag
+                    # nach dem Sync). Der CallMonitor verfolgt nur eingehende Anrufe.
+                    call_type=self._ended_call_type(live) if live.ended else live.call_type,
                     caller_number=live.caller_number,
                     called_number=live.called_number,
                     port=None,
@@ -280,6 +280,10 @@ class AllCallsView(QWidget):
                 )
             )
         return result
+
+    @staticmethod
+    def _ended_call_type(live: _LiveCall) -> CallType:
+        return CallType.INCOMING if live.connected else CallType.MISSED
 
     def on_live_ring(self, connection_id: str, caller_number: str, called_number: str) -> None:
         identity = self._caller_directory.register(caller_number)
@@ -296,6 +300,7 @@ class AllCallsView(QWidget):
         live = self._live_calls.get(connection_id)
         if live is not None:
             live.call_type = CallType.LIVE_CONNECTED
+            live.connected = True
             self._reload()
 
     def on_live_disconnected(self, connection_id: str) -> None:
