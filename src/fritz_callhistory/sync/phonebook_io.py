@@ -1,9 +1,9 @@
 """Datei-Import/-Export für das lokale Telefonbuch: Fritz!Box-XML, CSV, vCard.
 
-Reine Datei-/Domänenlogik ohne Zugriff auf fritz/ oder Netzwerk - die GUI ruft
-parse_*/write_* direkt auf (analog zu sync/normalize.py) und reicht das
-Ergebnis über import_contacts() an db.repository.LocalPhonebookRepository
-weiter.
+Reine Dateiformat-Logik ohne Zugriff auf fritz/, DB oder Netzwerk - die GUI ruft
+parse_*/write_* direkt auf (analog zu sync/normalize.py) und reicht das Ergebnis
+über Telefonbuch.import_file() (sync/telefonbuch.py) weiter. Die Writer nehmen
+LocalPhonebookContact direkt entgegen.
 """
 
 from __future__ import annotations
@@ -13,13 +13,10 @@ import io
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+from fritz_callhistory.db.repository import LocalPhonebookContact
 from fritz_callhistory.sync.normalize import normalize_number
-
-if TYPE_CHECKING:
-    from fritz_callhistory.db.repository import LocalPhonebookRepository
-    from fritz_callhistory.fritz.client import FritzBoxClient
+from fritz_callhistory.sync.telefonbuch import ContactDraft, NumberDraft
 
 _DEFAULT_NUMBER_TYPE = "home"
 
@@ -29,44 +26,22 @@ class PhonebookImportError(Exception):
 
 
 @dataclass
-class ImportedNumber:
-    number_raw: str
-    number_normalized: str
-    number_type: str
-
-
-@dataclass
-class ImportedContact:
-    display_name: str
-    notes: str | None
-    numbers: list[ImportedNumber]
-    box_uniqueid: str | None = None
-
-
-@dataclass
 class ImportResult:
-    contacts: list[ImportedContact]
+    contacts: list[ContactDraft]
     warnings: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ImportSummary:
-    created: int
-    skipped_duplicate: int
-    warnings: list[str]
 
 
 def _normalized_number_or_warn(
     raw: str, contact_name: str, number_type: str, warnings: list[str]
-) -> ImportedNumber | None:
-    """Normalisiert *raw* für einen Kontakt-Import; bei nicht erkennbaren/
-    unterdrückten Nummern None und eine Warnung statt eines Fehlers - geteilt
-    zwischen parse_xml/parse_csv/parse_vcard."""
-    normalized, is_anonymous = normalize_number(raw)
+) -> NumberDraft | None:
+    """Prüft *raw* für einen Kontakt-Import; bei nicht erkennbaren/unterdrückten
+    Nummern None und eine Warnung statt eines Fehlers - geteilt zwischen
+    parse_xml/parse_csv/parse_vcard. Normalisiert wird erst im Telefonbuch."""
+    _normalized, is_anonymous = normalize_number(raw)
     if is_anonymous:
         warnings.append(f"Nummer '{raw}' bei Kontakt '{contact_name}' übersprungen (nicht erkennbar).")
         return None
-    return ImportedNumber(number_raw=raw, number_normalized=normalized, number_type=number_type)
+    return NumberDraft(raw=raw, type=number_type)
 
 
 def _read_text_with_fallback(path: Path) -> str:
@@ -99,7 +74,7 @@ def parse_xml(path: Path) -> ImportResult:
             "Keine gültige Fritz!Box-Telefonbuch-Datei (Root-Element 'phonebooks' erwartet)."
         )
 
-    contacts: list[ImportedContact] = []
+    contacts: list[ContactDraft] = []
     warnings: list[str] = []
     for contact_el in root.iter("contact"):
         name_el = contact_el.find("person/realName")
@@ -113,7 +88,7 @@ def parse_xml(path: Path) -> ImportResult:
             uniqueid_el.text.strip() if uniqueid_el is not None and uniqueid_el.text else None
         )
 
-        numbers: list[ImportedNumber] = []
+        numbers: list[NumberDraft] = []
         for number_el in contact_el.findall("telephony/number"):
             raw = (number_el.text or "").strip()
             if not raw:
@@ -123,13 +98,13 @@ def parse_xml(path: Path) -> ImportResult:
             if number is not None:
                 numbers.append(number)
         contacts.append(
-            ImportedContact(display_name=name, notes=None, numbers=numbers, box_uniqueid=box_uniqueid)
+            ContactDraft(display_name=name, notes=None, numbers=numbers, box_uniqueid=box_uniqueid)
         )
     return ImportResult(contacts=contacts, warnings=warnings)
 
 
 def write_xml(
-    path: Path, contacts: list[ImportedContact], phonebook_name: str = "Fritz Callhistory Export"
+    path: Path, contacts: list[LocalPhonebookContact], phonebook_name: str = "Fritz Callhistory Export"
 ) -> None:
     root = ET.Element("phonebooks")
     phonebook_el = ET.SubElement(root, "phonebook", {"name": phonebook_name})
@@ -242,24 +217,24 @@ def _parse_native_csv_rows(rows: list[dict]) -> ImportResult:
             number_type = (row.get("number_type") or "").strip() or _DEFAULT_NUMBER_TYPE
             group["numbers"].append((raw_number, number_type))
 
-    contacts: list[ImportedContact] = []
+    contacts: list[ContactDraft] = []
     for raw_id in order:
         group = grouped[raw_id]
         name = group["display_name"]
         if not name:
             warnings.append(f"Kontakt '{raw_id}' ohne Namen übersprungen.")
             continue
-        numbers: list[ImportedNumber] = []
+        numbers: list[NumberDraft] = []
         for raw_number, number_type in group["numbers"]:
             number = _normalized_number_or_warn(raw_number, name, number_type, warnings)
             if number is not None:
                 numbers.append(number)
-        contacts.append(ImportedContact(display_name=name, notes=group["notes"] or None, numbers=numbers))
+        contacts.append(ContactDraft(display_name=name, notes=group["notes"] or None, numbers=numbers))
     return ImportResult(contacts=contacts, warnings=warnings)
 
 
 def _parse_thirdparty_csv_rows(rows: list[dict]) -> ImportResult:
-    contacts: list[ImportedContact] = []
+    contacts: list[ContactDraft] = []
     warnings: list[str] = []
     for row in rows:
         last_name = (row.get("Last Name") or "").strip()
@@ -279,16 +254,16 @@ def _parse_thirdparty_csv_rows(rows: list[dict]) -> ImportResult:
                 continue
             name = raw_numbers[0][0]
 
-        numbers: list[ImportedNumber] = []
+        numbers: list[NumberDraft] = []
         for raw, number_type in raw_numbers:
             number = _normalized_number_or_warn(raw, name, number_type, warnings)
             if number is not None:
                 numbers.append(number)
-        contacts.append(ImportedContact(display_name=name, notes=None, numbers=numbers))
+        contacts.append(ContactDraft(display_name=name, notes=None, numbers=numbers))
     return ImportResult(contacts=contacts, warnings=warnings)
 
 
-def write_csv(path: Path, contacts: list[ImportedContact]) -> None:
+def write_csv(path: Path, contacts: list[LocalPhonebookContact]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=_CSV_HEADER)
         writer.writeheader()
@@ -350,7 +325,7 @@ def parse_vcard(path: Path) -> ImportResult:
     if not any(line.strip().upper() == "BEGIN:VCARD" for line in unfolded_lines):
         raise PhonebookImportError("Keine gültige vCard-Datei (kein 'BEGIN:VCARD' gefunden).")
 
-    contacts: list[ImportedContact] = []
+    contacts: list[ContactDraft] = []
     warnings: list[str] = []
     current: dict | None = None
     for line in unfolded_lines:
@@ -368,12 +343,12 @@ def parse_vcard(path: Path) -> ImportResult:
                 warnings.append("vCard ohne FN-Feld (Name) übersprungen.")
                 current = None
                 continue
-            numbers: list[ImportedNumber] = []
+            numbers: list[NumberDraft] = []
             for raw_number, number_type in current["numbers"]:
                 number = _normalized_number_or_warn(raw_number, name, number_type, warnings)
                 if number is not None:
                     numbers.append(number)
-            contacts.append(ImportedContact(display_name=name, notes=current["notes"], numbers=numbers))
+            contacts.append(ContactDraft(display_name=name, notes=current["notes"], numbers=numbers))
             current = None
             continue
         if current is None or ":" not in stripped:
@@ -390,7 +365,7 @@ def parse_vcard(path: Path) -> ImportResult:
     return ImportResult(contacts=contacts, warnings=warnings)
 
 
-def write_vcard(path: Path, contacts: list[ImportedContact]) -> None:
+def write_vcard(path: Path, contacts: list[LocalPhonebookContact]) -> None:
     lines: list[str] = []
     for contact in contacts:
         lines.append("BEGIN:VCARD")
@@ -403,100 +378,3 @@ def write_vcard(path: Path, contacts: list[ImportedContact]) -> None:
             lines.append(f"NOTE:{_escape_vcard(contact.notes)}")
         lines.append("END:VCARD")
     path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
-
-
-# --- Import in die DB ---
-
-
-def import_contacts(repo: LocalPhonebookRepository, result: ImportResult) -> ImportSummary:
-    """Legt neue Telefonbuch-Kontakte an; überspringt Duplikate.
-
-    Ein Kontakt gilt als Duplikat, wenn seine komplette (nicht-leere)
-    Nummernmenge bereits vollständig einem bestehenden lokalen Kontakt gehört
-    - macht wiederholtes Importieren derselben Datei idempotent (zweiter Lauf:
-    created=0, skipped_duplicate=N). Änderte sich die Datei zwischenzeitlich,
-    wird der Kontakt als neu importiert (kein Fuzzy-Merge).
-    """
-    created = 0
-    skipped_duplicate = 0
-    for contact in result.contacts:
-        numbers_normalized = [n.number_normalized for n in contact.numbers]
-        if numbers_normalized and repo.all_numbers_belong_to_one_contact(numbers_normalized):
-            skipped_duplicate += 1
-            continue
-        repo.create(
-            display_name=contact.display_name,
-            notes=contact.notes,
-            numbers=[
-                (n.number_raw, n.number_normalized, n.number_type, False) for n in contact.numbers
-            ],
-            box_uniqueid=contact.box_uniqueid,
-        )
-        created += 1
-    return ImportSummary(created=created, skipped_duplicate=skipped_duplicate, warnings=list(result.warnings))
-
-
-
-def import_from_box(
-    client: FritzBoxClient, repo: LocalPhonebookRepository, phonebook_ids: list[int]
-) -> int:
-    """Übernimmt Kontakte der gewählten Box-Telefonbücher ins lokale Telefonbuch.
-
-    Pro Box-Kontakt mit Namen: anonyme Nummern werden verworfen; existiert ein
-    Telefonbuch-Kontakt mit derselben Box-Id, wird er aktualisiert (Notizen und
-    Standardnummern bleiben erhalten); sonst wird ein rein lokaler Kontakt mit
-    exakt derselben Nummernmenge adoptiert (mit der Box-Id verknüpft); sonst neu
-    angelegt. Die Zuordnungsregel unterscheidet sich bewusst von der Dedupe-Regel
-    in import_contacts(). Gibt die Anzahl verarbeiteter Box-Kontakte zurück.
-    """
-    imported = 0
-    for phonebook_id in phonebook_ids:
-        for box_contact in client.phonebook_contacts_detailed(phonebook_id):
-            if not box_contact.name:
-                continue
-            numbers: list[tuple[str, str, str]] = []
-            for number in box_contact.numbers:
-                normalized, is_anonymous = normalize_number(number.value)
-                if not is_anonymous:
-                    numbers.append((number.value, normalized, number.type))
-
-            existing = (
-                repo.find_by_box_uniqueid(box_contact.uniqueid) if box_contact.uniqueid else None
-            )
-            if existing:
-                # Die Box kennt kein "Standardnummer"-Konzept - eine zuvor lokal
-                # gesetzte Standardnummer muss über den vollen delete+reinsert von
-                # update() hinweg erhalten bleiben, gematcht über number_normalized
-                # (Zeilen-IDs überleben update() nicht).
-                existing_defaults = {
-                    n.number_normalized for n in existing.numbers if n.is_default
-                }
-                repo.update(
-                    existing.id,
-                    display_name=box_contact.name,
-                    notes=existing.notes,
-                    numbers=[
-                        (raw, normalized, number_type, normalized in existing_defaults)
-                        for raw, normalized, number_type in numbers
-                    ],
-                )
-            else:
-                # "Adoptieren": ein rein lokaler Kontakt mit exakt derselben
-                # Nummernmenge wird mit dieser Box-Id verknüpft statt dupliziert.
-                adopt_id = repo.find_local_only_contact_by_exact_numbers(
-                    [n[1] for n in numbers]
-                )
-                if adopt_id is not None and box_contact.uniqueid:
-                    repo.set_box_uniqueid(adopt_id, box_contact.uniqueid)
-                else:
-                    repo.create(
-                        display_name=box_contact.name,
-                        notes=None,
-                        numbers=[
-                            (raw, normalized, number_type, False)
-                            for raw, normalized, number_type in numbers
-                        ],
-                        box_uniqueid=box_contact.uniqueid,
-                    )
-            imported += 1
-    return imported

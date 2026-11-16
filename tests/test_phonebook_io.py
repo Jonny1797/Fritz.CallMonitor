@@ -1,12 +1,8 @@
 import pytest
 
-from fritz_callhistory.db.repository import LocalPhonebookRepository
+from fritz_callhistory.db.repository import LocalPhonebookContact, PhonebookNumber
 from fritz_callhistory.sync.phonebook_io import (
-    ImportedContact,
-    ImportedNumber,
-    ImportResult,
     PhonebookImportError,
-    import_contacts,
     parse_csv,
     parse_vcard,
     parse_xml,
@@ -16,16 +12,19 @@ from fritz_callhistory.sync.phonebook_io import (
 )
 
 _CONTACTS = [
-    ImportedContact(
+    LocalPhonebookContact(
+        id=1,
         display_name="Max Mustermann",
         notes="VIP",
-        numbers=[
-            ImportedNumber("+491234567", "+491234567", "mobile"),
-            ImportedNumber("03012345678", "+493012345678", "home"),
-        ],
         box_uniqueid="7",
+        numbers=[
+            PhonebookNumber(1, "+491234567", "+491234567", "mobile", False),
+            PhonebookNumber(2, "03012345678", "+493012345678", "home", False),
+        ],
     ),
-    ImportedContact(display_name="Erika Musterfrau", notes=None, numbers=[]),
+    LocalPhonebookContact(
+        id=2, display_name="Erika Musterfrau", notes=None, box_uniqueid=None, numbers=[]
+    ),
 ]
 
 
@@ -41,7 +40,7 @@ def test_xml_write_then_parse_round_trip(tmp_path):
     assert [c.display_name for c in result.contacts] == ["Max Mustermann", "Erika Musterfrau"]
     max_contact = result.contacts[0]
     assert max_contact.box_uniqueid == "7"
-    assert [(n.number_raw, n.number_type) for n in max_contact.numbers] == [
+    assert [(n.raw, n.type) for n in max_contact.numbers] == [
         ("+491234567", "mobile"),
         ("03012345678", "home"),
     ]
@@ -51,7 +50,7 @@ def test_xml_write_then_parse_round_trip(tmp_path):
 
 def test_xml_omits_uniqueid_when_not_box_sourced(tmp_path):
     path = tmp_path / "phonebook.xml"
-    write_xml(path, [ImportedContact("Lokal", None, [])])
+    write_xml(path, [LocalPhonebookContact(1, "Lokal", None, None, [])])
 
     assert "<uniqueid>" not in path.read_text()
 
@@ -115,7 +114,7 @@ def test_csv_write_then_parse_round_trip(tmp_path):
     result = parse_csv(path)
 
     assert [c.display_name for c in result.contacts] == ["Max Mustermann", "Erika Musterfrau"]
-    assert [n.number_raw for n in result.contacts[0].numbers] == ["+491234567", "03012345678"]
+    assert [n.raw for n in result.contacts[0].numbers] == ["+491234567", "03012345678"]
     assert result.contacts[0].notes == "VIP"
     assert result.contacts[1].numbers == []
 
@@ -215,7 +214,7 @@ def test_csv_thirdparty_schema_parses_multiple_numbers_per_row(tmp_path):
     assert len(result.contacts) == 1
     contact = result.contacts[0]
     assert contact.display_name == "Max Mustermann"
-    assert [(n.number_raw, n.number_type) for n in contact.numbers] == [
+    assert [(n.raw, n.type) for n in contact.numbers] == [
         ("+491234567", "home"),
         ("+493012345678", "work"),
         ("+494912345", "fax_work"),
@@ -242,7 +241,7 @@ def test_csv_thirdparty_schema_unnamed_row_uses_first_number_as_name(tmp_path):
     assert len(result.contacts) == 1
     contact = result.contacts[0]
     assert contact.display_name == "+491234567"
-    assert [n.number_raw for n in contact.numbers] == ["+491234567"]
+    assert [n.raw for n in contact.numbers] == ["+491234567"]
     assert result.warnings == []
 
 
@@ -279,7 +278,7 @@ def test_vcard_write_then_parse_round_trip(tmp_path):
     assert [c.display_name for c in result.contacts] == ["Max Mustermann", "Erika Musterfrau"]
     max_contact = result.contacts[0]
     assert max_contact.notes == "VIP"
-    assert [(n.number_raw, n.number_type) for n in max_contact.numbers] == [
+    assert [(n.raw, n.type) for n in max_contact.numbers] == [
         ("+491234567", "mobile"),
         ("03012345678", "home"),
     ]
@@ -317,50 +316,4 @@ def test_vcard_cp1252_encoded_file_is_parsed(tmp_path):
     result = parse_vcard(path)
 
     assert [c.display_name for c in result.contacts] == ["Jürgen Müller"]
-    assert result.contacts[0].numbers[0].number_type == "mobile"
-
-
-# --- import_contacts idempotency ---
-
-
-def test_import_contacts_creates_new_contacts(connection):
-    repo = LocalPhonebookRepository(connection)
-    result = ImportResult(contacts=_CONTACTS, warnings=["a warning"])
-
-    summary = import_contacts(repo, result)
-
-    assert summary.created == 2
-    assert summary.skipped_duplicate == 0
-    assert summary.warnings == ["a warning"]
-    assert len(repo.list_all()) == 2
-
-
-def test_import_contacts_is_idempotent_for_contacts_with_numbers(connection):
-    # Nur Kontakte mit mindestens einer Nummer haben ein Duplikat-Erkennungs-
-    # merkmal (all_numbers_belong_to_one_contact) - hier isoliert mit einem
-    # reinen Nummern-Kontakt getestet, um das von der Namens-only-Ausnahme
-    # unten sauber zu trennen.
-    repo = LocalPhonebookRepository(connection)
-    with_numbers_only = ImportResult(contacts=[_CONTACTS[0]])
-    import_contacts(repo, with_numbers_only)
-
-    second = import_contacts(repo, with_numbers_only)
-
-    assert second.created == 0
-    assert second.skipped_duplicate == 1
-    assert len(repo.list_all()) == 1
-
-
-def test_import_contacts_recreates_name_only_contacts_on_repeated_import(connection):
-    # Bekannte Einschränkung: ein namens-only-Kontakt (keine Nummern) hat kein
-    # Merkmal, an dem sich ein Duplikat erkennen liesse, und wird bei jedem
-    # erneuten Import als neuer Kontakt angelegt - siehe import_contacts()-Docstring.
-    repo = LocalPhonebookRepository(connection)
-    name_only = ImportResult(contacts=[_CONTACTS[1]])
-    import_contacts(repo, name_only)
-
-    second = import_contacts(repo, name_only)
-
-    assert second.created == 1
-    assert second.skipped_duplicate == 0
-    assert len(repo.list_all()) == 2
+    assert result.contacts[0].numbers[0].type == "mobile"

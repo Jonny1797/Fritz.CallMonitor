@@ -27,8 +27,8 @@ from fritz_callhistory.db.repository import (
 )
 from fritz_callhistory.fritz.client import FritzBoxClient
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError
-from fritz_callhistory.sync.phonebook_io import import_from_box
 from fritz_callhistory.sync.service import SyncService
+from fritz_callhistory.sync.telefonbuch import ContactDraft, NumberDraft, Telefonbuch
 
 
 @dataclass(frozen=True)
@@ -116,10 +116,19 @@ class BoxGateway:
 
     def import_from_box(self, phonebook_ids: list[int]) -> int:
         snapshot = self._snapshot()
-        with self._connection() as connection:
-            return import_from_box(
-                self._client(snapshot), LocalPhonebookRepository(connection), phonebook_ids
+        client = self._client(snapshot)
+        drafts = [
+            ContactDraft(
+                display_name=box_contact.name,
+                notes=None,
+                numbers=[NumberDraft(raw=n.value, type=n.type) for n in box_contact.numbers],
+                box_uniqueid=box_contact.uniqueid,
             )
+            for phonebook_id in phonebook_ids
+            for box_contact in client.phonebook_contacts_detailed(phonebook_id)
+        ]
+        with self._connection() as connection:
+            return Telefonbuch(connection).import_box_contacts(drafts)
 
     def dial(self, number: str) -> None:
         self._client(self._snapshot()).dial_number(number)

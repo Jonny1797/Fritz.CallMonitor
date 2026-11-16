@@ -679,52 +679,31 @@ def test_local_phonebook_box_uniqueid_round_trip(connection):
     assert found.id == contact_id
 
 
-def test_all_numbers_belong_to_one_contact_true_for_exact_match(connection):
+def test_find_ids_by_exact_numbers_matches_exact_set_only(connection):
+    repo = LocalPhonebookRepository(connection)
+    both = repo.create(
+        display_name="A",
+        notes=None,
+        numbers=[("1", "+491234567", "home", False), ("2", "+499876543", "mobile", False)],
+    )
+    repo.create(display_name="B", notes=None, numbers=[("1", "+491234567", "home", False)])
+
+    assert repo.find_ids_by_exact_numbers({"+491234567", "+499876543"}) == [both]
+    assert repo.find_ids_by_exact_numbers({"+491234567", "+490000000"}) == []
+    assert repo.find_ids_by_exact_numbers(set()) == []
+
+
+def test_find_ids_by_exact_numbers_can_exclude_box_linked_contacts(connection):
     repo = LocalPhonebookRepository(connection)
     repo.create(
-        display_name="Max Mustermann",
-        notes=None,
-        numbers=[("+491234567", "+491234567", "home", False), ("+499876543", "+499876543", "mobile", False)],
-    )
-
-    assert repo.all_numbers_belong_to_one_contact(["+491234567", "+499876543"]) is True
-
-
-def test_all_numbers_belong_to_one_contact_false_for_partial_overlap(connection):
-    repo = LocalPhonebookRepository(connection)
-    repo.create(display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home", False)])
-    repo.create(display_name="Erika Musterfrau", notes=None, numbers=[("+499876543", "+499876543", "home", False)])
-
-    assert repo.all_numbers_belong_to_one_contact(["+491234567", "+499876543"]) is False
-
-
-def test_all_numbers_belong_to_one_contact_false_for_empty_list(connection):
-    repo = LocalPhonebookRepository(connection)
-    assert repo.all_numbers_belong_to_one_contact([]) is False
-
-
-def test_find_local_only_contact_by_exact_numbers_matches_local_contact(connection):
-    repo = LocalPhonebookRepository(connection)
-    contact_id = repo.create(
-        display_name="Max Mustermann", notes=None, numbers=[("+491234567", "+491234567", "home", False)]
-    )
-
-    found = repo.find_local_only_contact_by_exact_numbers(["+491234567"])
-
-    assert found == contact_id
-
-
-def test_find_local_only_contact_by_exact_numbers_ignores_box_linked_contacts(connection):
-    repo = LocalPhonebookRepository(connection)
-    contact_id = repo.create(
-        display_name="Max Mustermann",
+        display_name="Max",
         notes=None,
         numbers=[("+491234567", "+491234567", "home", False)],
         box_uniqueid="7",
     )
 
-    assert repo.find_local_only_contact_by_exact_numbers(["+491234567"]) is None
-    assert contact_id is not None  # sanity: der Kontakt existiert tatsächlich
+    assert repo.find_ids_by_exact_numbers({"+491234567"}, without_box_uniqueid=True) == []
+    assert len(repo.find_ids_by_exact_numbers({"+491234567"})) == 1
 
 
 def _insert_message(repo, **overrides):

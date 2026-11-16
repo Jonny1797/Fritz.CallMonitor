@@ -21,10 +21,7 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
-from fritz_callhistory.db.repository import (
-    ContactRepository,
-    LocalPhonebookRepository,
-)
+from fritz_callhistory.db.repository import ContactRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.calls_tab import CallsTab
@@ -70,7 +67,6 @@ class MainWindow(QMainWindow):
         self._last_sync_user_initiated = False
 
         self._contacts_repo = ContactRepository(connection)
-        self._local_phonebook_repo = LocalPhonebookRepository(connection)
         self._caller_directory = CallerDirectory.for_connection(connection)
         self._show_incoming_call_popup = config.show_incoming_call_popup
         self._incoming_call_popups: dict[str, IncomingCallPopup] = {}

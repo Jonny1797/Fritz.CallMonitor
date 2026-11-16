@@ -1,5 +1,6 @@
 from fritz_callhistory.db.repository import LocalPhonebookContact, PhonebookNumber
 from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
+from fritz_callhistory.sync.telefonbuch import NumberDraft
 
 
 def test_number_type_dropdown_shows_german_labels(qtbot):
@@ -12,7 +13,7 @@ def test_number_type_dropdown_shows_german_labels(qtbot):
     assert labels == ["Privat", "Mobil", "Geschäftlich", "Fax (geschäftlich)", "Sonstige"]
 
 
-def test_contact_data_returns_internal_english_key_despite_german_label(qtbot):
+def test_contact_draft_returns_internal_english_key_despite_german_label(qtbot):
     dialog = ContactEditDialog()
     qtbot.addWidget(dialog)
 
@@ -21,9 +22,9 @@ def test_contact_data_returns_internal_english_key_despite_german_label(qtbot):
     number_edit.setText("+491234567")
     type_combo.setCurrentIndex(type_combo.findData("mobile"))
 
-    _name, _notes, numbers = dialog.contact_data()
+    numbers = dialog.contact_draft().numbers
 
-    assert numbers == [("+491234567", "+491234567", "mobile", False)]
+    assert numbers == [NumberDraft("+491234567", "mobile", False)]
 
 
 def test_editing_existing_contact_preselects_correct_type(qtbot):
@@ -82,7 +83,7 @@ def test_checking_one_default_radio_unchecks_the_other(qtbot):
     assert dialog._number_rows[1][3].isChecked() is True
 
 
-def test_contact_data_reports_is_default_for_checked_row_only(qtbot):
+def test_contact_draft_reports_is_default_for_checked_row_only(qtbot):
     dialog = ContactEditDialog()
     qtbot.addWidget(dialog)
     dialog._add_number_row()
@@ -92,12 +93,12 @@ def test_contact_data_reports_is_default_for_checked_row_only(qtbot):
     dialog._number_rows[1][1].setText("+499876543")
     dialog._number_rows[1][3].setChecked(True)
 
-    _name, _notes, numbers = dialog.contact_data()
+    numbers = dialog.contact_draft().numbers
 
-    assert [n[3] for n in numbers] == [False, True]
+    assert [n.is_default for n in numbers] == [False, True]
 
 
-def test_contact_data_reports_no_default_when_none_checked(qtbot):
+def test_contact_draft_reports_no_default_when_none_checked(qtbot):
     dialog = ContactEditDialog()
     qtbot.addWidget(dialog)
     dialog._add_number_row()
@@ -106,9 +107,9 @@ def test_contact_data_reports_no_default_when_none_checked(qtbot):
     dialog._number_rows[0][1].setText("+491234567")
     dialog._number_rows[1][1].setText("+499876543")
 
-    _name, _notes, numbers = dialog.contact_data()
+    numbers = dialog.contact_draft().numbers
 
-    assert [n[3] for n in numbers] == [False, False]
+    assert [n.is_default for n in numbers] == [False, False]
 
 
 def test_editing_existing_contact_preselects_stored_default_radio(qtbot):
@@ -169,5 +170,5 @@ def test_removing_default_row_leaves_no_default_in_remaining_rows(qtbot):
 
     dialog._remove_number_row(dialog._number_rows[0][0])
 
-    _name, _notes, numbers = dialog.contact_data()
-    assert [n[3] for n in numbers] == [False]
+    numbers = dialog.contact_draft().numbers
+    assert [n.is_default for n in numbers] == [False]

@@ -13,7 +13,6 @@ from fritz_callhistory.fritz.client import (
 )
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError
 from fritz_callhistory.sync.box_gateway import BoxGateway
-from fritz_callhistory.sync.phonebook_io import import_from_box
 
 from .fakes import FakeClient
 from .test_sync_service import _make_call, _make_voicemail_message
@@ -234,94 +233,18 @@ def test_check_credentials_uses_given_credentials_and_authenticated_call(tmp_pat
     assert ("get_calls", 1, None) in h.client.calls_made
 
 
-# --- Import-Richtlinie (reine Funktion, In-Memory-SQLite) ---
+def test_import_from_box_only_queries_selected_phonebook_ids(tmp_path):
+    h = Harness(tmp_path)
+    assert h.gateway.import_from_box([2]) == 0
+    assert h.client.calls_made == [("phonebook_contacts_detailed", 2)]
 
 
-def _box_contact(uniqueid, name, *numbers):
-    return FritzPhonebookContact(
-        uniqueid=uniqueid,
-        name=name,
+def test_import_from_box_skips_nameless_contacts(tmp_path):
+    nameless = FritzPhonebookContact(
+        uniqueid="1",
+        name=None,
         category="0",
-        numbers=[FritzPhonebookNumber(value=v, type=t) for v, t in numbers],
+        numbers=[FritzPhonebookNumber(value="0171 2345678", type="mobile")],
     )
-
-
-def test_policy_creates_new_contact(connection):
-    repo = LocalPhonebookRepository(connection)
-    client = FakeClient(
-        phonebook_contacts_detailed={0: [_box_contact("7", "Max", ("0171 2345678", "mobile"))]}
-    )
-    assert import_from_box(client, repo, [0]) == 1
-    (contact,) = repo.list_all()
-    assert (contact.display_name, contact.box_uniqueid) == ("Max", "7")
-    assert [n.number_normalized for n in contact.numbers] == ["+491712345678"]
-
-
-def test_policy_updates_by_uniqueid_keeping_notes_and_default_across_reimport(connection):
-    repo = LocalPhonebookRepository(connection)
-    contact_id = repo.create(
-        display_name="Alt",
-        notes="Notiz",
-        numbers=[
-            ("0171 2345678", "+491712345678", "mobile", False),
-            ("030 1234567", "+49301234567", "home", True),
-        ],
-        box_uniqueid="7",
-    )
-    client = FakeClient(
-        phonebook_contacts_detailed={
-            0: [
-                _box_contact(
-                    "7", "Neu", ("0171 2345678", "mobile"), ("030 1234567", "home")
-                )
-            ]
-        }
-    )
-    for _ in range(2):
-        import_from_box(client, repo, [0])
-    contact = repo.get(contact_id)
-    assert contact.display_name == "Neu"
-    assert contact.notes == "Notiz"
-    assert {n.number_normalized: n.is_default for n in contact.numbers} == {
-        "+491712345678": False,
-        "+49301234567": True,
-    }
-    assert len(repo.list_all()) == 1
-
-
-def test_policy_adopts_local_only_contact_with_same_number_set(connection):
-    repo = LocalPhonebookRepository(connection)
-    local_id = repo.create(
-        display_name="Lokal",
-        notes=None,
-        numbers=[("0171 2345678", "+491712345678", "mobile", False)],
-        box_uniqueid=None,
-    )
-    client = FakeClient(
-        phonebook_contacts_detailed={0: [_box_contact("9", "Box", ("0171 2345678", "mobile"))]}
-    )
-    assert import_from_box(client, repo, [0]) == 1
-    assert len(repo.list_all()) == 1
-    assert repo.get(local_id).box_uniqueid == "9"
-
-
-def test_policy_skips_nameless_contacts_and_drops_anonymous_numbers(connection):
-    repo = LocalPhonebookRepository(connection)
-    client = FakeClient(
-        phonebook_contacts_detailed={
-            0: [
-                _box_contact("1", None, ("0171 2345678", "mobile")),
-                _box_contact("2", "Anna", ("0171 2345678", "mobile"), ("", "home")),
-            ]
-        }
-    )
-    assert import_from_box(client, repo, [0]) == 1
-    (contact,) = repo.list_all()
-    assert contact.display_name == "Anna"
-    assert len(contact.numbers) == 1
-
-
-def test_policy_only_queries_selected_phonebook_ids(connection):
-    client = FakeClient()
-    import_from_box(client, LocalPhonebookRepository(connection), [2])
-    assert client.calls_made == [("phonebook_contacts_detailed", 2)]
+    h = Harness(tmp_path, client=FakeClient(phonebook_contacts_detailed={0: [nameless]}))
+    assert h.gateway.import_from_box([0]) == 0

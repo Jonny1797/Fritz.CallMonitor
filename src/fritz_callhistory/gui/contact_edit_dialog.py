@@ -3,6 +3,7 @@
 Unterstützt eine dynamische Anzahl Rufnummern pro Kontakt (Fritz!Fon/Box-
 Telefonbücher erlauben das ebenfalls). Persistiert nicht selbst - der
 Aufrufer (gui/phonebook_view.py) entscheidet über create() vs. update().
+Liefert einen ContactDraft; Normalisierung und Dedupe passieren im Telefonbuch.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from fritz_callhistory.db.repository import LocalPhonebookContact
 from fritz_callhistory.sync.normalize import normalize_number
+from fritz_callhistory.sync.telefonbuch import ContactDraft, NumberDraft
 
 _NUMBER_TYPES = ["home", "mobile", "work", "fax_work", "other"]
 # Werte bleiben die internen Speicher-/Interop-Schlüssel (DB, vCard/XML-Export
@@ -144,7 +146,7 @@ class ContactEditDialog(QDialog):
         if not self._name_edit.text().strip():
             QMessageBox.warning(self, "Name fehlt", "Bitte einen Namen eingeben.")
             return
-        if not self.contact_data()[2]:
+        if not any(not normalize_number(n.raw)[1] for n in self.contact_draft().numbers):
             answer = QMessageBox.question(
                 self,
                 "Keine Nummer",
@@ -154,25 +156,16 @@ class ContactEditDialog(QDialog):
                 return
         self.accept()
 
-    def contact_data(self) -> tuple[str, str | None, list[tuple[str, str, str, bool]]]:
-        """(display_name, notes, [(number_raw, number_normalized, number_type, is_default), ...]).
-
-        Numbers, die sich nach Normalisierung doppeln, werden entfernt (erste
-        Eingabe gewinnt, inkl. ihres is_default) - verhindert doppelte Zeilen
-        für denselben Kontakt, wenn der Nutzer dieselbe Nummer versehentlich
-        zweimal eintippt.
-        """
-        name = self._name_edit.text().strip()
-        notes = self._notes_edit.toPlainText().strip() or None
-        numbers: list[tuple[str, str, str, bool]] = []
-        seen_normalized: set[str] = set()
-        for _container, number_edit, type_combo, radio in self._number_rows:
-            raw = number_edit.text().strip()
-            if not raw:
-                continue
-            normalized, is_anonymous = normalize_number(raw)
-            if is_anonymous or normalized in seen_normalized:
-                continue
-            seen_normalized.add(normalized)
-            numbers.append((raw, normalized, type_combo.currentData(), radio.isChecked()))
-        return name, notes, numbers
+    def contact_draft(self) -> ContactDraft:
+        """Eingaben als ContactDraft (leere Nummernzeilen entfallen; Normalisierung,
+        Dedupe und die Standardnummer-Regel übernimmt das Telefonbuch)."""
+        numbers = [
+            NumberDraft(raw, type_combo.currentData(), radio.isChecked())
+            for _container, number_edit, type_combo, radio in self._number_rows
+            if (raw := number_edit.text().strip())
+        ]
+        return ContactDraft(
+            display_name=self._name_edit.text().strip(),
+            notes=self._notes_edit.toPlainText().strip() or None,
+            numbers=numbers,
+        )

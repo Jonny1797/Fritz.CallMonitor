@@ -465,6 +465,7 @@ class LocalPhonebookRepository:
         notes: str | None,
         numbers: list[tuple[str, str, str, bool]],
         box_uniqueid: str | None = None,
+        commit: bool = True,
     ) -> int:
         """numbers: Liste von (number_raw, number_normalized, number_type, is_default)."""
         now = datetime.now().isoformat()
@@ -477,7 +478,8 @@ class LocalPhonebookRepository:
         )
         contact_id = cursor.lastrowid
         self._insert_numbers(contact_id, numbers)
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return contact_id
 
     def update(
@@ -487,21 +489,50 @@ class LocalPhonebookRepository:
         display_name: str,
         notes: str | None,
         numbers: list[tuple[str, str, str, bool]],
+        commit: bool = True,
     ) -> None:
+        """Nummernzeilen werden per number_normalized abgeglichen: bestehende Zeilen
+        behalten ihre Id (raw/Typ/Standard werden aktualisiert), neue werden eingefügt,
+        weggefallene (und doppelte Altzeilen) gelöscht."""
         now = datetime.now().isoformat()
         self._conn.execute(
             "UPDATE phonebook_contacts SET display_name = ?, notes = ?, updated_at = ? WHERE id = ?",
             (display_name, notes, now, contact_id),
         )
-        self._conn.execute(
-            "DELETE FROM phonebook_contact_numbers WHERE phonebook_contact_id = ?", (contact_id,)
+        existing: dict[str, int] = {}
+        obsolete: list[int] = []
+        for row in self._conn.execute(
+            "SELECT id, number_normalized FROM phonebook_contact_numbers "
+            "WHERE phonebook_contact_id = ? ORDER BY id",
+            (contact_id,),
+        ).fetchall():
+            if row["number_normalized"] in existing:
+                obsolete.append(row["id"])
+            else:
+                existing[row["number_normalized"]] = row["id"]
+        to_insert: list[tuple[str, str, str, bool]] = []
+        for raw, normalized, number_type, is_default in numbers:
+            row_id = existing.pop(normalized, None)
+            if row_id is None:
+                to_insert.append((raw, normalized, number_type, is_default))
+                continue
+            self._conn.execute(
+                "UPDATE phonebook_contact_numbers "
+                "SET number_raw = ?, number_type = ?, is_default = ? WHERE id = ?",
+                (raw, number_type, int(is_default), row_id),
+            )
+        obsolete.extend(existing.values())
+        self._conn.executemany(
+            "DELETE FROM phonebook_contact_numbers WHERE id = ?", [(i,) for i in obsolete]
         )
-        self._insert_numbers(contact_id, numbers)
-        self._conn.commit()
+        self._insert_numbers(contact_id, to_insert)
+        if commit:
+            self._conn.commit()
 
-    def delete(self, contact_id: int) -> None:
+    def delete(self, contact_id: int, *, commit: bool = True) -> None:
         self._conn.execute("DELETE FROM phonebook_contacts WHERE id = ?", (contact_id,))
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
     def all_entries(self) -> dict[str, tuple[str, str | None]]:
         """number_normalized -> (display_name, notes) für alle Kontakte. Bei mehreren
@@ -543,63 +574,43 @@ class LocalPhonebookRepository:
         ).fetchone()
         return self._load(row["id"]) if row else None
 
-    def set_box_uniqueid(self, contact_id: int, box_uniqueid: str) -> None:
+    def set_box_uniqueid(
+        self, contact_id: int, box_uniqueid: str, *, commit: bool = True
+    ) -> None:
         self._conn.execute(
             "UPDATE phonebook_contacts SET box_uniqueid = ? WHERE id = ?",
             (box_uniqueid, contact_id),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
-    def all_numbers_belong_to_one_contact(self, numbers_normalized: list[str]) -> bool:
-        """True, wenn jede angegebene Nummer zu genau demselben bestehenden
-        Kontakt gehört und dieser exakt diese Nummernmenge hat - für
-        Idempotenz beim wiederholten Datei-Import (siehe sync/phonebook_io.py)."""
+    def find_ids_by_exact_numbers(
+        self, numbers_normalized: set[str], *, without_box_uniqueid: bool = False
+    ) -> list[int]:
+        """Ids aller Kontakte, deren Nummernmenge exakt *numbers_normalized* ist
+        (aufsteigend). Eine einzige Abfrage, unabhängig von der Nummernanzahl; leere
+        Menge -> keine Treffer. without_box_uniqueid: nur Kontakte ohne Box-Id."""
         if not numbers_normalized:
-            return False
-        contact_ids: set[int] = set()
-        for number in numbers_normalized:
-            rows = self._conn.execute(
-                "SELECT phonebook_contact_id FROM phonebook_contact_numbers WHERE number_normalized = ?",
-                (number,),
-            ).fetchall()
-            ids = {row["phonebook_contact_id"] for row in rows}
-            if not ids:
-                return False
-            contact_ids |= ids
-        if len(contact_ids) != 1:
-            return False
-        return self._numbers_of(next(iter(contact_ids))) == set(numbers_normalized)
-
-    def find_local_only_contact_by_exact_numbers(self, numbers_normalized: list[str]) -> int | None:
-        """Wie all_numbers_belong_to_one_contact, aber nur unter Kontakten ohne
-        box_uniqueid - die "Adoptieren"-Heuristik beim Box-Import: ein zuvor
-        lokal angelegter Kontakt wird mit dem passenden Box-Eintrag verknüpft,
-        statt dupliziert zu werden (siehe sync/phonebook_io.py's import_from_box)."""
-        if not numbers_normalized:
-            return None
+            return []
+        placeholders = ",".join("?" * len(numbers_normalized))
+        box_filter = "AND pc.box_uniqueid IS NULL" if without_box_uniqueid else ""
         rows = self._conn.execute(
-            """
-            SELECT DISTINCT pcn.phonebook_contact_id AS id
-            FROM phonebook_contact_numbers pcn
-            JOIN phonebook_contacts pc ON pc.id = pcn.phonebook_contact_id
-            WHERE pcn.number_normalized = ? AND pc.box_uniqueid IS NULL
+            f"""
+            SELECT pc.id AS id
+            FROM phonebook_contacts pc
+            JOIN phonebook_contact_numbers pcn ON pcn.phonebook_contact_id = pc.id
+            WHERE pc.id IN (
+                SELECT phonebook_contact_id FROM phonebook_contact_numbers
+                WHERE number_normalized IN ({placeholders})
+            ) {box_filter}
+            GROUP BY pc.id
+            HAVING COUNT(DISTINCT pcn.number_normalized) = ?
+               AND SUM(pcn.number_normalized NOT IN ({placeholders})) = 0
+            ORDER BY pc.id
             """,
-            (numbers_normalized[0],),
+            (*numbers_normalized, len(numbers_normalized), *numbers_normalized),
         ).fetchall()
-        for row in rows:
-            contact_id = row["id"]
-            if self._numbers_of(contact_id) == set(numbers_normalized):
-                return contact_id
-        return None
-
-    def _numbers_of(self, contact_id: int) -> set[str]:
-        return {
-            row["number_normalized"]
-            for row in self._conn.execute(
-                "SELECT number_normalized FROM phonebook_contact_numbers WHERE phonebook_contact_id = ?",
-                (contact_id,),
-            ).fetchall()
-        }
+        return [row["id"] for row in rows]
 
     def _insert_numbers(self, contact_id: int, numbers: list[tuple[str, str, str, bool]]) -> None:
         self._conn.executemany(

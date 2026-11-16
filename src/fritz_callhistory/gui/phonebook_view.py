@@ -26,11 +26,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fritz_callhistory.db.repository import (
-    ContactRepository,
-    LocalPhonebookRepository,
-    PhonebookRepository,
-)
 from fritz_callhistory.gui.contact_edit_dialog import ContactEditDialog
 from fritz_callhistory.gui.models import (
     DataclassSortProxy,
@@ -45,10 +40,7 @@ from fritz_callhistory.fritz.exceptions import FritzBoxError
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.sync.box_gateway import BoxGateway
 from fritz_callhistory.sync.phonebook_io import (
-    ImportedContact,
-    ImportedNumber,
     PhonebookImportError,
-    import_contacts,
     parse_csv,
     parse_vcard,
     parse_xml,
@@ -56,8 +48,9 @@ from fritz_callhistory.sync.phonebook_io import (
     write_vcard,
     write_xml,
 )
-from fritz_callhistory.sync.normalize import normalize_number
 from fritz_callhistory.sync.caller_directory import CallerDirectory
+from fritz_callhistory.sync.normalize import normalize_number
+from fritz_callhistory.sync.telefonbuch import Telefonbuch
 
 _IMPORT_FILTER = "Fritz!Box-Telefonbuch (*.xml);;CSV (*.csv);;vCard (*.vcf)"
 _EXPORT_FILTER = "Fritz!Box-Telefonbuch (*.xml);;CSV (*.csv);;vCard (*.vcf)"
@@ -82,9 +75,7 @@ class PhonebookTab(QWidget):
     ) -> None:
         super().__init__(parent)
         self._connection = connection
-        self._repo = LocalPhonebookRepository(connection)
-        self._contacts_repo = ContactRepository(connection)
-        self._phonebook_repo = PhonebookRepository(connection)
+        self._telefonbuch = Telefonbuch(connection)
         self._gateway = gateway
         self._background_tasks = background_tasks
 
@@ -141,7 +132,7 @@ class PhonebookTab(QWidget):
         return self._gateway.has_credentials and not self._background_tasks.is_running(_IMPORT_KEY)
 
     def _reload(self) -> None:
-        self._model.set_contacts(self._repo.list_all(self._search_edit.text()))
+        self._model.set_contacts(self._telefonbuch.list(self._search_edit.text()))
 
     def _selected_contact_id(self) -> int | None:
         indexes = self._table.selectionModel().selectedRows()
@@ -163,7 +154,7 @@ class PhonebookTab(QWidget):
 
     def _after_local_change(self) -> None:
         self._reload()
-        directory = CallerDirectory(self._contacts_repo, self._phonebook_repo, self._repo)
+        directory = CallerDirectory.for_connection(self._connection)
         updated = directory.refresh_names()
         if updated:
             self.contacts_changed.emit()
@@ -172,20 +163,18 @@ class PhonebookTab(QWidget):
         dialog = ContactEditDialog(parent=self)
         if dialog.exec() != ContactEditDialog.DialogCode.Accepted:
             return
-        name, notes, numbers = dialog.contact_data()
-        self._repo.create(display_name=name, notes=notes, numbers=numbers)
+        self._telefonbuch.create(dialog.contact_draft())
         self._after_local_change()
 
     def _on_edit_clicked(self) -> None:
         contact_id = self._selected_contact_id()
         if contact_id is None:
             return
-        existing = self._repo.get(contact_id)
+        existing = self._telefonbuch.get(contact_id)
         dialog = ContactEditDialog(existing=existing, parent=self)
         if dialog.exec() != ContactEditDialog.DialogCode.Accepted:
             return
-        name, notes, numbers = dialog.contact_data()
-        self._repo.update(contact_id, display_name=name, notes=notes, numbers=numbers)
+        self._telefonbuch.update(contact_id, dialog.contact_draft())
         self._after_local_change()
 
     def add_or_edit_number(self, number_raw: str) -> None:
@@ -193,10 +182,9 @@ class PhonebookTab(QWidget):
         oder Alle-Anrufe-Ansicht (main_window.py): öffnet den Bearbeiten-Dialog
         für den Kontakt, dem diese Nummer bereits gehört, oder sonst den
         Neu-Dialog mit vorausgefüllter Nummer."""
-        normalized, is_anonymous = normalize_number(number_raw)
-        if is_anonymous:
+        if normalize_number(number_raw)[1]:
             return
-        existing = self._repo.find_by_number(normalized)
+        existing = self._telefonbuch.find_by_number(number_raw)
         dialog = ContactEditDialog(
             existing=existing,
             prefill_number=None if existing else number_raw,
@@ -204,24 +192,23 @@ class PhonebookTab(QWidget):
         )
         if dialog.exec() != ContactEditDialog.DialogCode.Accepted:
             return
-        name, notes, numbers = dialog.contact_data()
         if existing:
-            self._repo.update(existing.id, display_name=name, notes=notes, numbers=numbers)
+            self._telefonbuch.update(existing.id, dialog.contact_draft())
         else:
-            self._repo.create(display_name=name, notes=notes, numbers=numbers)
+            self._telefonbuch.create(dialog.contact_draft())
         self._after_local_change()
 
     def _on_delete_clicked(self) -> None:
         contact_id = self._selected_contact_id()
         if contact_id is None:
             return
-        contact = self._repo.get(contact_id)
+        contact = self._telefonbuch.get(contact_id)
         answer = QMessageBox.question(
             self, "Kontakt löschen", f"'{contact.display_name}' wirklich löschen?"
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._repo.delete(contact_id)
+        self._telefonbuch.delete(contact_id)
         self._after_local_change()
 
     def import_from_file(self) -> None:
@@ -241,7 +228,7 @@ class PhonebookTab(QWidget):
             QMessageBox.critical(self, "Import fehlgeschlagen", str(exc))
             return
 
-        summary = import_contacts(self._repo, result)
+        summary = self._telefonbuch.import_file(result)
         message = (
             f"{summary.created} Kontakt(e) importiert, "
             f"{summary.skipped_duplicate} bereits vorhanden übersprungen."
@@ -264,17 +251,7 @@ class PhonebookTab(QWidget):
             path = path.with_suffix(suffix)
         writer = _WRITERS[path.suffix.lower()]
 
-        contacts = [
-            ImportedContact(
-                display_name=c.display_name,
-                notes=c.notes,
-                numbers=[
-                    ImportedNumber(n.number_raw, n.number_normalized, n.number_type) for n in c.numbers
-                ],
-                box_uniqueid=c.box_uniqueid,
-            )
-            for c in self._repo.list_all()
-        ]
+        contacts = self._telefonbuch.all_contacts()
         writer(path, contacts)
         QMessageBox.information(self, "Export abgeschlossen", f"{len(contacts)} Kontakt(e) exportiert.")
 
