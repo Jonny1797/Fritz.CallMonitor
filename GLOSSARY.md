@@ -55,3 +55,11 @@ _Avoid_: remote number, call number
 **Live call**:
 An incoming call seen by the call monitor that the call history doesn't contain yet. It is Klingelt, then Verbunden once answered; after it ends it shows as Verpasst (never answered) or Eingehend (answered) until the next sync brings the real entry.
 _Avoid_: active call, pending call
+
+**Release**:
+A published, tagged version of the app, with its download files and release notes.
+_Avoid_: build, version (for this meaning)
+
+**App update**:
+Replacing the running app with a newer Release, started by the user from the menu.
+_Avoid_: upgrade, patch
